@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="50%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#3b82f6" />
+    </linearGradient>
+    <linearGradient id="core" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#09090b" />
+      <stop offset="100%" stop-color="#18181b" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded rect -->
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)" />
+
+  <!-- Inner Dark Plate -->
+  <rect x="96" y="96" width="832" height="832" rx="180" fill="url(#core)" />
+
+  <!-- Creapolis CPU / Agent Core Graphic -->
+  <g transform="translate(512, 512)">
+    <!-- Circuit lines -->
+    <path d="M-220,0 L-140,0 M220,0 L140,0 M0,-220 L0,-140 M0,220 L0,140" stroke="#10b981" stroke-width="28" stroke-linecap="round" />
+    <path d="M-150,-150 L-95,-95 M150,-150 L95,-95 M-150,150 L-95,95 M150,150 L95,95" stroke="#06b6d4" stroke-width="28" stroke-linecap="round" />
+
+    <!-- Center Processor Box -->
+    <rect x="-140" y="-140" width="280" height="280" rx="48" fill="url(#bg)" />
+    <rect x="-115" y="-115" width="230" height="230" rx="36" fill="#09090b" />
+
+    <!-- Letter 'C' / Energy Arc -->
+    <path d="M50,-50 A70,70 0 1,0 50,50" fill="none" stroke="#10b981" stroke-width="36" stroke-linecap="round" />
+    <circle cx="0" cy="0" r="22" fill="#06b6d4" />
+  </g>
+</svg>
