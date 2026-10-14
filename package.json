@@ -7,7 +7,7 @@
     "#evals/*": "./evals/*"
   },
   "scripts": {
-    "build": "eve build",
+    "build": "eve build --skip-sandbox-prewarm",
     "deploy": "eve deploy",
     "dev": "eve dev",
     "eval": "eve eval",
@@ -15,17 +15,21 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^4.0.93",
+    "@chat-adapter/state-memory": "^4.41.1",
+    "@chat-adapter/whatsapp": "^4.41.1",
     "@vercel/connect": "2.2.0",
     "ai": "^7.0.137",
+    "chat": "^4.41.1",
     "eve": "^0.79.0",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/node": "24.x",
+    "microsandbox": "0.5.5",
     "typescript": "7.0.2"
   },
   "engines": {
     "node": "24.x"
   }
-
 }
