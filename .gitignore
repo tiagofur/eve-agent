@@ -1,5 +1,7 @@
 node_modules
+.pnpm-store/
 .env*
+!.env.example
 .eve
 .vercel
 .next
@@ -8,3 +10,5 @@ node_modules
 dist
 .DS_Store
 *.tsbuildinfo
+target
+src-tauri/target

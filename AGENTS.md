@@ -2,6 +2,16 @@
 
 This project uses the eve framework: an agent is a directory of files under `agent/`, and eve compiles and runs it.
 
+## Repository layout
+
+Three components live here (details in `docs/ARCHITECTURE.md`):
+
+- `agent/` — eve agent: orchestrator, 7 subagents, 9 tools, channels, schedules. Commands: `npm run dev`, `npm run typecheck`.
+- `crm/` — Hono REST API + Drizzle/PostgreSQL 17 + Telegram daemon (API port 8787, DB port 5433). Commands: `npm run db:up`, `npm run db:migrate`, `npm run dev`, `npm run test` (vitest), `npm run typecheck`.
+- `desktop/` — Tauri v2 + React app. Commands: `npm run tauri dev`, `npm run desktop:build`.
+
+Never commit API keys: copy the `.env.example` files and keep real values in git-ignored `.env*` files (see `docs/OPERATIONS_RUNBOOK.md` section 2).
+
 For a content-only change to the root agent's identity, purpose, tone, or response guidelines, edit its existing authored instructions. Fresh projects use `agent/instructions.md`; a project may instead use `agent/instructions.ts` or files under `agent/instructions/`. You do not need to read the framework docs for a content-only instructions change. A fresh project already has its selected model in `agent/agent.ts`; preserve that file unless the user asks to change the model.
 
 ## Read the docs before writing code

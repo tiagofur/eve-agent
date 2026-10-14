@@ -1,32 +1,52 @@
-# eve-agent
+# Creapolis.Dev — Autonomous Multi-Agent Operations System
 
-This is an [eve](https://eve.dev) agent bootstrapped with [`eve init`](https://eve.dev/docs/reference/cli#eve-init).
+An AI-first agency operations platform built on the [eve](https://eve.dev) framework: an orchestrator agent with 7 specialist subagents prospects clients, drafts outreach, manages SLA-bound support, generates marketing campaigns with AI graphics, and dispatches coding tasks — all under strict Human-in-the-Loop (HITL) approval via the desktop app or Telegram.
 
-## Getting started
+## Repository layout
 
-First, run the development server:
+| Path | Component | Stack |
+|------|-----------|-------|
+| `agent/` | Eve orchestrator: 7 subagents, 9 tools, WhatsApp channel (stub), daily report schedule | Eve + Meta Model API (Muse) |
+| `crm/` | CRM REST API + Telegram HITL bot daemon (`:8787`) | Hono, Drizzle ORM, PostgreSQL 17 (Docker, `:5433`) |
+| `desktop/` | Mission Control app: dashboard, approvals, marketing studio, SLA view | Tauri v2, React 18, Vite, Tailwind |
+
+## Quick start
 
 ```bash
-eve dev
+# 1. Database: PostgreSQL 17 in Docker (port 5433)
+cd crm
+npm run db:up
+npm run db:migrate
+
+# 2. CRM API + Telegram daemon (port 8787)
+npm run dev
+
+# 3. Desktop app — separate terminal
+cd desktop
+npm run tauri dev
+
+# 4. Agent REPL — separate terminal, repo root
+npm run dev
 ```
 
-The development TUI opens an interactive session where you can send messages to your agent.
+Environment variables: copy `.env.example` → `.env.local`, `crm/.env.example` → `crm/.env`, and set `VITE_CRM_OWNER_KEY` in `desktop/.env`. See the [Operations Runbook](docs/OPERATIONS_RUNBOOK.md) for the full reference.
 
-Start by editing `agent/instructions.md` to define the agent's identity, purpose, tone, and response guidelines. Configure its model and runtime behavior in `agent/agent.ts`.
+## Documentation
 
-Add capabilities under `agent/`, including tools, connections, channels, skills, subagents, and schedules. eve reloads your changes as you work.
+- [Documentation index](docs/README.md)
+- [System architecture](docs/ARCHITECTURE.md)
+- [Operations runbook](docs/OPERATIONS_RUNBOOK.md)
+- [Roadmap & next steps](docs/ROADMAP_AND_NEXT_STEPS.md)
 
-## Learn more
+## Eve resources
 
-To learn more about eve, explore these resources:
-
-- [eve documentation](https://eve.dev/docs) — learn about eve's features and authoring APIs.
+- [eve documentation](https://eve.dev/docs) — features and authoring APIs.
 - [Build an Agent tutorial](https://eve.dev/docs/tutorial/first-agent) — build and deploy an agent step by step.
 - [eve on GitHub](https://github.com/vercel/eve) — view the source and contribute.
 
 ## Deploy on Vercel
 
-Deploy your agent to [Vercel](https://vercel.com) from the project root:
+Deploy the **agent** (not the CRM backend or desktop app) from the project root:
 
 ```bash
 eve deploy
