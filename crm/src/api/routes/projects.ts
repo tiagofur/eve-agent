@@ -1,0 +1,138 @@
+import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { eq, desc, inArray } from "drizzle-orm";
+import { db } from "../../db/client";
+import { projects, tasks, organizations } from "../../db/schema";
+import { requireScope, type AuthContextVariables } from "../auth-middleware";
+import { createProject, createTask, updateTaskStatus } from "../../domain/projects";
+
+export const projectsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+// Create project
+projectsRouter.post(
+  "/",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      organizationId: z.string().uuid(),
+      leadId: z.string().uuid().optional(),
+      name: z.string().min(1),
+      repoUrl: z.string().url().optional(),
+      milestonesList: z
+        .array(
+          z.object({
+            title: z.string().min(1),
+            dueDate: z.string().optional(),
+          })
+        )
+        .optional(),
+    })
+  ),
+  async (c) => {
+    const data = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const project = await createProject({
+      ...data,
+      actor,
+    });
+
+    return c.json({ success: true, project }, 201);
+  }
+);
+
+// List projects
+projectsRouter.get("/", requireScope(["ops"]), async (c) => {
+  const result = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      status: projects.status,
+      repoUrl: projects.repoUrl,
+      organizationName: organizations.name,
+      createdAt: projects.createdAt,
+    })
+    .from(projects)
+    .leftJoin(organizations, eq(projects.organizationId, organizations.id))
+    .orderBy(desc(projects.createdAt));
+
+  return c.json({ projects: result });
+});
+
+// Create task with engineering spec
+projectsRouter.post(
+  "/tasks",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      projectId: z.string().uuid(),
+      milestoneId: z.string().uuid().optional(),
+      title: z.string().min(1),
+      spec: z.string().min(1).describe("Detailed acceptance criteria, affected files, tests"),
+      assignee: z.string().default("gentle-shell"),
+    })
+  ),
+  async (c) => {
+    const data = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const task = await createTask({
+      ...data,
+      actor,
+    });
+
+    return c.json({ success: true, task }, 201);
+  }
+);
+
+// Get tasks ready for coding agents (accessible via 'dev' scope as well as ops/owner)
+projectsRouter.get("/tasks/ready", requireScope(["dev", "ops"]), async (c) => {
+  const result = await db
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      projectName: projects.name,
+      repoUrl: projects.repoUrl,
+      title: tasks.title,
+      spec: tasks.spec,
+      status: tasks.status,
+      assignee: tasks.assignee,
+      createdAt: tasks.createdAt,
+    })
+    .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .where(inArray(tasks.status, ["ready", "dispatched", "in_progress"]))
+    .orderBy(desc(tasks.createdAt));
+
+  return c.json({ tasks: result });
+});
+
+// Update task status and PR url (accessible by coding agent using 'dev' scope)
+projectsRouter.patch(
+  "/tasks/:id/status",
+  requireScope(["dev", "ops"]),
+  zValidator(
+    "json",
+    z.object({
+      status: z.enum(["ready", "dispatched", "in_progress", "in_review", "done", "blocked"]),
+      prUrl: z.string().url().optional(),
+    })
+  ),
+  async (c) => {
+    const taskId = c.req.param("id");
+    const { status, prUrl } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const updated = await updateTaskStatus({
+      taskId,
+      status,
+      prUrl,
+      actor,
+    });
+
+    return c.json({ success: true, task: updated });
+  }
+);
