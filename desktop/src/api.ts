@@ -179,10 +179,22 @@ export const crmApi = {
     }),
   getProjects: () => request<{ projects: ProjectItem[] }>("/api/projects"),
   getReadyTasks: () => request<{ tasks: TaskItem[] }>("/api/projects/tasks/ready"),
-  sendChatMessage: (messages: ChatMessage[]) =>
+  sendChatMessage: (messages: ChatMessage[], threadId?: string | null) =>
     request<ChatResponse>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify(threadId ? { messages, threadId } : { messages }),
+    }),
+  getChatThreads: () => request<{ threads: ChatThread[] }>("/api/chat/threads"),
+  createChatThread: (title?: string) =>
+    request<{ thread: ChatThread }>("/api/chat/threads", {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+  getChatThread: (threadId: string) =>
+    request<ChatThreadDetails>(`/api/chat/threads/${threadId}`),
+  deleteChatThread: (threadId: string) =>
+    request<{ success: boolean }>(`/api/chat/threads/${threadId}`, {
+      method: "DELETE",
     }),
   getSocialPosts: () => request<{ posts: SocialPostItem[] }>("/api/marketing"),
   generateSocialPost: (data: { platform: string; topic: string; tone?: string }) =>
@@ -208,9 +220,28 @@ export interface ChatMessage {
 
 export interface ChatResponse {
   reply: string;
+  threadId?: string;
   toolCalls?: Array<{
     toolName: string;
     args: any;
+  }>;
+}
+
+export interface ChatThread {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatThreadDetails {
+  thread: ChatThread;
+  messages: Array<{
+    id: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    toolCalls?: Array<{ toolName: string; args: any }> | null;
+    createdAt: string;
   }>;
 }
 
