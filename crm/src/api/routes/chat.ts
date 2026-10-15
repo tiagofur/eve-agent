@@ -9,13 +9,11 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createSubscriptionFetch } from "../../../../agent/lib/meta-subscription";
 import { eq, asc, desc, sql, count } from "drizzle-orm";
 import { db } from "../../db/client";
-import { leads, organizations, contacts, outbox, tickets, dossiers, chatThreads, chatMessages } from "../../db/schema";
+import { leads, organizations, contacts, outbox, tickets, chatThreads, chatMessages } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
-import { ingestLead, changeLeadStage } from "../../domain/leads";
 import { discoverContact } from "../../domain/contact-discovery";
-import { normalizeResearchInput } from "../../domain/research-input";
-import { createDossier } from "../../domain/dossiers";
-import { createOutreachDraft } from "../../domain/outbox";
+import { researchAndSaveProspect } from "../../domain/prospect-intake";
+import { searchWeb } from "../../domain/web-search";
 import { createTicket } from "../../domain/tickets";
 import { createTask } from "../../domain/projects";
 
@@ -86,6 +84,7 @@ chatRouter.post(
 // Get thread with messages
 chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
   const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing thread id" }, 400);
   const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
   if (!thread) return c.json({ error: "Thread not found" }, 404);
   const msgs = await db
@@ -99,6 +98,7 @@ chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
 // Delete thread (messages cascade)
 chatRouter.delete("/threads/:id", requireScope(["ops"]), async (c) => {
   const id = c.req.param("id");
+  if (!id) return c.json({ error: "Missing thread id" }, 400);
   await db.delete(chatThreads).where(eq(chatThreads.id, id));
   return c.json({ success: true });
 });
@@ -148,7 +148,7 @@ You are conversing with the owner/director of Creapolis.Dev in natural Spanish.
 You have direct autonomous access to tools that query and manipulate the Creapolis CRM database:
 - Check pipeline stats, search leads, research prospects, draft outreach, inspect support tickets, or dispatch coding tasks.
 When the user asks you to research a business, look up data, or perform an action, ALWAYS use your tools.
-Research loop (same turn, never stop halfway): FIRST call discover_business_contact (or let research_and_save_prospect discover automatically), THEN call research_and_save_prospect to persist the lead and dossier. A discovery with no verified contact is a valid result: save the prospect anyway WITHOUT inventing an email, and tell the owner the contact needs manual completion.
+Research loop (same turn, never stop halfway): when the owner asks you to FIND a prospect by criteria (industry, city, niche), FIRST call search_web for real candidates and pick the strongest one; when a business is already named, start at discovery. Then call discover_business_contact on the chosen candidate (or let research_and_save_prospect discover automatically), THEN call research_and_save_prospect with the COMPLETE template: companyName, summary (>=20 chars), pains (>=1), techStack, proposedSolution (>=20 chars), outreachAngle (>=20 chars), plus any verified contactEmail/contactPhone. A name-only record is NEVER a valid outcome: if you cannot fill the template from real data, tell the owner what is missing instead of saving a partial record. A discovery with no verified contact is a valid result: save the prospect anyway WITHOUT inventing an email, and tell the owner the contact needs manual completion. If search_web reports not_configured, explain how to enable it (SEARCH_API_KEY in crm/.env) and only research businesses the owner names explicitly.
 Be concise, senior, and proactive. Highlight non-obvious opportunities.
 Never assume: if you don't know a business fact, ask or research first.`,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -156,7 +156,7 @@ Never assume: if you don't know a business fact, ask or research first.`,
         tools: {
           get_pipeline_summary: tool({
             description: "Get current summary of CRM leads, open support tickets, and pending outreach drafts.",
-            parameters: z.object({}),
+            inputSchema: z.object({}),
             execute: async () => {
               const [leadsCount] = await db.select({ total: count(leads.id) }).from(leads);
               const [openTickets] = await db
@@ -178,7 +178,7 @@ Never assume: if you don't know a business fact, ask or research first.`,
 
           search_leads: tool({
             description: "Search for leads or prospects in the CRM by name, company, or stage.",
-            parameters: z.object({
+            inputSchema: z.object({
               query: z.string().describe("Name, company, email, or stage keyword"),
             }),
             execute: async ({ query }) => {
@@ -210,13 +210,31 @@ Never assume: if you don't know a business fact, ask or research first.`,
             },
           }),
 
+          search_web: tool({
+            description:
+              "Search the real web (Brave/Tavily) for local businesses and public information. " +
+              "Use this FIRST when the owner asks to FIND a prospect by criteria (e.g. 'un dentista en Puerto Vallarta') " +
+              "instead of guessing from memory. Returns a list of {title, url, snippet}: pick the best candidate, " +
+              "then verify its contact with discover_business_contact. If it reports not_configured, tell the owner " +
+              "to set SEARCH_API_KEY in crm/.env.",
+            inputSchema: z.object({
+              query: z
+                .string()
+                .describe("Search query in natural language, e.g. 'clínica dental Puerto Vallarta'"),
+              count: z.number().optional().describe("Number of results (default 8, max 10)"),
+            }),
+            execute: async ({ query, count }) => {
+              return searchWeb({ query, count });
+            },
+          }),
+
           discover_business_contact: tool({
             description:
               "Find real contact details (email, phone, website) for a business from its public website. " +
               "Call this BEFORE research_and_save_prospect when you don't have verified contact data. " +
               "Returns verified contacts observed on the company's pages, plus unverified suggestions (pattern-based, MX-valid domain) that a human must confirm. " +
               "If confidence is 'none', the prospect has no publishable contact: save it anyway WITHOUT inventing an email.",
-            parameters: z.object({
+            inputSchema: z.object({
               companyName: z.string().optional().describe("Company or business name"),
               businessName: z.string().optional().describe("Alias of companyName"),
               business_name: z.string().optional().describe("Alias of companyName"),
@@ -232,12 +250,15 @@ Never assume: if you don't know a business fact, ask or research first.`,
 
           research_and_save_prospect: tool({
             description:
-              "Register a prospective business and save a verified research dossier into the CRM. " +
+              "Register a prospective business and save a COMPLETE research dossier into the CRM. " +
               "If you already called discover_business_contact, pass its verified email/phone. " +
-              "Otherwise discovery runs automatically. NEVER invent an email like contact@domain: " +
-              "leave contact empty when unknown so the lead is saved for manual completion. " +
-              "Parámetros EXACTOS: companyName, contactEmail, contactPhone, domain, summary, pains, proposedSolution, sources.",
-            parameters: z.object({
+              "Otherwise discovery runs automatically and its verified pages are saved as sources. " +
+              "NEVER invent an email like contact@domain: leave contact empty when unknown so the " +
+              "lead is saved for manual completion. If the business already exists as a partial, " +
+              "name-only record, this tool completes it with the dossier instead of skipping it. " +
+              "Parámetros EXACTOS: companyName, contactEmail, contactPhone, domain, summary, pains, " +
+              "techStack, proposedSolution, outreachAngle, sources.",
+            inputSchema: z.object({
               companyName: z.string().optional().describe("Company or business name"),
               businessName: z.string().optional().describe("Alias of companyName"),
               contactEmail: z
@@ -247,11 +268,25 @@ Never assume: if you don't know a business fact, ask or research first.`,
               contactPhone: z
                 .string()
                 .optional()
-                .describe("Real, verified contact phone. Leave empty if unknown."),
+                .describe("Real, verified contact phone (WhatsApp). Leave empty if unknown."),
               domain: z.string().optional().describe("Website domain"),
-              summary: z.string().optional().describe("Executive diagnosis of opportunity and pains"),
-              pains: z.array(z.string()).optional().describe("List of observed operational or technical pains"),
-              proposedSolution: z.string().optional().describe("Creapolis.Dev high-ROI solution"),
+              summary: z
+                .string()
+                .optional()
+                .describe("Executive diagnosis of opportunity and pains (at least 20 characters)"),
+              pains: z.array(z.string()).optional().describe("List of observed operational or technical pains (at least 1)"),
+              techStack: z
+                .array(z.string())
+                .optional()
+                .describe("Tools and technologies observed (e.g. WordPress, manual WhatsApp). Empty if no web presence."),
+              proposedSolution: z
+                .string()
+                .optional()
+                .describe("Creapolis.Dev high-ROI solution (at least 20 characters)"),
+              outreachAngle: z
+                .string()
+                .optional()
+                .describe("Opening angle for the first outreach message (at least 20 characters)"),
               sources: z
                 .array(
                   z.object({
@@ -260,104 +295,32 @@ Never assume: if you don't know a business fact, ask or research first.`,
                   })
                 )
                 .optional()
-                .describe("Verified source URLs (optional: the orchestrator cannot browse)"),
+                .describe("Verified source URLs (optional: pages verified by discovery are saved automatically)"),
             }),
             execute: async (rawInput: unknown) => {
-              // Validate FIRST: nothing is written to the DB until input is good.
-              const normalized = normalizeResearchInput(rawInput);
-              if (!normalized.ok) throw new Error(normalized.error);
-              const research = normalized.value;
-
-              let email = research.contactEmail;
-              let phone = research.contactPhone;
-              let website = research.domain;
-              let contactConfidence: "given" | "page" | "domain" | "none" = email || phone ? "given" : "none";
-              let suggestedEmails: string[] = [];
-
-              if (!email && !phone) {
-                const discovery = await discoverContact({ companyName: research.companyName, domain: website });
-                email = discovery.verifiedEmails[0];
-                phone = discovery.verifiedPhones[0];
-                if (discovery.website) website = discovery.website;
-                suggestedEmails = discovery.suggestedEmails;
-                contactConfidence = discovery.confidence;
-              }
-
-              const ingested = await ingestLead({
-                clientName: research.companyName,
-                companyName: research.companyName,
-                contact: email ?? phone,
-                serviceType: "automation",
-                projectSummary: research.summary,
-                source: "orchestrator_chat",
-                actor,
-              });
-
-              if (ingested.duplicate) {
-                return {
-                  success: true,
-                  duplicate: true,
-                  leadId: ingested.lead.id,
-                  stage: ingested.lead.stage,
-                  message: `Este negocio ya estaba prospectado (etapa ${ingested.lead.stage}). No se creó un duplicado.`,
-                };
-              }
-
-              let dossier;
-              try {
-                dossier = await createDossier({
-                  leadId: ingested.lead.id,
-                  organizationId: ingested.lead.organizationId || undefined,
-                  companyName: research.companyName,
-                  domain: website,
-                  summary: research.summary,
-                  findings: {
-                    pains: research.pains,
-                    solution: research.proposedSolution,
-                  },
-                  sources: research.sources.map((s) => ({
-                    url: s.url,
-                    retrievedAt: new Date().toISOString(),
-                    note: s.note,
-                  })),
-                  actor,
-                });
-              } catch (err) {
-                // Roll back the lead so a failed save never leaves a junk row.
-                await db.delete(leads).where(eq(leads.id, ingested.lead.id));
-                throw new Error(
-                  `No se pudo guardar el dossier y se descartó el lead parcial. Causa: ${err instanceof Error ? err.message : String(err)}. Reintenta con datos completos.`
-                );
-              }
-
-              const transition = await changeLeadStage({
-                leadId: ingested.lead.id,
-                targetStage: "researched",
-                reason: "dossier verificado",
-                actor,
-              });
-              const moved = "success" in transition && transition.success === true;
+              // Validation, dedup-completion, sources and rollback live in the
+              // domain so every caller gets the same guarantees and tests cover it.
+              const result = await researchAndSaveProspect(rawInput, { actor });
 
               return {
                 success: true,
-                leadId: ingested.lead.id,
-                dossierId: dossier.id,
-                stage: moved ? "researched" : ingested.lead.stage,
-                contact: email ?? phone ?? null,
-                contactConfidence,
-                suggestedEmails,
-                message:
-                  (email || phone
-                    ? `Prospecto registrado con contacto verificado (confianza: ${contactConfidence}).`
-                    : "Prospecto registrado SIN contacto verificado: completar manualmente antes de hacer outreach.") +
-                  (moved ? " Etapa: researched." : " No se pudo avanzar la etapa: revisar transiciones."),
+                outcome: result.outcome,
+                leadId: result.leadId,
+                dossierId: result.dossierId,
+                stage: result.stage,
+                contact: result.contact,
+                contactConfidence: result.contactConfidence,
+                suggestedEmails: result.suggestedEmails,
+                website: result.website,
+                sourcesCount: result.sourcesCount,
+                message: result.message,
               };
             },
           }),
 
           create_support_ticket: tool({
             description: "Register a client support incident with contractual SLA calculation.",
-            parameters: z.object({
+            inputSchema: z.object({
               clientName: z.string(),
               contact: z.string(),
               system: z.string(),
@@ -380,7 +343,7 @@ Never assume: if you don't know a business fact, ask or research first.`,
 
           dispatch_coding_task: tool({
             description: "Dispatch an autonomous coding task spec to the terminal coding worker (gentle-shell).",
-            parameters: z.object({
+            inputSchema: z.object({
               projectId: z.string().uuid(),
               title: z.string(),
               spec: z.string(),
@@ -393,15 +356,15 @@ Never assume: if you don't know a business fact, ask or research first.`,
               });
               return {
                 success: true,
-                taskId: result.task.id,
-                status: result.task.status,
+                taskId: result.id,
+                status: result.status,
               };
             },
           }),
 
           generate_marketing_post: tool({
             description: "Generate a high-converting social media marketing post for Instagram, Facebook, or LinkedIn with copy, hashtags, and Muse visual image prompt.",
-            parameters: z.object({
+            inputSchema: z.object({
               platform: z.enum(["instagram", "facebook", "linkedin", "twitter"]),
               topic: z.string().describe("Topic or case study to promote (e.g. WhatsApp AI Agent for Medical Clinics)"),
               tone: z.string().optional().describe("Voice tone"),
