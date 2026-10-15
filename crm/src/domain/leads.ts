@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, or, not, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   organizations,
@@ -18,7 +18,7 @@ export type ChannelType = (typeof channelEnum.enumValues)[number];
 export interface IngestLeadInput {
   clientName: string;
   companyName?: string;
-  contact: string; // email, phone, or whatsapp number
+  contact?: string; // email, phone, or whatsapp number. Omit when unknown: the lead is saved without verified contact.
   serviceType?: ServiceType;
   projectSummary: string;
   estimatedBudget?: string;
@@ -27,9 +27,10 @@ export interface IngestLeadInput {
 }
 
 export async function ingestLead(input: IngestLeadInput) {
-  const isEmail = input.contact.includes("@");
-  const email = isEmail ? input.contact.trim().toLowerCase() : undefined;
-  const phone = !isEmail ? input.contact.trim() : undefined;
+  const rawContact = input.contact?.trim() || undefined;
+  const isEmail = !!rawContact && rawContact.includes("@");
+  const email = rawContact && isEmail ? rawContact.toLowerCase() : undefined;
+  const phone = rawContact && !isEmail ? rawContact : undefined;
 
   // 1. Resolve or create organization
   let orgId: string | undefined = undefined;
@@ -101,8 +102,8 @@ export async function ingestLead(input: IngestLeadInput) {
         name: input.clientName.trim(),
         email,
         phone,
-        preferredChannel: isEmail ? "email" : "whatsapp",
-        whatsappConsent: !isEmail, // If contact via whatsapp, they initiated contact
+        preferredChannel: email ? "email" : phone ? "whatsapp" : undefined,
+        whatsappConsent: !!phone, // Only a phone the contact themselves provided implies consent
       })
       .returning();
 
@@ -115,6 +116,29 @@ export async function ingestLead(input: IngestLeadInput) {
         actor: input.actor,
         after: { name: newContact.name, email, phone },
       });
+    }
+  }
+
+  // 2b. Duplicate guard: if an open lead already exists for the same
+  // organization or contact, the business is already prospected.
+  // Return it instead of creating a duplicate row.
+  if (orgId || contactId) {
+    const [existingLead] = await db
+      .select()
+      .from(leads)
+      .where(
+        and(
+          or(
+            ...(orgId ? [eq(leads.organizationId, orgId)] : []),
+            ...(contactId ? [eq(leads.contactId, contactId)] : [])
+          ),
+          not(inArray(leads.stage, ["lost", "won"]))
+        )
+      )
+      .limit(1);
+
+    if (existingLead) {
+      return { lead: existingLead, hasOptOut, duplicate: true as const };
     }
   }
 
@@ -136,8 +160,8 @@ export async function ingestLead(input: IngestLeadInput) {
     throw new Error("Failed to create lead record");
   }
 
-  // Record initial interaction note
-  if (contactId) {
+  // Record initial interaction note (only when we have a real channel)
+  if (contactId && (email || phone)) {
     await db.insert(interactions).values({
       leadId: lead.id,
       contactId,
@@ -169,6 +193,7 @@ export async function ingestLead(input: IngestLeadInput) {
   return {
     lead,
     hasOptOut,
+    duplicate: false as const,
   };
 }
 
