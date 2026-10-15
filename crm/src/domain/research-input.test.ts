@@ -7,7 +7,9 @@ const COMPLETE = {
   domain: "acme.com",
   summary: "Diagnóstico ejecutivo con más de veinte caracteres.",
   pains: ["No tiene reservas online"],
+  techStack: ["WordPress"],
   proposedSolution: "Bot de reservas por WhatsApp con confirmación automática.",
+  outreachAngle: "Felicitar por su reputación y proponer atención 24/7 con IA.",
   sources: [{ url: "https://acme.com" }],
 };
 
@@ -31,12 +33,16 @@ describe("normalizeResearchInput", () => {
         "ACME - Dossier operativo: laboratorio clínico general con dolores de agendamiento manual y alto no-show.",
       operational_pains: ["Citas por teléfono manual", "Alto no-show sin recordatorios"],
       opportunity: "Sistema de reservas online con recordatorios automáticos por WhatsApp.",
+      angle: "Empatizar con la saturación de recepción y proponer una recepcionista digital 24/7.",
+      stack: "WordPress, WhatsApp manual",
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.summary.length).toBeGreaterThanOrEqual(20);
       expect(result.value.pains).toHaveLength(2);
       expect(result.value.proposedSolution.length).toBeGreaterThanOrEqual(20);
+      expect(result.value.outreachAngle.length).toBeGreaterThanOrEqual(20);
+      expect(result.value.techStack).toEqual(["WordPress", "WhatsApp manual"]);
       expect(result.value.sources).toEqual([]);
     }
   });
@@ -48,6 +54,7 @@ describe("normalizeResearchInput", () => {
       expect(result.error).toContain("summary");
       expect(result.error).toContain("pains");
       expect(result.error).toContain("proposedSolution");
+      expect(result.error).toContain("outreachAngle");
       expect(result.error).toContain("nombres EXACTOS");
     }
   });
@@ -62,6 +69,24 @@ describe("normalizeResearchInput", () => {
     if (result.ok) {
       expect(result.value.pains).toEqual(["Sin reservas online", "No-show alto"]);
       expect(result.value.sources).toEqual([{ url: "https://acme.com/contacto" }]);
+    }
+  });
+
+  it("allows an empty techStack when the business has no web presence", () => {
+    const { techStack, ...withoutStack } = COMPLETE;
+    const result = normalizeResearchInput(withoutStack);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(techStack).toBeDefined(); // guard: COMPLETE carries a stack for other tests
+      expect(result.value.techStack).toEqual([]);
+    }
+  });
+
+  it("rejects a short outreach angle", () => {
+    const result = normalizeResearchInput({ ...COMPLETE, outreachAngle: "hola" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("outreachAngle");
     }
   });
 
