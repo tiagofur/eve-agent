@@ -443,3 +443,26 @@ export const socialPosts = pgTable(
   (t) => [index("social_posts_status_idx").on(t.status), index("social_posts_platform_idx").on(t.platform)],
 );
 
+/** Orchestrator chat threads (persistent conversation memory) */
+export const chatThreads = pgTable("chat_threads", {
+  id: id(),
+  title: text("title").notNull().default("Nueva conversación"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: id(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    role: text("role").notNull(), // user | assistant | system
+    content: text("content").notNull(),
+    toolCalls: jsonb("tool_calls"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("chat_messages_thread_idx").on(t.threadId)],
+);
+

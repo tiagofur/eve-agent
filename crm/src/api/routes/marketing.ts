@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createSubscriptionFetch } from "../../../../agent/lib/meta-subscription";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import {
   createSocialPost,
@@ -24,10 +25,29 @@ function getModel() {
     return meta(process.env.META_MODEL_ID || "muse-spark-1.3-contributor");
   }
 
-  const openai = createOpenAI({
-    apiKey: process.env.OPENAI_API_KEY || "dummy",
+  // Explicit OpenAI key always wins when set.
+  if (process.env.OPENAI_API_KEY) {
+    const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return openai("gpt-4o-mini");
+  }
+
+  if (process.env.META_USE_SUBSCRIPTION === "0") {
+    // Escape hatch back to the previous OpenAI default.
+    const openai = createOpenAI({
+      apiKey: process.env.OPENAI_API_KEY || "dummy",
+    });
+    return openai("gpt-4o-mini");
+  }
+
+  // Local-only Muse Code subscription (one-time login via
+  // `node scripts/meta-login.mjs`). No API billing.
+  const metaSubscription = createOpenAI({
+    name: "meta-subscription",
+    baseURL: process.env.META_API_BASE_URL || "https://api.meta.ai/v1",
+    apiKey: "subscription",
+    fetch: createSubscriptionFetch(),
   });
-  return openai("gpt-4o-mini");
+  return metaSubscription(process.env.META_MODEL_ID || "muse-spark-1.3-contributor");
 }
 
 // 1. List social posts
