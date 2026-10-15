@@ -184,7 +184,8 @@ marketingRouter.post(
   "/:id/publish",
   requireScope(["owner"]),
   async (c) => {
-    const { id } = c.req.param();
+    const id = c.req.param("id");
+    if (!id) return c.json({ error: "Missing post id" }, 400);
     const actor = c.get("actor");
 
     try {

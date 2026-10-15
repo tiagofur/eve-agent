@@ -273,8 +273,12 @@ ${post.imagePrompt ? `<b>Prompt Visual (Muse Image):</b>\n<code>${escapeHtml(pos
 
   if (post.imageUrl && (post.imageUrl.startsWith("data:image/") || !post.imageUrl.startsWith("http"))) {
     const rawB64 = post.imageUrl.includes(",") ? post.imageUrl.split(",")[1] : post.imageUrl;
-    const photoCaption = `🎨 <b>NUEVA PUBLICACIÓN SOCIAL (${platformUpper})</b>\n\n<b>Tema:</b> ${escapeHtml(post.topic)}\n\n¿Deseas autorizar la publicación en ${platformUpper}?`;
-    return await sendTelegramPhoto(rawB64, photoCaption, keyboard);
+    if (rawB64) {
+      const photoCaption = `🎨 <b>NUEVA PUBLICACIÓN SOCIAL (${platformUpper})</b>\n\n<b>Tema:</b> ${escapeHtml(post.topic)}\n\n¿Deseas autorizar la publicación en ${platformUpper}?`;
+      return await sendTelegramPhoto(rawB64, photoCaption, keyboard);
+    }
+    // Malformed base64 payload: fall through to the text message so the
+    // approval flow still reaches the owner.
   }
 
   return await sendTelegramMessage(text, keyboard, "HTML");
