@@ -60,6 +60,11 @@ FRONT_API_KEY=<cp_front_key>
 OPS_API_KEY=<cp_ops_key>
 OWNER_API_KEY=<cp_owner_key>
 DEV_API_KEY=<cp_dev_key>
+# Web search for the chat orchestrator (`search_web` tool): required to FIND
+# prospects by criteria instead of guessing from model memory.
+# Free keys: Brave (https://brave.com/search/api) or Tavily (https://tavily.com)
+SEARCH_PROVIDER=brave
+SEARCH_API_KEY=<your-search-api-key>
 ```
 
 ### Desktop App `desktop/.env` (Mission Control API Access)
