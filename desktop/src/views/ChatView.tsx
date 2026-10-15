@@ -253,7 +253,7 @@ export const ChatView: React.FC = () => {
                   void handleDeleteThread(t.id);
                 }}
                 title="Eliminar conversación"
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-rose-400 transition"
+                className="shrink-0 p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-rose-400 transition opacity-40 hover:opacity-100"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
