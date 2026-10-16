@@ -19,7 +19,7 @@ leadsRouter.post(
     z.object({
       clientName: z.string().min(1),
       companyName: z.string().optional(),
-      contact: z.string().min(1),
+      contact: z.string().min(1).optional(),
       serviceType: z.enum(["software_development", "automation", "ai_implementation", "consulting"]).optional(),
       projectSummary: z.string().min(1),
       estimatedBudget: z.string().optional(),

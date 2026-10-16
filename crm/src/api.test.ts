@@ -51,6 +51,21 @@ describe("CRM API Integration Tests", () => {
       await db.delete(contacts).where(inArray(contacts.id, contactIds));
     }
 
+    // Contact-less test orgs (no email to key on): clean by organization name.
+    const testOrgNames = ["TEST-SinContacto Corp"];
+    for (const orgName of testOrgNames) {
+      const [org] = await db
+        .select()
+        .from(organizations)
+        .where(eq(organizations.name, orgName))
+        .limit(1);
+      if (org) {
+        await db.delete(leads).where(eq(leads.organizationId, org.id));
+        await db.delete(contacts).where(eq(contacts.organizationId, org.id));
+        await db.delete(organizations).where(eq(organizations.id, org.id));
+      }
+    }
+
     // Clean up test keys and close pool
     await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(frontKey)));
     await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(opsKey)));
@@ -118,6 +133,38 @@ describe("CRM API Integration Tests", () => {
     });
 
     expect(res2.status).toBe(201);
+  });
+
+  it("POST /api/leads ingests an honest contact-less lead", async () => {
+    const res = await app.request("/api/leads", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${frontKey}`,
+      },
+      body: JSON.stringify({
+        clientName: "TEST-Sin Contacto",
+        companyName: "TEST-SinContacto Corp",
+        serviceType: "automation",
+        projectSummary: "Lead de prueba sin contacto verificado para el intake honesto.",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.leadId).toBeDefined();
+    expect(body.stage).toBe("new");
+
+    const [lead] = await db.select().from(leads).where(eq(leads.id, body.leadId));
+    expect(lead).toBeDefined();
+    // Honest no-contact: no invented email/phone, whether or not a
+    // name-only contact row exists.
+    const [contact] = lead!.contactId
+      ? await db.select().from(contacts).where(eq(contacts.id, lead!.contactId))
+      : [undefined];
+    expect(contact?.email ?? null).toBeNull();
+    expect(contact?.phone ?? null).toBeNull();
   });
 
   it("PATCH /api/leads/:id/stage enforces stage transition rules", async () => {
