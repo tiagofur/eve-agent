@@ -1,8 +1,12 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
+import { scheduleConsultation } from "../lib/google-calendar";
 
 export default defineTool({
-  description: "Schedule a 30-minute discovery and technical architecture consultation with the Creapolis.Dev engineering team.",
+  description:
+    "Schedule a REAL 30-minute discovery consultation on the Creapolis.Dev Google Calendar " +
+    "(checks availability, creates the event with a Google Meet link, invites the contact email). " +
+    "Never invents slots: unknown dates, past times or busy calendars return an explicit message.",
   inputSchema: z.object({
     clientName: z.string().describe("Name of the prospective client"),
     contact: z.string().describe("Email or WhatsApp number to send the invitation to"),
@@ -11,12 +15,20 @@ export default defineTool({
     discussionTopics: z.array(z.string()).describe("List of topics to cover in the call"),
   }),
   async execute(input) {
-    return {
-      status: "consultation_scheduled",
-      confirmationCode: `CONF-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
-      meetingLink: "https://meet.creapolis.dev/discovery",
-      scheduledAt: new Date().toISOString(),
-      ...input,
-    };
+    try {
+      return await scheduleConsultation({
+        clientName: input.clientName,
+        contact: input.contact,
+        discussionTopics: input.discussionTopics,
+        preferredDate: input.preferredDate,
+        preferredTimeSlot: input.preferredTimeSlot,
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        status: "failed",
+        message: err instanceof Error ? err.message : "No se pudo agendar la consulta.",
+      };
+    }
   },
 });

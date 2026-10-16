@@ -44,6 +44,13 @@ EVE_CHANNEL_USER="<eve-service-user>"
 # Generate once per environment, never commit: openssl rand -hex 32
 EVE_CHANNEL_PASSWORD="<eve-service-password>"
 
+# Google Calendar (real `schedule_consultation`: freebusy + Meet events)
+GOOGLE_CLIENT_ID="<google-oauth-client-id>"
+GOOGLE_CLIENT_SECRET="<google-oauth-client-secret>"
+GOOGLE_REFRESH_TOKEN="<google-refresh-token>"
+# Optional calendar (default primary)
+GOOGLE_CALENDAR_ID=""
+
 # WhatsApp Cloud API (Optional / Pending production credentials)
 WHATSAPP_ACCESS_TOKEN=""
 WHATSAPP_APP_SECRET=""
@@ -80,6 +87,18 @@ VITE_CRM_API_URL=http://localhost:8787
 VITE_CRM_OWNER_KEY=<cp_owner_key>
 ```
 A runtime override is also honored: `localStorage.setItem("CREAPOLIS_OWNER_KEY", ...)`.
+
+### Google Calendar one-time consent (`schedule_consultation`)
+1. Google Cloud → project → enable **Google Calendar API**.
+2. OAuth consent screen → External → test mode → add yourself as test user.
+3. Credentials → Create Credentials → OAuth client ID → **Desktop app** → copy ID + secret into `.env.local` above.
+4. Run the loopback consent flow (opens browser approval, stores the refresh token at `~/.config/eve-agent/google-calendar.json`, never committed):
+```bash
+GOOGLE_CLIENT_ID="..." GOOGLE_CLIENT_SECRET="..." node scripts/google-auth.mjs
+node scripts/google-auth.mjs --check
+```
+5. Copy the stored refresh token into `.env.local` as `GOOGLE_REFRESH_TOKEN`, rebuild + restart the eve service so the tool picks it up.
+Without these three vars the tool answers `not_configured` honestly instead of inventing meetings; unknown dates, past times and busy calendars also return explicit messages (with up to 3 free alternatives on conflict).
 
 ---
 
