@@ -38,6 +38,12 @@ CRM_FRONT_KEY="<cp_front_key>"
 CRM_OPS_KEY="<cp_ops_key>"
 CRM_OWNER_KEY="<cp_owner_key>"
 
+# Eve Brain Service (single brain for all channels; CRM `/api/chat` proxies here)
+EVE_AGENT_URL="http://127.0.0.1:3000"
+EVE_CHANNEL_USER="<eve-service-user>"
+# Generate once per environment, never commit: openssl rand -hex 32
+EVE_CHANNEL_PASSWORD="<eve-service-password>"
+
 # WhatsApp Cloud API (Optional / Pending production credentials)
 WHATSAPP_ACCESS_TOKEN=""
 WHATSAPP_APP_SECRET=""
@@ -103,7 +109,16 @@ Creapolis CRM API running at http://localhost:8787
 [Telegram] Service active for Admin Chat ID: <your-id>
 ```
 
-### Step 4: Run the macOS Desktop App
+### Step 4: Start Eve Brain Service (single brain for all channels)
+```bash
+npm run build
+set -a; . .env.local; set +a
+PORT=3000 npm run start -- --host 127.0.0.1
+```
+*Output: serves `/eve/v1` on `http://127.0.0.1:3000` (health: `GET /eve/v1/health`).*
+*Notes: rebuild after changing anything under `agent/` (tools, instructions, channel auth); workflow state persists in `.eve/.workflow-data` (git-ignored); model access uses the local Muse subscription (no extra auth). If `eve build` fails on compaction metadata for a custom model, declare `modelContextWindowTokens` in `agent/agent.ts` (verified value documented there). CRM `/api/chat` requires `EVE_AGENT_URL`, `EVE_CHANNEL_USER` and `EVE_CHANNEL_PASSWORD` from above, otherwise it answers 503.*
+
+### Step 5: Run the macOS Desktop App
 
 #### Development Mode (Live Hot Reloading):
 ```bash
