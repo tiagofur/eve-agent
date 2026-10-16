@@ -26,6 +26,19 @@ export interface DailyMetrics {
   generatedAt: string;
 }
 
+export interface InteractionItem {
+  id: string;
+  leadId: string | null;
+  organizationId: string | null;
+  ticketId: string | null;
+  projectId: string | null;
+  contactId: string | null;
+  channel: string;
+  direction: "inbound" | "outbound";
+  content: string;
+  createdAt: string;
+}
+
 export interface FollowUpItem {
   kind: "lead" | "ticket" | "organization";
   id: string;
@@ -233,6 +246,22 @@ export const crmApi = {
       body: JSON.stringify({ nextFollowUpAt, followUpNote }),
     }),
   getFollowups: () => request<{ overdue: FollowUpItem[]; upcoming: FollowUpItem[] }>("/api/reports/followups"),
+  logInteraction: (data: {
+    leadId?: string;
+    organizationId?: string;
+    ticketId?: string;
+    projectId?: string;
+    contactId?: string;
+    channel: string;
+    direction: "inbound" | "outbound";
+    content: string;
+  }) =>
+    request<{ success: boolean; interaction: InteractionItem }>("/api/interactions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getContactThread: (contactId: string) =>
+    request<{ interactions: InteractionItem[] }>(`/api/interactions/by-contact/${contactId}`),
   updateTicketStatus: (
     ticketId: string,
     status: string,

@@ -3,7 +3,9 @@ import { crmApi, OrganizationItem, OrganizationSummary } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
 import { Building2, RefreshCw, Search, Users, FolderKanban, LifeBuoy, FileText, History } from "lucide-react";
 
-export const ClientesView: React.FC = () => {
+import { ThreadDrawer } from "./ThreadDrawer";
+
+export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => void }> = ({ onAskOrchestrator }) => {
   const [orgs, setOrgs] = useState<OrganizationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,6 +13,7 @@ export const ClientesView: React.FC = () => {
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [summary, setSummary] = useState<OrganizationSummary | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [threadContact, setThreadContact] = useState<{ id: string; name: string } | null>(null);
 
   const fetchOrgs = async () => {
     try {
@@ -123,7 +126,15 @@ export const ClientesView: React.FC = () => {
                   <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><Users className="w-4 h-4" /> Contactos</h4>
                   {summary.contacts.length === 0 && <p className="text-xs text-zinc-600">Sin contactos.</p>}
                   {summary.contacts.map((c) => (
-                    <div key={c.id} className="text-sm text-zinc-300">{c.name} <span className="text-zinc-500 font-mono text-xs">{c.email || c.phone || ""}</span></div>
+                    <div key={c.id} className="flex items-center justify-between gap-2 py-1">
+                      <div className="text-sm text-zinc-300">{c.name} <span className="text-zinc-500 font-mono text-xs">{c.email || c.phone || ""}</span></div>
+                      <button
+                        onClick={() => setThreadContact({ id: c.id, name: c.name })}
+                        className="px-2.5 py-1 text-xs font-medium bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md transition"
+                      >
+                        Hilo
+                      </button>
+                    </div>
                   ))}
                 </section>
 
@@ -158,6 +169,19 @@ export const ClientesView: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+      {threadContact && summary && (
+        <ThreadDrawer
+          contactId={threadContact.id}
+          contactName={threadContact.name}
+          organizationId={summary.organization.id}
+          organizationName={summary.organization.name}
+          onClose={() => setThreadContact(null)}
+          onAskOrchestrator={(prompt) => {
+            setThreadContact(null);
+            onAskOrchestrator(prompt);
+          }}
+        />
       )}
     </div>
   );

@@ -244,7 +244,13 @@ export const interactions = pgTable(
   "interactions",
   {
     id: id(),
+    // T5: polymorphic links — at least one should be set, contact preferred.
     leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    ticketId: uuid("ticket_id").references(() => tickets.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     channel: channelEnum("channel").notNull(),
     direction: directionEnum("direction").notNull(),
@@ -252,7 +258,12 @@ export const interactions = pgTable(
     metadata: jsonb("metadata").notNull().default({}),
     createdAt: createdAt(),
   },
-  (t) => [index("interactions_lead_idx").on(t.leadId)],
+  (t) => [
+    index("interactions_lead_idx").on(t.leadId),
+    index("interactions_contact_idx").on(t.contactId),
+    index("interactions_org_idx").on(t.organizationId),
+    index("interactions_ticket_idx").on(t.ticketId),
+  ],
 );
 
 /**

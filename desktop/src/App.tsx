@@ -28,6 +28,12 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
+  const [chatPrompt, setChatPrompt] = useState<{ id: number; text: string } | null>(null);
+
+  const askOrchestrator = (text: string) => {
+    setChatPrompt({ id: Date.now(), text });
+    setActiveTab("chat");
+  };
 
   const checkStatus = async () => {
     try {
@@ -219,11 +225,13 @@ export const App: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto p-8 max-w-7xl w-full mx-auto">
           {activeTab === "dashboard" && <DashboardView />}
-          {activeTab === "chat" && <ChatView />}
+          {activeTab === "chat" && (
+            <ChatView externalPrompt={chatPrompt} onPromptConsumed={() => setChatPrompt(null)} />
+          )}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "outbox" && <OutboxView />}
           {activeTab === "leads" && <LeadsView />}
-          {activeTab === "clientes" && <ClientesView />}
+          {activeTab === "clientes" && <ClientesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "tickets" && <TicketsView />}
           {activeTab === "projects" && <ProjectsView />}
         </div>

@@ -41,7 +41,10 @@ function toDisplayTime(iso: string): string {
     : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export const ChatView: React.FC = () => {
+export const ChatView: React.FC<{
+  externalPrompt?: { id: number; text: string } | null;
+  onPromptConsumed?: () => void;
+}> = ({ externalPrompt, onPromptConsumed }) => {
   const [messages, setMessages] = useState<ExtendedMessage[]>([WELCOME_MESSAGE]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(() =>
@@ -192,6 +195,17 @@ export const ChatView: React.FC = () => {
       handleSend();
     }
   };
+
+  // Prompt delegado desde otra vista (ej. "Pedir al orquestador" en un hilo).
+  const consumedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (externalPrompt && consumedRef.current !== externalPrompt.id) {
+      consumedRef.current = externalPrompt.id;
+      handleSend(externalPrompt.text);
+      onPromptConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalPrompt]);
 
   const quickPrompts = [
     {

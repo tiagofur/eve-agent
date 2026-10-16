@@ -94,6 +94,38 @@ export async function crmCreateTicket(data: CreateSupportTicketParams) {
   };
 }
 
+export interface LogInteractionParams {
+  leadId?: string;
+  organizationId?: string;
+  ticketId?: string;
+  projectId?: string;
+  contactId?: string;
+  channel: "whatsapp" | "email" | "telegram" | "linkedin" | "phone" | "web" | "other";
+  direction: "inbound" | "outbound";
+  content: string;
+}
+
+export async function crmLogInteraction(data: LogInteractionParams) {
+  const res = await fetch(`${getCrmUrl()}/api/interactions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM interaction log failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    success: boolean;
+    interaction: { id: string; createdAt: string };
+  };
+}
+
 export interface SaveDossierParams {
   leadId?: string;
   organizationId?: string;

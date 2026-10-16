@@ -9,6 +9,7 @@ import { projectsRouter } from "./api/routes/projects";
 import { chatRouter } from "./api/routes/chat";
 import { marketingRouter } from "./api/routes/marketing";
 import { organizationsRouter } from "./api/routes/organizations";
+import { interactionsRouter } from "./api/routes/interactions";
 
 export const app = new Hono();
 
@@ -41,4 +42,5 @@ app.route("/api/projects", projectsRouter);
 app.route("/api/chat", chatRouter);
 app.route("/api/marketing", marketingRouter);
 app.route("/api/organizations", organizationsRouter);
+app.route("/api/interactions", interactionsRouter);
 
