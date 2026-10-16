@@ -15,7 +15,7 @@
 - T1 (S1, S2): Vista Clientes 360° en Desktop — ficha por organization: contactos, leads históricos, proyectos, tickets, interacciones, contratos, próximo seguimiento. Ruta: docs + CRM API + Desktop. Commit: T1 (ver git log feat: T1 clientes 360).
 - T2 (S1): Convertir lead→cliente/proyecto en un clic + alinear stages LeadsView con schema real (`new/researched/contacted/...`, no `intake/qualifying/...`). Ruta: CRM + Desktop. Commit: T2 (ver git log feat: T2 convertir lead).
 - T3 (S1, S2): Follow-ups (`next_follow_up_at + nota`) en lead/cliente/ticket + alertas Dashboard/Telegram. Ruta: CRM + Desktop + bot. Commit: T3 (5aa823e).
-- T4 (S3): Dos tipos de ticket: `support` (SLA 1h/4h/24h actual) e `info/sales` (SLA comercial 24h) + estados `nuevo → triage → asignado → esperando cliente → resuelto`. Ruta: CRM + Desktop. Commit: -
+- T4 (S3): Dos tipos de ticket: `support` (SLA 1h/4h/24h actual) e `info/sales` (SLA comercial 24h) + estados `nuevo → triage → asignado → esperando cliente → resuelto`. Ruta: CRM + Desktop. Commit: T4 (d65d55e).
 - T5 (S1, S4): Interactions polimórficas (lead | cliente | ticket | proyecto) + hilos unificados por contacto con botón "pedir al orquestador que conteste". Ruta: CRM + Desktop + `/api/chat`. Commit: -
 - T6 (S4): Outbox para clientes existentes (hoy exige `leadId`). Ruta: CRM + Desktop. Commit: -
 - T7 (S7): Nuevos subagentes `closer` y `biller` (solo planificación: propósito, tools, HITL). Ruta: agent/. Commit: -
