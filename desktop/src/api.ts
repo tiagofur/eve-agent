@@ -105,6 +105,28 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return (await res.json()) as T;
 }
 
+export interface OrganizationItem {
+  id: string;
+  name: string;
+  domain: string | null;
+  website: string | null;
+  industry: string | null;
+  city: string | null;
+  country: string | null;
+  createdAt: string;
+}
+
+export interface OrganizationSummary {
+  organization: OrganizationItem;
+  contacts: Array<{ id: string; name: string; email: string | null; phone: string | null; role: string | null }>;
+  leads: LeadItem[];
+  projects: ProjectItem[];
+  tickets: TicketItem[];
+  dossiers: DossierItem[];
+  drafts: OutboxDraft[];
+  timeline: TimelineEvent[];
+}
+
 export interface DossierItem {
   id: string;
   organizationId: string;
@@ -152,6 +174,15 @@ export const crmApi = {
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
   getFunnelReport: () => request<FunnelReport>("/api/reports/funnel"),
   getLeads: () => request<{ leads: LeadItem[] }>("/api/leads"),
+  getOrganizations: () =>
+    request<{ organizations: OrganizationItem[] }>("/api/organizations"),
+  getOrganizationSummary: (orgId: string) =>
+    request<OrganizationSummary>(`/api/organizations/${orgId}/summary`),
+  convertLead: (leadId: string, projectName?: string) =>
+    request<{ success: boolean; project: ProjectItem }>(`/api/leads/${leadId}/convert`, {
+      method: "POST",
+      body: JSON.stringify(projectName ? { projectName } : {}),
+    }),
   getLeadDetails: (leadId: string) => request<LeadDetailsResponse>(`/api/leads/${leadId}/details`),
   updateLeadStage: (leadId: string, targetStage: string, reason: string, lostReason?: string) =>
     request<{ success: boolean }>(`/api/leads/${leadId}/stage`, {

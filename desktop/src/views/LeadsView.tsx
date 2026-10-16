@@ -26,34 +26,34 @@ import {
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, { label: string; color: string }> = {
-  intake: { label: "Intake", color: "bg-slate-700 text-slate-200" },
-  qualifying: { label: "Qualifying", color: "bg-blue-900/60 text-blue-300 border border-blue-700" },
-  solutions_review: {
-    label: "Solutions Review",
-    color: "bg-purple-900/60 text-purple-300 border border-purple-700",
-  },
-  proposal_sent: {
-    label: "Proposal Sent",
-    color: "bg-amber-900/60 text-amber-300 border border-amber-700",
-  },
-  negotiation: {
-    label: "Negotiation",
-    color: "bg-orange-900/60 text-orange-300 border border-orange-700",
-  },
-  won: { label: "Won 🎉", color: "bg-emerald-900/60 text-emerald-300 border border-emerald-700" },
-  lost: { label: "Lost", color: "bg-rose-900/60 text-rose-300 border border-rose-700" },
-  disqualified: { label: "Disqualified", color: "bg-zinc-800 text-zinc-400" },
+  new: { label: "Nuevo", color: "bg-slate-700 text-slate-200" },
+  researched: { label: "Investigado", color: "bg-sky-900/60 text-sky-300 border border-sky-700" },
+  contacted: { label: "Contactado", color: "bg-blue-900/60 text-blue-300 border border-blue-700" },
+  qualified: { label: "Calificado", color: "bg-indigo-900/60 text-indigo-300 border border-indigo-700" },
+  discovery: { label: "Discovery", color: "bg-purple-900/60 text-purple-300 border border-purple-700" },
+  proposal: { label: "Propuesta", color: "bg-amber-900/60 text-amber-300 border border-amber-700" },
+  contract: { label: "Contrato", color: "bg-orange-900/60 text-orange-300 border border-orange-700" },
+  won: { label: "Ganado 🎉", color: "bg-emerald-900/60 text-emerald-300 border border-emerald-700" },
+  lost: { label: "Perdido", color: "bg-rose-900/60 text-rose-300 border border-rose-700" },
+  onboarding: { label: "Onboarding", color: "bg-teal-900/60 text-teal-300 border border-teal-700" },
+  active: { label: "Activo", color: "bg-emerald-800/60 text-emerald-200 border border-emerald-600" },
+  support: { label: "Soporte", color: "bg-cyan-900/60 text-cyan-300 border border-cyan-700" },
 };
 
+// Espejo exacto de crm/src/domain/lead-stages.ts (TRANSITIONS).
 const NEXT_STAGES: Record<string, string[]> = {
-  intake: ["qualifying", "disqualified"],
-  qualifying: ["solutions_review", "disqualified"],
-  solutions_review: ["proposal_sent", "disqualified"],
-  proposal_sent: ["negotiation", "lost"],
-  negotiation: ["won", "lost"],
-  won: [],
-  lost: ["qualifying"],
-  disqualified: ["intake"],
+  new: ["researched", "contacted", "qualified", "lost"],
+  researched: ["contacted", "lost"],
+  contacted: ["qualified", "lost"],
+  qualified: ["discovery", "lost"],
+  discovery: ["proposal", "lost"],
+  proposal: ["contract", "discovery", "lost"],
+  contract: ["won", "lost"],
+  won: ["onboarding"],
+  lost: ["new"],
+  onboarding: ["active"],
+  active: ["support"],
+  support: ["active"],
 };
 
 export const LeadsView: React.FC = () => {
@@ -146,6 +146,29 @@ export const LeadsView: React.FC = () => {
       alert(`Error updating stage: ${err.message}`);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+
+  const handleConvert = async (lead: LeadItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const projectName = window.prompt(
+      `Convertir lead en cliente/proyecto - nombre del proyecto:`,
+      lead.organizationName ? `${lead.organizationName} - Proyecto` : undefined
+    );
+    if (projectName === null) return;
+    try {
+      setConvertingId(lead.id);
+      const res = await crmApi.convertLead(lead.id, projectName.trim() || undefined);
+      setActionSuccess(`Cliente creado: proyecto "${res.project.name}" en onboarding.`);
+      if (activeLeadId === lead.id) openLeadDrawer(lead.id);
+      fetchLeads();
+      setTimeout(() => setActionSuccess(null), 5000);
+    } catch (err: any) {
+      alert(`No se pudo convertir: ${err.message}`);
+    } finally {
+      setConvertingId(null);
     }
   };
 
@@ -331,6 +354,15 @@ export const LeadsView: React.FC = () => {
                         {new Date(lead.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {lead.stage === "won" && (
+                          <button
+                            onClick={(e) => handleConvert(lead, e)}
+                            disabled={convertingId === lead.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md transition mr-2"
+                          >
+                            {convertingId === lead.id ? "Convirtiendo..." : "Convertir en cliente"}
+                          </button>
+                        )}
                         <button
                           onClick={(e) => openTransitionModal(lead, e)}
                           className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-md transition mr-2"
