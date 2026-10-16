@@ -143,3 +143,8 @@ survive closing the chat because they run behind, not in the frontend.
   lead researched + dossier ligado + contactos nulos + reapertura con 7 msgs;
   DB limpia (2/2/1). Suite 76/76, ambos typechecks limpios. Run #2 había
   muerto por DNS transitorio (ENOTFOUND), no por código.
+- L10 (2026-10-16, T7 docs + commits VERIFIED): ARCHITECTURE (Orquestador Chat
+  + AI engine describen el thin proxy) y runbook (vars EVE_*, Step 4 operate,
+  troubleshooting de build) actualizados. 12 work-unit commits en
+  feat/chat-prospects-subscription: 4 agent + 5 crm + 1 test gates +
+  2 docs (topología + este registro). Suite 76/76, ambos typechecks limpios.
