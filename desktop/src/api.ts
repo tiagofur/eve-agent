@@ -67,7 +67,9 @@ export interface LeadItem {
 
 export interface OutboxDraft {
   id: string;
-  leadId: string;
+  leadId: string | null;
+  organizationId: string | null;
+  organizationName: string | null;
   contactId: string;
   channel: string;
   subject: string | null;
@@ -222,6 +224,19 @@ export const crmApi = {
       body: JSON.stringify({ targetStage, reason, lostReason }),
     }),
   getPendingDrafts: () => request<{ drafts: OutboxDraft[] }>("/api/outbox/pending"),
+  createDraft: (data: {
+    leadId?: string;
+    organizationId?: string;
+    contactId: string;
+    channel: string;
+    subject?: string;
+    body: string;
+    rationale?: string;
+  }) =>
+    request<{ success: boolean; draft: OutboxDraft }>("/api/outbox", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   reviewDraft: (draftId: string, decision: "approved" | "rejected", rejectedReason?: string) =>
     request<{ success: boolean }>(`/api/outbox/${draftId}/review`, {
       method: "POST",

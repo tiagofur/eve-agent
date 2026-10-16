@@ -50,6 +50,13 @@
       "when": 1792190515110,
       "tag": "0006_mushy_marrow",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792191114597,
+      "tag": "0007_minor_mysterio",
+      "breakpoints": true
     }
   ]
 }

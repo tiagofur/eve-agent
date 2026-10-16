@@ -5,7 +5,8 @@ import { logEvent } from "./events";
 import { notifyOutboxDraftCreated } from "../services/telegram";
 
 export interface CreateDraftInput {
-  leadId: string;
+  leadId?: string;
+  organizationId?: string;
   contactId: string;
   channel: ChannelType;
   subject?: string;
@@ -15,6 +16,13 @@ export interface CreateDraftInput {
 }
 
 export async function createOutreachDraft(input: CreateDraftInput) {
+  if (!input.leadId && !input.organizationId) {
+    return {
+      success: false,
+      code: "target_required",
+      message: "A draft must target a lead or an existing client organization.",
+    };
+  }
   // 1. Verify contact exists and check optOut
   const [contact] = await db
     .select()
@@ -49,6 +57,7 @@ export async function createOutreachDraft(input: CreateDraftInput) {
     .insert(outbox)
     .values({
       leadId: input.leadId,
+      organizationId: input.organizationId,
       contactId: input.contactId,
       channel: input.channel,
       subject: input.subject,
@@ -71,7 +80,8 @@ export async function createOutreachDraft(input: CreateDraftInput) {
     after: {
       status: "pending_approval",
       channel: input.channel,
-      leadId: input.leadId,
+      leadId: input.leadId ?? null,
+      organizationId: input.organizationId ?? null,
     },
     reason: input.rationale,
   });

@@ -274,9 +274,12 @@ export const outbox = pgTable(
   "outbox",
   {
     id: id(),
-    leadId: uuid("lead_id")
-      .notNull()
-      .references(() => leads.id, { onDelete: "cascade" }),
+    // T6: drafts may target a lead (prospecting) OR an existing client directly.
+    // At least one of leadId / organizationId must be set (enforced in domain).
+    leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
     contactId: uuid("contact_id")
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),

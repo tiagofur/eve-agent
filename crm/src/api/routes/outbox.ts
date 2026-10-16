@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { db } from "../../db/client";
-import { outbox, contacts, leads } from "../../db/schema";
+import { outbox, contacts, leads, organizations } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { createOutreachDraft, reviewOutreachDraft } from "../../domain/outbox";
 
@@ -16,7 +16,8 @@ outboxRouter.post(
   zValidator(
     "json",
     z.object({
-      leadId: z.string().uuid(),
+      leadId: z.string().uuid().optional(),
+      organizationId: z.string().uuid().optional(),
       contactId: z.string().uuid(),
       channel: z.enum(["email", "linkedin", "whatsapp", "phone", "telegram", "web", "other"]),
       subject: z.string().optional(),
@@ -47,6 +48,7 @@ outboxRouter.get("/pending", requireScope(["ops"]), async (c) => {
     .select({
       id: outbox.id,
       leadId: outbox.leadId,
+      organizationId: outbox.organizationId,
       contactId: outbox.contactId,
       channel: outbox.channel,
       subject: outbox.subject,
@@ -58,9 +60,11 @@ outboxRouter.get("/pending", requireScope(["ops"]), async (c) => {
       contactName: contacts.name,
       contactEmail: contacts.email,
       contactPhone: contacts.phone,
+      organizationName: organizations.name,
     })
     .from(outbox)
     .leftJoin(contacts, eq(outbox.contactId, contacts.id))
+    .leftJoin(organizations, eq(outbox.organizationId, organizations.id))
     .where(eq(outbox.status, "pending_approval"))
     .orderBy(desc(outbox.createdAt));
 

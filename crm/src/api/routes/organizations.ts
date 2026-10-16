@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { desc, inArray, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
   contacts,
@@ -131,15 +131,18 @@ organizationsRouter.get("/:id/summary", requireScope(["ops"]), async (c) => {
     .orderBy(desc(dossiers.createdAt));
 
   const leadIds = orgLeads.map((l) => l.id);
-  const drafts =
-    leadIds.length > 0
-      ? await db
-          .select()
-          .from(outbox)
-          .where(inArray(outbox.leadId, leadIds))
-          .orderBy(desc(outbox.createdAt))
-          .limit(50)
-      : [];
+  const draftConds = [sql`${outbox.organizationId} = ${orgId}`];
+  if (leadIds.length > 0) {
+    draftConds.push(
+      sql`${outbox.leadId} IN (${sql.join(leadIds.map((id) => sql`${id}`), sql`, `)})`
+    );
+  }
+  const drafts = await db
+    .select()
+    .from(outbox)
+    .where(sql.join(draftConds, sql` OR `))
+    .orderBy(desc(outbox.createdAt))
+    .limit(50);
 
   const entityIds = [
     orgId,
