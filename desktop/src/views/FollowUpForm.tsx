@@ -16,6 +16,16 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
   const [note, setNote] = useState(currentNote || "");
   const [saving, setSaving] = useState(false);
 
+  const snooze = (days: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    d.setHours(9, 0, 0, 0);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setDate(
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    );
+  };
+
   const save = async (clear: boolean) => {
     try {
       setSaving(true);
@@ -64,7 +74,7 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
           className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-amber-500"
         />
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <button
           onClick={() => save(false)}
           disabled={saving || !date}
@@ -72,13 +82,16 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
         >
           {saving ? "Guardando..." : "Programar"}
         </button>
+        <button onClick={() => snooze(1)} className="px-2.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition">+1 día</button>
+        <button onClick={() => snooze(3)} className="px-2.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition">+3 días</button>
+        <button onClick={() => snooze(7)} className="px-2.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition">+1 sem</button>
         {currentAt && (
           <button
             onClick={() => save(true)}
             disabled={saving}
             className="px-3 py-1.5 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md transition"
           >
-            Limpiar
+            Hecho / limpiar
           </button>
         )}
       </div>

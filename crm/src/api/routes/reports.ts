@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { sql, eq, count } from "drizzle-orm";
+import { sql, eq, count, asc } from "drizzle-orm";
 import { db } from "../../db/client";
 import { leads, tickets, outbox, organizations, contacts } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
@@ -100,7 +100,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
     .leftJoin(organizations, eq(leads.organizationId, organizations.id))
     .where(
       sql`${leads.nextFollowUpAt} IS NOT NULL AND ${leads.nextFollowUpAt} <= ${now} AND ${leads.stage} != 'lost'`
-    );
+    )
+    .orderBy(asc(leads.nextFollowUpAt));
 
   const overdueTickets = await db
     .select({
@@ -117,7 +118,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
     .leftJoin(organizations, eq(tickets.organizationId, organizations.id))
     .where(
       sql`${tickets.nextFollowUpAt} IS NOT NULL AND ${tickets.nextFollowUpAt} <= ${now} AND ${tickets.status} NOT IN ('resolved', 'closed')`
-    );
+    )
+    .orderBy(asc(tickets.nextFollowUpAt));
 
   const overdueOrgs = await db
     .select({
@@ -127,7 +129,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
       followUpNote: organizations.followUpNote,
     })
     .from(organizations)
-    .where(sql`${organizations.nextFollowUpAt} IS NOT NULL AND ${organizations.nextFollowUpAt} <= ${now}`);
+    .where(sql`${organizations.nextFollowUpAt} IS NOT NULL AND ${organizations.nextFollowUpAt} <= ${now}`)
+    .orderBy(asc(organizations.nextFollowUpAt));
 
   const upcomingLeads = await db
     .select({
@@ -142,7 +145,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
     .from(leads)
     .leftJoin(contacts, eq(leads.contactId, contacts.id))
     .leftJoin(organizations, eq(leads.organizationId, organizations.id))
-    .where(sql`${leads.nextFollowUpAt} IS NOT NULL AND ${leads.nextFollowUpAt} > ${now} AND ${leads.stage} != 'lost'`);
+    .where(sql`${leads.nextFollowUpAt} IS NOT NULL AND ${leads.nextFollowUpAt} > ${now} AND ${leads.stage} != 'lost'`)
+    .orderBy(asc(leads.nextFollowUpAt));
 
   return c.json({
     overdue: [
