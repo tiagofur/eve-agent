@@ -102,4 +102,71 @@ describe("Chat threads API", () => {
     const gone = await app.request(`/api/chat/threads/${thread!.id}`, { headers: auth });
     expect(gone.status).toBe(404);
   });
+
+  it("returns 503 single-brain-unconfigured when EVE env is missing", async () => {
+    const saved = {
+      url: process.env.EVE_AGENT_URL,
+      user: process.env.EVE_CHANNEL_USER,
+      pass: process.env.EVE_CHANNEL_PASSWORD,
+    };
+    delete process.env.EVE_AGENT_URL;
+    delete process.env.EVE_CHANNEL_USER;
+    delete process.env.EVE_CHANNEL_PASSWORD;
+    const [thread] = await db
+      .insert(chatThreads)
+      .values({ title: "TEST-proxy-503" })
+      .returning();
+    createdThreadIds.push(thread!.id);
+    try {
+      const res = await app.request("/api/chat", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          threadId: thread!.id,
+          messages: [{ role: "user", content: "hola" }],
+        }),
+      });
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.error).toMatch(/EVE_AGENT_URL|single brain/i);
+    } finally {
+      if (saved.url !== undefined) process.env.EVE_AGENT_URL = saved.url;
+      if (saved.user !== undefined) process.env.EVE_CHANNEL_USER = saved.user;
+      if (saved.pass !== undefined) process.env.EVE_CHANNEL_PASSWORD = saved.pass;
+    }
+  });
+
+  it("returns 400 when the proxy is configured but no user message is sent", async () => {
+    const saved = {
+      url: process.env.EVE_AGENT_URL,
+      user: process.env.EVE_CHANNEL_USER,
+      pass: process.env.EVE_CHANNEL_PASSWORD,
+    };
+    process.env.EVE_AGENT_URL = "http://127.0.0.1:9";
+    process.env.EVE_CHANNEL_USER = "test-user";
+    process.env.EVE_CHANNEL_PASSWORD = "test-pass";
+    const [thread] = await db
+      .insert(chatThreads)
+      .values({ title: "TEST-proxy-400" })
+      .returning();
+    createdThreadIds.push(thread!.id);
+    try {
+      const res = await app.request("/api/chat", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          threadId: thread!.id,
+          messages: [{ role: "assistant", content: "solo contexto" }],
+        }),
+      });
+      expect(res.status).toBe(400);
+    } finally {
+      if (saved.url !== undefined) process.env.EVE_AGENT_URL = saved.url;
+      else delete process.env.EVE_AGENT_URL;
+      if (saved.user !== undefined) process.env.EVE_CHANNEL_USER = saved.user;
+      else delete process.env.EVE_CHANNEL_USER;
+      if (saved.pass !== undefined) process.env.EVE_CHANNEL_PASSWORD = saved.pass;
+      else delete process.env.EVE_CHANNEL_PASSWORD;
+    }
+  });
 });
