@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { desc, sql } from "drizzle-orm";
+import { count, desc, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
   contacts,
@@ -82,7 +82,24 @@ organizationsRouter.get("/", requireScope(["ops"]), async (c) => {
     .orderBy(desc(organizations.createdAt))
     .limit(100);
 
-  return c.json({ organizations: result });
+  const projectCounts = await db
+    .select({ organizationId: projects.organizationId, count: count(projects.id) })
+    .from(projects)
+    .groupBy(projects.organizationId);
+  const leadCounts = await db
+    .select({ organizationId: leads.organizationId, count: count(leads.id) })
+    .from(leads)
+    .groupBy(leads.organizationId);
+  const projectByOrg = new Map(projectCounts.map((r) => [r.organizationId, Number(r.count)]));
+  const leadByOrg = new Map(leadCounts.map((r) => [r.organizationId, Number(r.count)]));
+
+  return c.json({
+    organizations: result.map((o) => ({
+      ...o,
+      projectCount: projectByOrg.get(o.id) ?? 0,
+      leadCount: leadByOrg.get(o.id) ?? 0,
+    })),
+  });
 });
 
 // 360° summary: org + contacts + leads + projects + tickets + dossiers + drafts + timeline

@@ -146,6 +146,8 @@ export interface OrganizationItem {
   city: string | null;
   country: string | null;
   createdAt: string;
+  projectCount: number;
+  leadCount: number;
   nextFollowUpAt?: string | null;
   followUpNote?: string | null;
 }

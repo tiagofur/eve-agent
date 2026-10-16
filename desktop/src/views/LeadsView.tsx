@@ -431,6 +431,30 @@ export const LeadsView: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {leadDetails?.lead.stage === "won" && (
+              <div className="px-6 py-3 border-b border-zinc-800/80 bg-teal-950/30">
+                <button
+                  onClick={() =>
+                    handleConvert({
+                      id: leadDetails.lead.id,
+                      stage: leadDetails.lead.stage,
+                      source: leadDetails.lead.source,
+                      serviceType: leadDetails.lead.serviceType,
+                      summary: leadDetails.lead.summary,
+                      createdAt: leadDetails.lead.createdAt,
+                      organizationName: leadDetails.lead.organizationName,
+                      contactName: leadDetails.lead.contactName,
+                      contactEmail: leadDetails.lead.contactEmail,
+                      contactPhone: (leadDetails.lead as LeadItem).contactPhone ?? null,
+                    })
+                  }
+                  disabled={convertingId === leadDetails.lead.id}
+                  className="w-full px-3 py-2 text-sm font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition disabled:opacity-50"
+                >
+                  {convertingId === leadDetails.lead.id ? "Convirtiendo..." : "Convertir en cliente / crear proyecto"}
+                </button>
+              </div>
+            )}
 
             {drawerLoading ? (
               <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">

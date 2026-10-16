@@ -10,6 +10,7 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<"all" | "client" | "prospect">("all");
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [summary, setSummary] = useState<OrganizationSummary | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
@@ -46,9 +47,12 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
     }
   };
 
-  const filtered = orgs.filter((o) =>
-    `${o.name} ${o.domain ?? ""} ${o.city ?? ""}`.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = orgs.filter((o) => {
+    const isClient = (o.projectCount ?? 0) > 0;
+    if (typeFilter === "client" && !isClient) return false;
+    if (typeFilter === "prospect" && isClient) return false;
+    return `${o.name} ${o.domain ?? ""} ${o.city ?? ""}`.toLowerCase().includes(search.toLowerCase());
+  });
 
   return (
     <div className="space-y-6">
@@ -67,7 +71,8 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
         </button>
       </div>
 
-      <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2">
+      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 flex-1">
         <Search className="w-4 h-4 text-zinc-500" />
         <input
           value={search}
@@ -76,24 +81,48 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
           className="bg-transparent outline-none text-sm w-full placeholder:text-zinc-600"
         />
       </div>
+      <select
+        value={typeFilter}
+        onChange={(e) => setTypeFilter(e.target.value as "all" | "client" | "prospect")}
+        className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200"
+      >
+        <option value="all">Todos ({orgs.length})</option>
+        <option value="client">Clientes ({orgs.filter((o) => (o.projectCount ?? 0) > 0).length})</option>
+        <option value="prospect">Prospectos ({orgs.filter((o) => (o.projectCount ?? 0) === 0).length})</option>
+      </select>
+      </div>
 
       {loading && <p className="text-sm text-zinc-500">Cargando clientes...</p>}
       {error && <p className="text-sm text-rose-400">{error}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filtered.map((org) => (
+        {filtered.map((org) => {
+          const isClient = (org.projectCount ?? 0) > 0;
+          return (
           <button
             key={org.id}
             onClick={() => openSummary(org.id)}
             className="text-left p-4 rounded-xl border border-zinc-800 bg-zinc-900/60 hover:border-emerald-600 transition"
           >
-            <div className="font-semibold text-white">{org.name}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="font-semibold text-white truncate">{org.name}</div>
+              <span
+                className={`shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                  isClient
+                    ? "bg-emerald-900/60 text-emerald-300 border border-emerald-700"
+                    : "bg-sky-900/60 text-sky-300 border border-sky-700"
+                }`}
+              >
+                {isClient ? `Cliente · ${org.projectCount} proy.` : `Prospecto · ${org.leadCount ?? 0} leads`}
+              </span>
+            </div>
             <div className="text-xs text-zinc-500 font-mono">
               {[org.city, org.country].filter(Boolean).join(", ") || "Sin ubicación"}
             </div>
             <div className="text-xs text-zinc-500 font-mono truncate">{org.domain || org.website || "Sin dominio"}</div>
           </button>
-        ))}
+          );
+        })}
       </div>
 
       {activeOrgId && (
