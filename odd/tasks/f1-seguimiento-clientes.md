@@ -17,7 +17,7 @@
 - T3 (S1, S2): Follow-ups (`next_follow_up_at + nota`) en lead/cliente/ticket + alertas Dashboard/Telegram. Ruta: CRM + Desktop + bot. Commit: T3 (5aa823e).
 - T4 (S3): Dos tipos de ticket: `support` (SLA 1h/4h/24h actual) e `info/sales` (SLA comercial 24h) + estados `nuevo → triage → asignado → esperando cliente → resuelto`. Ruta: CRM + Desktop. Commit: T4 (d65d55e).
 - T5 (S1, S4): Interactions polimórficas (lead | cliente | ticket | proyecto) + hilos unificados por contacto con botón "pedir al orquestador que conteste". Ruta: CRM + Desktop + `/api/chat`. Commit: T5 (259d6d8).
-- T6 (S4): Outbox para clientes existentes (hoy exige `leadId`). Ruta: CRM + Desktop. Commit: -
+- T6 (S4): Outbox para clientes existentes (hoy exige `leadId`). Ruta: CRM + Desktop. Commit: T6 (6cb593b).
 - T7 (S7): Nuevos subagentes `closer` y `biller` (solo planificación: propósito, tools, HITL). Ruta: agent/. Commit: -
 
 F0/F2/F3 quedan fuera de este documento hasta que F1 esté diseñado al detalle.
