@@ -179,6 +179,91 @@ export async function crmGetFunnelMetrics() {
   return await res.json();
 }
 
+export interface FollowUpQueueItem {
+  kind: "lead" | "ticket" | "organization";
+  id: string;
+  name: string | null;
+  organizationName: string | null;
+  detail: string | null;
+  nextFollowUpAt: string;
+  followUpNote: string | null;
+  stage: string | null;
+}
+
+export async function crmGetFollowups() {
+  const res = await fetch(`${getCrmUrl()}/api/reports/followups`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM followups report failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    overdue: FollowUpQueueItem[];
+    upcoming: FollowUpQueueItem[];
+  };
+}
+
+export interface CreateDraftParams {
+  leadId?: string;
+  organizationId?: string;
+  contactId: string;
+  channel: "email" | "linkedin" | "whatsapp" | "phone" | "telegram" | "web" | "other";
+  subject?: string;
+  body: string;
+  rationale?: string;
+}
+
+export async function crmCreateDraft(data: CreateDraftParams) {
+  const res = await fetch(`${getCrmUrl()}/api/outbox`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM draft creation failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    success: boolean;
+    draft: { id: string; status: string };
+  };
+}
+
+export async function crmGetBilling() {
+  const res = await fetch(`${getCrmUrl()}/api/projects/billing`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM billing report failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    projects: Array<{
+      id: string;
+      name: string;
+      status: string;
+      organizationId: string;
+      organizationName: string | null;
+      milestones: Array<{ id: string; title: string; dueDate: string | null; doneAt: string | null }>;
+      contracts: Array<{ id: string; title: string; status: string }>;
+    }>;
+  };
+}
+
 export interface CreateProjectParams {
   organizationId: string;
   leadId?: string;

@@ -1,13 +1,58 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { projects, tasks, organizations } from "../../db/schema";
+import { projects, tasks, organizations, milestones, contracts } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { createProject, createTask, updateTaskStatus } from "../../domain/projects";
 
 export const projectsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+// Billing status for the biller subagent: open projects + milestones + contracts.
+projectsRouter.get("/billing", requireScope(["ops"]), async (c) => {
+  const openProjects = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      status: projects.status,
+      organizationId: projects.organizationId,
+      organizationName: organizations.name,
+      createdAt: projects.createdAt,
+    })
+    .from(projects)
+    .leftJoin(organizations, eq(projects.organizationId, organizations.id))
+    .where(sql`${projects.status} IN ('onboarding', 'active', 'paused')`)
+    .orderBy(desc(projects.createdAt));
+
+  const projectIds = openProjects.map((p) => p.id);
+  const allMilestones =
+    projectIds.length > 0
+      ? await db
+          .select()
+          .from(milestones)
+          .where(
+            sql`${milestones.projectId} IN (${sql.join(projectIds.map((id) => sql`${id}`), sql`, `)})`
+          )
+      : [];
+  const allContracts =
+    projectIds.length > 0
+      ? await db
+          .select()
+          .from(contracts)
+          .where(
+            sql`${contracts.projectId} IN (${sql.join(projectIds.map((id) => sql`${id}`), sql`, `)})`
+          )
+      : [];
+
+  return c.json({
+    projects: openProjects.map((p) => ({
+      ...p,
+      milestones: allMilestones.filter((m) => m.projectId === p.id),
+      contracts: allContracts.filter((ct) => ct.projectId === p.id),
+    })),
+  });
+});
 
 // Create project
 projectsRouter.post(
