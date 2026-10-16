@@ -70,6 +70,7 @@ export interface OutboxDraft {
 
 export interface TicketItem {
   id: string;
+  kind: "support" | "info";
   system: string;
   severity: "critical" | "major" | "minor";
   status: string;

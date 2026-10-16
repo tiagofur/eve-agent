@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
-import { tickets, contacts, organizations, type ticketSeverityEnum, type ticketStatusEnum } from "../db/schema";
+import { tickets, contacts, organizations, type ticketSeverityEnum, type ticketStatusEnum, type ticketKindEnum } from "../db/schema";
 import { logEvent } from "./events";
 import { notifyCriticalTicketCreated } from "../services/telegram";
 
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
+export type TicketKind = (typeof ticketKindEnum.enumValues)[number];
 
 export interface CreateTicketInput {
   clientName: string;
@@ -13,12 +14,17 @@ export interface CreateTicketInput {
   contact: string;
   system: string;
   severity: TicketSeverity;
+  kind?: TicketKind;
   description: string;
   actor: string;
 }
 
-export function computeSlaDueAt(severity: TicketSeverity): Date {
+export function computeSlaDueAt(severity: TicketSeverity, kind: TicketKind = "support"): Date {
   const now = new Date();
+  // Info/sales requests always carry a commercial 24h SLA, regardless of severity.
+  if (kind === "info") {
+    return new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  }
   switch (severity) {
     case "critical":
       return new Date(now.getTime() + 1 * 60 * 60 * 1000); // 1 hour
@@ -31,7 +37,8 @@ export function computeSlaDueAt(severity: TicketSeverity): Date {
 }
 
 export async function createTicket(input: CreateTicketInput) {
-  const slaDueAt = computeSlaDueAt(input.severity);
+  const kind = input.kind ?? "support";
+  const slaDueAt = computeSlaDueAt(input.severity, kind);
 
   // 1. Resolve contact/org if possible
   const isEmail = input.contact.includes("@");
@@ -63,6 +70,7 @@ export async function createTicket(input: CreateTicketInput) {
     .insert(tickets)
     .values({
       contactId,
+      kind,
       system: input.system,
       severity: input.severity,
       status: "open",
@@ -81,6 +89,7 @@ export async function createTicket(input: CreateTicketInput) {
     action: "ticket_created",
     actor: input.actor,
     after: {
+      kind,
       severity: input.severity,
       system: input.system,
       slaDueAt: slaDueAt.toISOString(),
@@ -88,7 +97,8 @@ export async function createTicket(input: CreateTicketInput) {
     reason: input.description,
   });
 
-  if (input.severity === "critical" || input.severity === "major") {
+  // Only support incidents page the owner; info requests wait in the queue.
+  if (kind === "support" && (input.severity === "critical" || input.severity === "major")) {
     notifyCriticalTicketCreated(ticket.id).catch((err) =>
       console.error("Failed to dispatch telegram ticket alert:", err)
     );
@@ -96,7 +106,7 @@ export async function createTicket(input: CreateTicketInput) {
 
   return {
     ticket,
-    slaHours: input.severity === "critical" ? 1 : input.severity === "major" ? 4 : 24,
+    slaHours: kind === "info" ? 24 : input.severity === "critical" ? 1 : input.severity === "major" ? 4 : 24,
   };
 }
 

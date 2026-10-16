@@ -66,6 +66,7 @@ export const TicketsView: React.FC = () => {
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [kindFilter, setKindFilter] = useState<string>("all");
 
   // Drawer details state
   const [activeTicketId, setActiveTicketId] = useState<string | null>(null);
@@ -188,6 +189,7 @@ export const TicketsView: React.FC = () => {
   const filtered = tickets.filter((t) => {
     const matchesSev = severityFilter === "all" || t.severity === severityFilter;
     const matchesStat = statusFilter === "all" || t.status === statusFilter;
+    const matchesKind = kindFilter === "all" || (t.kind || "support") === kindFilter;
     const q = search.toLowerCase();
     const matchesSearch =
       !search ||
@@ -195,7 +197,7 @@ export const TicketsView: React.FC = () => {
       t.description.toLowerCase().includes(q) ||
       t.contactName?.toLowerCase().includes(q) ||
       t.contactEmail?.toLowerCase().includes(q);
-    return matchesSev && matchesStat && matchesSearch;
+    return matchesSev && matchesStat && matchesKind && matchesSearch;
   });
 
   const isBreached = (slaDueAt: string, status: string) => {
@@ -280,6 +282,15 @@ export const TicketsView: React.FC = () => {
         </div>
         <div className="flex gap-2">
           <select
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value)}
+            className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500"
+          >
+            <option value="all">Soporte + Info</option>
+            <option value="support">Soporte</option>
+            <option value="info">Info/Ventas</option>
+          </select>
+          <select
             value={severityFilter}
             onChange={(e) => setSeverityFilter(e.target.value)}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500"
@@ -331,6 +342,15 @@ export const TicketsView: React.FC = () => {
               >
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-2">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                        (ticket.kind || "support") === "info"
+                          ? "bg-teal-950 text-teal-300 border border-teal-800"
+                          : "bg-indigo-950 text-indigo-300 border border-indigo-800"
+                      }`}
+                    >
+                      {(ticket.kind || "support") === "info" ? "Info/Ventas" : "Soporte"}
+                    </span>
                     <span
                       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${sev.badge}`}
                     >

@@ -64,6 +64,7 @@ export interface CreateSupportTicketParams {
   contact: string;
   system: string;
   severity: "critical" | "major" | "minor";
+  kind?: "support" | "info";
   description: string;
 }
 
@@ -85,6 +86,7 @@ export async function crmCreateTicket(data: CreateSupportTicketParams) {
   return (await res.json()) as {
     success: boolean;
     ticketId: string;
+    kind: string;
     severity: string;
     slaDueAt: string;
     slaHours: number;

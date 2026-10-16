@@ -21,6 +21,7 @@ ticketsRouter.post(
       contact: z.string().min(1),
       system: z.string().min(1),
       severity: z.enum(["critical", "major", "minor"]),
+      kind: z.enum(["support", "info"]).default("support"),
       description: z.string().min(1),
     })
   ),
@@ -37,6 +38,7 @@ ticketsRouter.post(
       {
         success: true,
         ticketId: result.ticket.id,
+        kind: result.ticket.kind,
         severity: result.ticket.severity,
         slaDueAt: result.ticket.slaDueAt,
         slaHours: result.slaHours,
@@ -48,9 +50,11 @@ ticketsRouter.post(
 );
 
 ticketsRouter.get("/", requireScope(["ops"]), async (c) => {
-  const result = await db
+  const kind = c.req.query("kind");
+  const query = db
     .select({
       id: tickets.id,
+      kind: tickets.kind,
       system: tickets.system,
       severity: tickets.severity,
       status: tickets.status,
@@ -64,6 +68,10 @@ ticketsRouter.get("/", requireScope(["ops"]), async (c) => {
     .leftJoin(contacts, eq(tickets.contactId, contacts.id))
     .orderBy(desc(tickets.createdAt))
     .limit(50);
+  const result =
+    kind === "support" || kind === "info"
+      ? await query.where(sql`${tickets.kind} = ${kind}`)
+      : await query;
 
   return c.json({ tickets: result });
 });
@@ -75,6 +83,7 @@ ticketsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
   const [ticket] = await db
     .select({
       id: tickets.id,
+      kind: tickets.kind,
       system: tickets.system,
       severity: tickets.severity,
       status: tickets.status,

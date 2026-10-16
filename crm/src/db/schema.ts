@@ -62,6 +62,8 @@ export const outboxStatusEnum = pgEnum("outbox_status", [
 
 export const ticketSeverityEnum = pgEnum("ticket_severity", ["critical", "major", "minor"]);
 
+export const ticketKindEnum = pgEnum("ticket_kind", ["support", "info"]);
+
 export const ticketStatusEnum = pgEnum("ticket_status", [
   "open",
   "in_progress",
@@ -119,6 +121,7 @@ export type DirectionType = (typeof directionEnum.enumValues)[number];
 export type ServiceType = (typeof serviceTypeEnum.enumValues)[number];
 export type OutboxStatus = (typeof outboxStatusEnum.enumValues)[number];
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
+export type TicketKind = (typeof ticketKindEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type TaskStatus = (typeof taskStatusEnum.enumValues)[number];
@@ -341,6 +344,7 @@ export const tickets = pgTable(
     }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    kind: ticketKindEnum("kind").notNull().default("support"),
     system: text("system").notNull(),
     severity: ticketSeverityEnum("severity").notNull(),
     status: ticketStatusEnum("status").notNull().default("open"),
