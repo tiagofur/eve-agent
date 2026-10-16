@@ -1,11 +1,12 @@
 import { describe, expect, it, afterAll } from "vitest";
 import { pool, db } from "../db/client";
 import { ingestLead, changeLeadStage } from "../domain/leads";
+import { createDossier } from "../domain/dossiers";
 import { leads, organizations, contacts } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 describe("prospect quality: dedup guard", () => {
-  const createdOrgNames = ["TEST-Dedup Corp", "TEST-Otra Empresa"];
+  const createdOrgNames = ["TEST-Dedup Corp", "TEST-Otra Empresa", "TEST-AutoLead Corp", "TEST-AutoLead Dos"];
 
   afterAll(async () => {
     for (const name of createdOrgNames) {
@@ -89,5 +90,48 @@ describe("prospect quality: dedup guard", () => {
       actor: "test:dedup",
     });
     expect(moved).toMatchObject({ success: true });
+  });
+
+  it("createDossier without leadId auto-creates an honest contact-less lead and links it", async () => {
+    const dossier = await createDossier({
+      companyName: "TEST-AutoLead Corp",
+      summary: "Diagnóstico ejecutivo de prueba para auto-lead honesto.",
+      findings: { pains: ["Sin reservas online"] },
+      sources: [{ url: "https://example.com", retrievedAt: new Date().toISOString() }],
+      actor: "test:autolead",
+    });
+    expect(dossier.leadId).toBeTruthy();
+
+    const [lead] = await db.select().from(leads).where(eq(leads.id, dossier.leadId!));
+    expect(lead?.stage).toBe("researched");
+    expect(lead?.organizationId).toBe(dossier.organizationId);
+    expect(lead?.source).toBe("prospector_agent");
+    // Honest no-contact: no invented email/phone, whether or not a
+    // name-only contact row exists.
+    if (lead?.contactId) {
+      const [contact] = await db.select().from(contacts).where(eq(contacts.id, lead.contactId));
+      expect(contact?.email ?? null).toBeNull();
+      expect(contact?.phone ?? null).toBeNull();
+    }
+  });
+
+  it("createDossier reuses the open lead instead of duplicating it", async () => {
+    const first = await createDossier({
+      companyName: "TEST-AutoLead Dos",
+      summary: "Primer dossier para probar dedup de auto-lead.",
+      findings: {},
+      sources: [{ url: "https://example.com/uno", retrievedAt: new Date().toISOString() }],
+      actor: "test:autolead",
+    });
+    const second = await createDossier({
+      companyName: "TEST-AutoLead Dos",
+      summary: "Segundo dossier para la misma empresa.",
+      findings: {},
+      sources: [{ url: "https://example.com/dos", retrievedAt: new Date().toISOString() }],
+      actor: "test:autolead",
+    });
+    expect(second.leadId).toBe(first.leadId);
+    const orgLeads = await db.select().from(leads).where(eq(leads.organizationId, first.organizationId!));
+    expect(orgLeads).toHaveLength(1);
   });
 });
