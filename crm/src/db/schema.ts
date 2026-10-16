@@ -449,6 +449,7 @@ export const chatThreads = pgTable("chat_threads", {
   title: text("title").notNull().default("Nueva conversación"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+  eveSessionId: text("eve_session_id"),
 });
 
 export const chatMessages = pgTable(
@@ -461,6 +462,7 @@ export const chatMessages = pgTable(
     role: text("role").notNull(), // user | assistant | system
     content: text("content").notNull(),
     toolCalls: jsonb("tool_calls"),
+    eveEventId: text("eve_event_id"),
     createdAt: createdAt(),
   },
   (t) => [index("chat_messages_thread_idx").on(t.threadId)],
