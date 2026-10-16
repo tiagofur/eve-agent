@@ -91,7 +91,7 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
 ### A. AI Engine: Meta Model API (Muse Suite)
 - **Base URL:** `https://api.meta.ai/v1`
 - **Text & Reasoning Model:** `muse-spark-1.3-contributor`
-  - Used by Eve Orchestrator, all 7 subagents, and CRM `/api/chat`.
+  - Used by Eve Orchestrator and all 7 subagents — the single brain behind every channel (CRM `/api/chat` proxies to it; no inline LLM loop remains there).
   - Configured via `@ai-sdk/openai` compatibility layer in `agent/lib/models.ts`.
 - **Image Generation Model:** `muse-image-1.0`
   - Generates native 1024x1024 WebP renders via `POST https://api.meta.ai/v1/images/generations`.
@@ -115,7 +115,7 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
 - **Frontend:** React 18 + Vite + Tailwind CSS + Lucide Icons
 - **Key Modules:**
   1. **Dashboard:** High-level pipeline metrics, conversion rates, open SLAs, and approval alerts.
-  2. **Orquestador Chat:** Direct interactive conversation with the executive agent, equipped with autonomous tools to inspect leads, research new businesses, create tickets, and dispatch code.
+  2. **Orquestador Chat:** Thin visual layer over the single EVE brain. `POST /api/chat` forwards each turn to an EVE `/eve/v1` session (durable server-side: closing the chat never aborts the run), maps threads 1:1 to sessions (`chat_threads.eve_session_id`), and persists replies; without EVE env it answers 503 instead of a second brain.
   3. **Marketing Studio:** AI Campaign generator. View generated copy, hashtags, and Muse Image visual renders with 1-click Approve / Reject / Publish buttons.
   4. **Outbox Approvals:** Human-in-the-Loop review queue for cold email and WhatsApp drafts.
   5. **Leads & Pipeline:** Kanban/Table view with full Dossier slide-over drawers (pains, verified source links, outreach history).

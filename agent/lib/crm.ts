@@ -23,7 +23,7 @@ const getOpsKey = () => requireKey("CRM_OPS_KEY");
 export interface RegisterLeadParams {
   clientName: string;
   companyName?: string;
-  contact: string;
+  contact?: string;
   serviceType?: "software_development" | "automation" | "ai_implementation" | "consulting";
   projectSummary: string;
   estimatedBudget?: string;

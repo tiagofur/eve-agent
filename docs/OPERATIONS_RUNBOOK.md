@@ -38,6 +38,19 @@ CRM_FRONT_KEY="<cp_front_key>"
 CRM_OPS_KEY="<cp_ops_key>"
 CRM_OWNER_KEY="<cp_owner_key>"
 
+# Eve Brain Service (single brain for all channels; CRM `/api/chat` proxies here)
+EVE_AGENT_URL="http://127.0.0.1:3000"
+EVE_CHANNEL_USER="<eve-service-user>"
+# Generate once per environment, never commit: openssl rand -hex 32
+EVE_CHANNEL_PASSWORD="<eve-service-password>"
+
+# Google Calendar (real `schedule_consultation`: freebusy + Meet events)
+GOOGLE_CLIENT_ID="<google-oauth-client-id>"
+GOOGLE_CLIENT_SECRET="<google-oauth-client-secret>"
+GOOGLE_REFRESH_TOKEN="<google-refresh-token>"
+# Optional calendar (default primary)
+GOOGLE_CALENDAR_ID=""
+
 # WhatsApp Cloud API (Optional / Pending production credentials)
 WHATSAPP_ACCESS_TOKEN=""
 WHATSAPP_APP_SECRET=""
@@ -60,6 +73,11 @@ FRONT_API_KEY=<cp_front_key>
 OPS_API_KEY=<cp_ops_key>
 OWNER_API_KEY=<cp_owner_key>
 DEV_API_KEY=<cp_dev_key>
+# Web search for the chat orchestrator (`search_web` tool): required to FIND
+# prospects by criteria instead of guessing from model memory.
+# Free keys: Brave (https://brave.com/search/api) or Tavily (https://tavily.com)
+SEARCH_PROVIDER=brave
+SEARCH_API_KEY=<your-search-api-key>
 ```
 
 ### Desktop App `desktop/.env` (Mission Control API Access)
@@ -69,6 +87,18 @@ VITE_CRM_API_URL=http://localhost:8787
 VITE_CRM_OWNER_KEY=<cp_owner_key>
 ```
 A runtime override is also honored: `localStorage.setItem("CREAPOLIS_OWNER_KEY", ...)`.
+
+### Google Calendar one-time consent (`schedule_consultation`)
+1. Google Cloud → project → enable **Google Calendar API**.
+2. OAuth consent screen → External → test mode → add yourself as test user.
+3. Credentials → Create Credentials → OAuth client ID → **Desktop app** → copy ID + secret into `.env.local` above.
+4. Run the loopback consent flow (opens browser approval, stores the refresh token at `~/.config/eve-agent/google-calendar.json`, never committed):
+```bash
+GOOGLE_CLIENT_ID="..." GOOGLE_CLIENT_SECRET="..." node scripts/google-auth.mjs
+node scripts/google-auth.mjs --check
+```
+5. Copy the stored refresh token into `.env.local` as `GOOGLE_REFRESH_TOKEN`, rebuild + restart the eve service so the tool picks it up.
+Without these three vars the tool answers `not_configured` honestly instead of inventing meetings; unknown dates, past times and busy calendars also return explicit messages (with up to 3 free alternatives on conflict).
 
 ---
 
@@ -98,7 +128,16 @@ Creapolis CRM API running at http://localhost:8787
 [Telegram] Service active for Admin Chat ID: <your-id>
 ```
 
-### Step 4: Run the macOS Desktop App
+### Step 4: Start Eve Brain Service (single brain for all channels)
+```bash
+npm run build
+set -a; . .env.local; set +a
+PORT=3000 npm run start -- --host 127.0.0.1
+```
+*Output: serves `/eve/v1` on `http://127.0.0.1:3000` (health: `GET /eve/v1/health`).*
+*Notes: rebuild after changing anything under `agent/` (tools, instructions, channel auth); workflow state persists in `.eve/.workflow-data` (git-ignored); model access uses the local Muse subscription (no extra auth). If `eve build` fails on compaction metadata for a custom model, declare `modelContextWindowTokens` in `agent/agent.ts` (verified value documented there). CRM `/api/chat` requires `EVE_AGENT_URL`, `EVE_CHANNEL_USER` and `EVE_CHANNEL_PASSWORD` from above, otherwise it answers 503.*
+
+### Step 5: Run the macOS Desktop App
 
 #### Development Mode (Live Hot Reloading):
 ```bash

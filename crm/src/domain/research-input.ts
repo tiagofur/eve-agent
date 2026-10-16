@@ -13,7 +13,9 @@ export interface NormalizedResearchInput {
   domain?: string;
   summary: string;
   pains: string[];
+  techStack: string[];
   proposedSolution: string;
+  outreachAngle: string;
   sources: Array<{ url: string; note?: string }>;
 }
 
@@ -66,7 +68,19 @@ export function normalizeResearchInput(raw: unknown): NormalizeResult {
     "solucion",
     "propuesta"
   );
+  const outreachAngle = str(
+    "outreachAngle",
+    "angle",
+    "outreach",
+    "angulo",
+    "apertura"
+  );
   const pains = toStringList(rawList("pains", "operational_pains", "operationalPains", "dolores"));
+  const techStack = toStringList(
+    rawList("techStack", "tech_stack", "stack", "tools", "tecnologias")
+  ).flatMap((item) => item.split(","))
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
 
   const sourcesRaw = rawList("sources", "source", "fuentes", "urls");
   const sources: Array<{ url: string; note?: string }> = [];
@@ -91,8 +105,12 @@ export function normalizeResearchInput(raw: unknown): NormalizeResult {
   if (!proposedSolution || proposedSolution.length < 20) {
     missing.push("proposedSolution (texto de al menos 20 caracteres)");
   }
+  if (!outreachAngle || outreachAngle.length < 20) {
+    missing.push("outreachAngle (texto de al menos 20 caracteres)");
+  }
   // sources is OPTIONAL: the orchestrator has no web-browsing tool, so it
   // cannot always cite verified URLs. Empty = unverified, human must confirm.
+  // techStack is OPTIONAL: businesses with no web presence have an unknown stack.
 
   if (missing.length > 0) {
     return {
@@ -113,7 +131,9 @@ export function normalizeResearchInput(raw: unknown): NormalizeResult {
       domain: str("domain", "website", "site", "sitio"),
       summary: summary as string,
       pains,
+      techStack,
       proposedSolution: proposedSolution as string,
+      outreachAngle: outreachAngle as string,
       sources,
     },
   };

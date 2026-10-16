@@ -3,7 +3,7 @@ import { app } from "./app";
 import { pool, db } from "./db/client";
 import { ensureDefaultApiKeys, hashApiKey } from "./auth/keys";
 import { apiKeys, organizations, contacts, leads, outbox, tickets } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 describe("CRM API Integration Tests", () => {
   let frontKey: string;
@@ -24,6 +24,48 @@ describe("CRM API Integration Tests", () => {
   });
 
   afterAll(async () => {
+    // Clean up this suite's OWN records so re-running against the same
+    // database stays green (previous runs left a `qualified` lead that broke
+    // the stage-transition test on the second run).
+    const testEmails = ["carlos@logisticspro.com", "valeria@innovatech.io", "david@acme.com"];
+    const testContacts = await db.select().from(contacts).where(inArray(contacts.email, testEmails));
+    const contactIds = testContacts.map((c) => c.id);
+    const orgIds = [
+      ...new Set(
+        testContacts
+          .map((c) => c.organizationId)
+          .filter((id): id is string => typeof id === "string")
+      ),
+    ];
+
+    // tickets.organizationId is ON DELETE RESTRICT: delete tickets first.
+    if (contactIds.length > 0) {
+      await db.delete(tickets).where(inArray(tickets.contactId, contactIds));
+      await db.delete(leads).where(inArray(leads.contactId, contactIds));
+    }
+    for (const orgId of orgIds) {
+      await db.delete(leads).where(eq(leads.organizationId, orgId));
+      await db.delete(organizations).where(eq(organizations.id, orgId));
+    }
+    if (contactIds.length > 0) {
+      await db.delete(contacts).where(inArray(contacts.id, contactIds));
+    }
+
+    // Contact-less test orgs (no email to key on): clean by organization name.
+    const testOrgNames = ["TEST-SinContacto Corp"];
+    for (const orgName of testOrgNames) {
+      const [org] = await db
+        .select()
+        .from(organizations)
+        .where(eq(organizations.name, orgName))
+        .limit(1);
+      if (org) {
+        await db.delete(leads).where(eq(leads.organizationId, org.id));
+        await db.delete(contacts).where(eq(contacts.organizationId, org.id));
+        await db.delete(organizations).where(eq(organizations.id, org.id));
+      }
+    }
+
     // Clean up test keys and close pool
     await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(frontKey)));
     await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(opsKey)));
@@ -93,6 +135,38 @@ describe("CRM API Integration Tests", () => {
     expect(res2.status).toBe(201);
   });
 
+  it("POST /api/leads ingests an honest contact-less lead", async () => {
+    const res = await app.request("/api/leads", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${frontKey}`,
+      },
+      body: JSON.stringify({
+        clientName: "TEST-Sin Contacto",
+        companyName: "TEST-SinContacto Corp",
+        serviceType: "automation",
+        projectSummary: "Lead de prueba sin contacto verificado para el intake honesto.",
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.leadId).toBeDefined();
+    expect(body.stage).toBe("new");
+
+    const [lead] = await db.select().from(leads).where(eq(leads.id, body.leadId));
+    expect(lead).toBeDefined();
+    // Honest no-contact: no invented email/phone, whether or not a
+    // name-only contact row exists.
+    const [contact] = lead!.contactId
+      ? await db.select().from(contacts).where(eq(contacts.id, lead!.contactId))
+      : [undefined];
+    expect(contact?.email ?? null).toBeNull();
+    expect(contact?.phone ?? null).toBeNull();
+  });
+
   it("PATCH /api/leads/:id/stage enforces stage transition rules", async () => {
     // 1. Create a lead
     const createRes = await app.request("/api/leads", {
@@ -155,8 +229,19 @@ describe("CRM API Integration Tests", () => {
   });
 
   it("Outbox gating: ops creates draft; only owner can approve", async () => {
-    // Find a lead and contact
-    const [existingLead] = await db.select().from(leads).limit(1);
+    // Use THIS suite's own lead deterministically: `db.select().limit(1)` is
+    // unordered and could attach the draft to a real prospect.
+    const [testContact] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.email, "carlos@logisticspro.com"))
+      .limit(1);
+    expect(testContact).toBeDefined();
+    const [existingLead] = await db
+      .select()
+      .from(leads)
+      .where(eq(leads.contactId, testContact!.id))
+      .limit(1);
     expect(existingLead).toBeDefined();
     if (!existingLead || !existingLead.contactId) {
       throw new Error("Expected existing lead in test database");

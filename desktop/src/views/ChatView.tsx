@@ -48,6 +48,8 @@ export const ChatView: React.FC = () => {
     localStorage.getItem(ACTIVE_THREAD_KEY)
   );
   const [threadsLoading, setThreadsLoading] = useState(true);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -118,14 +120,15 @@ export const ChatView: React.FC = () => {
   };
 
   const handleDeleteThread = async (threadId: string) => {
-    if (!window.confirm("¿Eliminar esta conversación?")) return;
+    setConfirmDeleteId(null);
+    setDeleteError(null);
     try {
       await crmApi.deleteChatThread(threadId);
       const list = await refreshThreads();
       setThreads(list ?? []);
       if (activeThreadId === threadId) handleNewChat();
     } catch (err: any) {
-      alert(`No pude eliminar la conversación: ${err.message || "error de conexión."}`);
+      setDeleteError(`No se pudo eliminar: ${err.message || "error de conexión."}`);
     }
   };
 
@@ -247,18 +250,42 @@ export const ChatView: React.FC = () => {
             >
               <MessageSquareText className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
               <span className="flex-1 truncate">{t.title}</span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void handleDeleteThread(t.id);
-                }}
-                title="Eliminar conversación"
-                className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-rose-400 transition"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              {confirmDeleteId === t.id ? (
+                <span
+                  className="flex items-center gap-1 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    onClick={() => void handleDeleteThread(t.id)}
+                    className="px-1.5 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-semibold transition"
+                  >
+                    Sí
+                  </button>
+                  <button
+                    onClick={() => setConfirmDeleteId(null)}
+                    className="px-1.5 py-0.5 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-[10px] transition"
+                  >
+                    No
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteError(null);
+                    setConfirmDeleteId(t.id);
+                  }}
+                  title="Eliminar conversación"
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-700 text-zinc-500 hover:text-rose-400 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           ))}
+          {deleteError && (
+            <p className="px-3 py-1 text-[11px] text-rose-400 font-mono">{deleteError}</p>
+          )}
         </div>
       </aside>
 
