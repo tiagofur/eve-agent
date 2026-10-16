@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, OrganizationItem, OrganizationSummary } from "../api";
+import { FollowUpForm } from "./FollowUpForm";
 import { Building2, RefreshCw, Search, Users, FolderKanban, LifeBuoy, FileText, History } from "lucide-react";
 
 export const ClientesView: React.FC = () => {
@@ -109,6 +110,14 @@ export const ClientesView: React.FC = () => {
                     {summary.leads.length} leads · {summary.projects.length} proyectos · {summary.tickets.length} tickets
                   </p>
                 </div>
+
+                <FollowUpForm
+                  kind="organization"
+                  entityId={summary.organization.id}
+                  currentAt={summary.organization.nextFollowUpAt}
+                  currentNote={summary.organization.followUpNote}
+                  onSaved={() => openSummary(summary.organization.id)}
+                />
 
                 <section>
                   <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><Users className="w-4 h-4" /> Contactos</h4>

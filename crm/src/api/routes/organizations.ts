@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
 import { desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import {
@@ -12,8 +14,56 @@ import {
   tickets,
 } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
+import { logEvent } from "../../domain/events";
 
 export const organizationsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+// Set or clear a follow-up reminder on a client (ops only)
+organizationsRouter.patch(
+  "/:id/followup",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      nextFollowUpAt: z.string().datetime({ offset: true }).nullable(),
+      followUpNote: z.string().max(500).optional(),
+    })
+  ),
+  async (c) => {
+    const orgId = c.req.param("id");
+    const { nextFollowUpAt, followUpNote } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [org] = await db
+      .select()
+      .from(organizations)
+      .where(sql`${organizations.id} = ${orgId}`)
+      .limit(1);
+    if (!org) {
+      return c.json({ error: "Organization not found" }, 404);
+    }
+
+    const [updated] = await db
+      .update(organizations)
+      .set({
+        nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
+        followUpNote: followUpNote ?? org.followUpNote,
+        updatedAt: new Date(),
+      })
+      .where(sql`${organizations.id} = ${orgId}`)
+      .returning();
+
+    await logEvent({
+      entity: "organization",
+      entityId: orgId,
+      action: nextFollowUpAt ? "followup_set" : "followup_cleared",
+      actor,
+      after: { nextFollowUpAt, followUpNote: followUpNote ?? null },
+    });
+
+    return c.json({ success: true, organization: updated });
+  }
+);
 
 // List organizations (clients / prospects) — ops scope
 organizationsRouter.get("/", requireScope(["ops"]), async (c) => {

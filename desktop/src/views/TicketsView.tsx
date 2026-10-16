@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, TicketItem, TicketDetailsResponse } from "../api";
+import { FollowUpForm } from "./FollowUpForm";
 import {
   LifeBuoy,
   AlertTriangle,
@@ -443,6 +444,13 @@ export const TicketsView: React.FC = () => {
             ) : ticketDetails ? (
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                  <FollowUpForm
+                    kind="ticket"
+                    entityId={ticketDetails.ticket.id}
+                    currentAt={ticketDetails.ticket.nextFollowUpAt}
+                    currentNote={ticketDetails.ticket.followUpNote}
+                    onSaved={() => openTicketDrawer(ticketDetails.ticket.id)}
+                  />
                   {/* SLA Status Banner */}
                   <div
                     className={`p-4 rounded-xl border flex items-center justify-between ${

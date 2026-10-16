@@ -4,6 +4,7 @@ import {
   LeadItem,
   LeadDetailsResponse,
 } from "../api";
+import { FollowUpForm } from "./FollowUpForm";
 import {
   Users,
   Search,
@@ -477,6 +478,15 @@ export const LeadsView: React.FC = () => {
 
                 {/* Drawer Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                  {leadDetails && (
+                    <FollowUpForm
+                      kind="lead"
+                      entityId={leadDetails.lead.id}
+                      currentAt={leadDetails.lead.nextFollowUpAt}
+                      currentNote={leadDetails.lead.followUpNote}
+                      onSaved={() => openLeadDrawer(leadDetails.lead.id)}
+                    />
+                  )}
                   {/* TAB 1: AI INTELLIGENCE & DOSSIER */}
                   {drawerTab === "intelligence" && (
                     <div className="space-y-4">

@@ -478,11 +478,42 @@ export async function startTelegramPolling() {
 _Servidor CRM en línea (:8787)_`;
 
                 await sendTelegramMessage(reply);
+              } else if (text === "/followups" || text === "/seguimientos") {
+                const now = new Date();
+                const overdueLeads = await db
+                  .select({ id: leads.id, name: organizations.name, note: leads.followUpNote, at: leads.nextFollowUpAt })
+                  .from(leads)
+                  .leftJoin(organizations, eq(leads.organizationId, organizations.id))
+                  .where(
+                    sql`${leads.nextFollowUpAt} IS NOT NULL AND ${leads.nextFollowUpAt} <= ${now} AND ${leads.stage} != 'lost'`
+                  )
+                  .limit(10);
+                const overdueTickets = await db
+                  .select({ id: tickets.id, name: tickets.system, note: tickets.followUpNote, at: tickets.nextFollowUpAt })
+                  .from(tickets)
+                  .where(
+                    sql`${tickets.nextFollowUpAt} IS NOT NULL AND ${tickets.nextFollowUpAt} <= ${now} AND ${tickets.status} NOT IN ('resolved', 'closed')`
+                  )
+                  .limit(10);
+                const lines = [
+                  ...overdueLeads.map(
+                    (l) => `• Lead ${escapeHtml(l.name ?? l.id.slice(0, 8))}${l.note ? ` — ${escapeHtml(l.note)}` : ""}`
+                  ),
+                  ...overdueTickets.map(
+                    (t) => `• Ticket ${escapeHtml(t.name)}${t.note ? ` — ${escapeHtml(t.note)}` : ""}`
+                  ),
+                ];
+                const reply =
+                  lines.length === 0
+                    ? `✅ <b>Sin seguimientos vencidos.</b> Todo al día.`
+                    : `🔔 <b>Seguimientos vencidos (${lines.length})</b>\n\n${lines.join("\n")}`;
+                await sendTelegramMessage(reply);
               } else if (text === "/start" || text === "/ayuda") {
                 const reply = `👋 *Creapolis Mission Control Bot*
 
 Comandos disponibles:
 • \`/pipeline\` o \`/status\` - Métricas en tiempo real del CRM.
+• \`/followups\` - Seguimientos vencidos (leads y tickets).
 • Recibirás notificaciones interactivas automáticas cuando haya borradores en outbox o tickets de soporte con SLA crítico.`;
                 await sendTelegramMessage(reply);
               }

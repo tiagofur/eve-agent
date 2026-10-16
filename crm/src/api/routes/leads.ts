@@ -6,6 +6,7 @@ import { db } from "../../db/client";
 import { leads, organizations, contacts, dossiers, outbox, events } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { ingestLead, changeLeadStage } from "../../domain/leads";
+import { logEvent } from "../../domain/events";
 import { createProject } from "../../domain/projects";
 import { LEAD_STAGES } from "../../domain/lead-stages";
 
@@ -142,6 +143,49 @@ leadsRouter.post(
   }
 );
 
+// Set or clear a follow-up reminder on a lead (ops only)
+leadsRouter.patch(
+  "/:id/followup",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      nextFollowUpAt: z.string().datetime({ offset: true }).nullable(),
+      followUpNote: z.string().max(500).optional(),
+    })
+  ),
+  async (c) => {
+    const leadId = c.req.param("id");
+    const { nextFollowUpAt, followUpNote } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [lead] = await db.select().from(leads).where(sql`${leads.id} = ${leadId}`).limit(1);
+    if (!lead) {
+      return c.json({ error: "Lead not found" }, 404);
+    }
+
+    const [updated] = await db
+      .update(leads)
+      .set({
+        nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
+        followUpNote: followUpNote ?? lead.followUpNote,
+        updatedAt: new Date(),
+      })
+      .where(sql`${leads.id} = ${leadId}`)
+      .returning();
+
+    await logEvent({
+      entity: "lead",
+      entityId: leadId,
+      action: nextFollowUpAt ? "followup_set" : "followup_cleared",
+      actor,
+      after: { nextFollowUpAt, followUpNote: followUpNote ?? null },
+    });
+
+    return c.json({ success: true, lead: updated });
+  }
+);
+
 // List leads (ops or owner only)
 leadsRouter.get("/", requireScope(["ops"]), async (c) => {
   const result = await db
@@ -181,6 +225,8 @@ leadsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
       summary: leads.summary,
       organizationId: leads.organizationId,
       contactId: leads.contactId,
+      nextFollowUpAt: leads.nextFollowUpAt,
+      followUpNote: leads.followUpNote,
       createdAt: leads.createdAt,
       organizationName: organizations.name,
       organizationDomain: organizations.domain,

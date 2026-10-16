@@ -156,6 +156,9 @@ export const organizations = pgTable(
     industry: text("industry"),
     city: text("city"),
     country: text("country"),
+    // T3 follow-up: when to contact this client next + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -206,6 +209,9 @@ export const leads = pgTable(
     estimatedValueCents: integer("estimated_value_cents"),
     currency: text("currency").notNull().default("USD"),
     lostReason: text("lost_reason"),
+    // T3 follow-up: when to contact this lead next + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -341,6 +347,9 @@ export const tickets = pgTable(
     description: text("description").notNull(),
     slaDueAt: timestamp("sla_due_at", { withTimezone: true }).notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    // T3 follow-up: when to ping the client about this ticket + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

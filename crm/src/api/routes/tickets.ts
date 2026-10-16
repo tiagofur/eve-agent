@@ -6,6 +6,7 @@ import { db } from "../../db/client";
 import { tickets, contacts, events } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { createTicket, updateTicketStatus, type TicketStatus } from "../../domain/tickets";
+import { logEvent } from "../../domain/events";
 
 export const ticketsRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -80,6 +81,8 @@ ticketsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
       description: tickets.description,
       slaDueAt: tickets.slaDueAt,
       resolvedAt: tickets.resolvedAt,
+      nextFollowUpAt: tickets.nextFollowUpAt,
+      followUpNote: tickets.followUpNote,
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
       contactName: contacts.name,
@@ -103,6 +106,53 @@ ticketsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
 
   return c.json({ ticket, timeline });
 });
+
+// Set or clear a follow-up reminder on a ticket (ops only)
+ticketsRouter.patch(
+  "/:id/followup",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      nextFollowUpAt: z.string().datetime({ offset: true }).nullable(),
+      followUpNote: z.string().max(500).optional(),
+    })
+  ),
+  async (c) => {
+    const ticketId = c.req.param("id");
+    const { nextFollowUpAt, followUpNote } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [ticket] = await db
+      .select()
+      .from(tickets)
+      .where(sql`${tickets.id} = ${ticketId}`)
+      .limit(1);
+    if (!ticket) {
+      return c.json({ error: "Ticket not found" }, 404);
+    }
+
+    const [updated] = await db
+      .update(tickets)
+      .set({
+        nextFollowUpAt: nextFollowUpAt ? new Date(nextFollowUpAt) : null,
+        followUpNote: followUpNote ?? ticket.followUpNote,
+        updatedAt: new Date(),
+      })
+      .where(sql`${tickets.id} = ${ticketId}`)
+      .returning();
+
+    await logEvent({
+      entity: "ticket",
+      entityId: ticketId,
+      action: nextFollowUpAt ? "followup_set" : "followup_cleared",
+      actor,
+      after: { nextFollowUpAt, followUpNote: followUpNote ?? null },
+    });
+
+    return c.json({ success: true, ticket: updated });
+  }
+);
 
 // Update ticket status (approve/start work, reject, resolve)
 ticketsRouter.patch(
