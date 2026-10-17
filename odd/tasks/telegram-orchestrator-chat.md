@@ -14,9 +14,9 @@ same Telegram chat.
 
 ## Tasks
 
-- T1, S1/S2 — CRM: migration adds `chat_threads.external_key` (nullable, unique) + `ensureExternalThread` domain helper (find-or-create by key `telegram:<chat_id>`). Tests. Route: inline. Commit: pending.
-- T2, S2/S3 — CRM: new domain module `telegram-chat` with `runOrchestratorTurn`: create/reuse the eve session with dead-session recovery, persist user + assistant messages in chat_threads/chat_messages, extract the final assistant reply. Tests with a mocked eve client. Route: inline. Commit: pending.
-- T3, S2/S4 — CRM daemon: non-command text from the admin chat runs an orchestrator turn (immediate ack, sequential per-thread queue, honest error reply); non-admin chats stay ignored; /ayuda documents the chat. Route: inline. Commit: pending.
+- T1, S1/S2 — CRM: migration adds `chat_threads.external_key` (nullable, unique) + `ensureExternalThread` domain helper (find-or-create by key `telegram:<chat_id>`). Tests. Route: inline. Commit: a99a30a.
+- T2, S2/S3 — CRM: new domain module `telegram-chat` with `runOrchestratorTurn`: create/reuse the eve session with dead-session recovery, persist user + assistant messages in chat_threads/chat_messages, extract the final assistant reply. Tests with a mocked eve client. Route: inline. Commit: 1f62315.
+- T3, S2/S4 — CRM daemon: non-command text from the admin chat runs an orchestrator turn (immediate ack, sequential per-thread queue, honest error reply); non-admin chats stay ignored; /ayuda documents the chat. Route: inline. Commit: 60889c3.
 - T4, S1-S4 — verification: CRM suite + typecheck + one live turn driven through the domain module against :3000; user performs the true Telegram E2E. Route: inline. Commit: pending.
 
 ## Log
