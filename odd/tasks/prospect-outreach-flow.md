@@ -17,12 +17,12 @@ fake success when the CRM rejects a write.
 
 ## Tasks
 
-- T1, S5 — CRM: `outbox.contact_id` nullable migration + `createOutreachDraft` accepts lead-only drafts, resolves the lead's contact server-side, enforces consent only when a contact is resolved, and blocks approving a contact-less draft. Route: inline. Commit: pending.
-- T2, S7 — CRM: link the discovered/verified contact to the lead in the prospect intake + dossier path so `leads.contact_id` is set when a contact exists. Route: inline. Commit: pending.
-- T3, S4/S5 — agent tool: `create_outreach_draft` takes optional `contactId`, drafts by `leadId`, returns the contact resolution state; description tells agents the lead-only flow. Route: inline. Commit: pending.
-- T4, S1/S3/S4/S6 — agent instructions: orchestrator chains prospector → marketing draft for every new prospect and reports CRM failures honestly (never fake success/markers); marketing gains the first-outreach-message deliverable with hard rules; prospector reports leadId + verified contact back to the orchestrator. Route: inline. Commit: pending.
-- T5, S5 — desktop: outreach tab renders lead-only drafts with "missing contact" state, approve disabled until contact exists, copy-to-clipboard for manual send. Route: inline. Commit: pending.
-- T6, S1-S7 — verification: CRM vitest suite + typecheck (crm, agent, desktop) + manual E2E through the orchestrator chat with a fresh prospect. Route: inline. Commit: pending.
+- T1, S5 — CRM: `outbox.contact_id` nullable migration + `createOutreachDraft` accepts lead-only drafts, resolves the lead's contact server-side, enforces consent only when a contact is resolved, and blocks approving a contact-less draft. Route: inline. Commit: b56566c.
+- T2, S7 — CRM: link the discovered/verified contact to the lead in the prospect intake + dossier path so `leads.contact_id` is set when a contact exists. Route: inline. Commit: 46da4de.
+- T3, S4/S5 — agent tool: `create_outreach_draft` takes optional `contactId`, drafts by `leadId`, returns the contact resolution state; description tells agents the lead-only flow. Route: inline. Commit: 3720aa5.
+- T4, S1/S3/S4/S6 — agent instructions: orchestrator chains prospector → marketing draft for every new prospect and reports CRM failures honestly (never fake success/markers); marketing gains the first-outreach-message deliverable with hard rules; prospector reports leadId + verified contact back to the orchestrator. Route: inline. Commit: 78918e3.
+- T5, S5 — desktop: outreach tab renders lead-only drafts with "missing contact" state, approve disabled until contact exists, copy-to-clipboard for manual send. Route: inline. Commit: 7689d96.
+- T6, S1-S7 — verification: CRM vitest suite + typecheck (crm, agent, desktop) + manual E2E through the orchestrator chat with a fresh prospect. Route: inline. Commit: 0abcccb (live smoke-test fix).
 
 ## Log
 
@@ -30,3 +30,6 @@ fake success when the CRM rejects a write.
 - L2 (user decisions): "Marketing encadenado" (who drafts) + "Sí, draft por lead" (draft without verified contact).
 - L3 (diagnosis evidence, 2026-10-17): outbox has exactly 1 draft ever; Bienstar Dental lead (thread 5156230b) has no draft; orchestrator admitted "el CRM me devolvió error 500" and faked a timeline marker; contact exists but lead.contact_id is NULL; no tool exists to look up contactId by name, so `create_outreach_draft` was structurally unusable by the orchestrator.
 - L4: working tree has pre-existing uncommitted changes (crm/src/api/routes/chat.ts, crm/src/domain/eve-client.ts, eve-client.test.ts) from separate user work — never stage them with this feature's commits.
+- L5 (slice boundary): branch feat/prospect-outreach-flow carries 43 pre-existing commits from feat/chat-prospects-subscription since main; this feature's slices are T1..T6, one commit each (~200 lines), recorded per task. T1 commit: b56566c.
+- L6 (T2 evidence): ingestLead's pre-existing behavior created name-only contacts when no email/phone was given; those rows blocked backfill of verified data. Fixed by creating contacts only with a verified channel. T2 commit: 46da4de.
+- L8 (T6 verification, 2026-10-17): CRM 111/111 + typechecks (crm/agent/desktop) green. Live API smoke on :8787 — dossier with contact leaves lead.contact_id set; draft by leadId returns resolution missing|lead; approve without contact blocked with contact_missing; reject passes. Found+fixed: outbox create route dropped contactResolution (0abcccb). Remaining user-side check: one fresh prospect through the orchestrator chat to watch prospector -> marketing chain produce the draft.
