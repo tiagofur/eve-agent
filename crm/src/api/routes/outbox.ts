@@ -18,7 +18,7 @@ outboxRouter.post(
     z.object({
       leadId: z.string().uuid().optional(),
       organizationId: z.string().uuid().optional(),
-      contactId: z.string().uuid(),
+      contactId: z.string().uuid().optional(),
       channel: z.enum(["email", "linkedin", "whatsapp", "phone", "telegram", "web", "other"]),
       subject: z.string().optional(),
       body: z.string().min(1),
