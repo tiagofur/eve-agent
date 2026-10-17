@@ -38,7 +38,10 @@ outboxRouter.post(
       return c.json({ error: result.message, code: result.code }, 400);
     }
 
-    return c.json({ success: true, draft: result.draft }, 201);
+    return c.json(
+      { success: true, draft: result.draft, contactResolution: result.contactResolution },
+      201
+    );
   }
 );
 
