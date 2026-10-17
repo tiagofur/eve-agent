@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, InteractionItem } from "../api";
+import { FollowUpForm } from "./FollowUpForm";
 import { Bot, MessageSquareText, Send, X } from "lucide-react";
 
 interface Props {
@@ -24,6 +25,8 @@ export const ThreadDrawer: React.FC<Props> = ({
 }) => {
   const [entries, setEntries] = useState<InteractionItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [followUpAt, setFollowUpAt] = useState<string | null>(null);
+  const [followUpNote, setFollowUpNote] = useState<string | null>(null);
   const [channel, setChannel] = useState("whatsapp");
   const [direction, setDirection] = useState<"inbound" | "outbound">("inbound");
   const [content, setContent] = useState("");
@@ -34,6 +37,8 @@ export const ThreadDrawer: React.FC<Props> = ({
       setLoading(true);
       const res = await crmApi.getContactThread(contactId);
       setEntries(res.interactions);
+      setFollowUpAt(res.contact.nextFollowUpAt);
+      setFollowUpNote(res.contact.followUpNote);
     } finally {
       setLoading(false);
     }
@@ -120,6 +125,13 @@ export const ThreadDrawer: React.FC<Props> = ({
         </div>
 
         <div className="p-4 border-t border-zinc-800 space-y-2 bg-zinc-900/30">
+          <FollowUpForm
+            kind="contact"
+            entityId={contactId}
+            currentAt={followUpAt}
+            currentNote={followUpNote}
+            onSaved={() => fetchThread()}
+          />
           <div className="flex gap-2">
             <select
               value={channel}

@@ -184,6 +184,9 @@ export const contacts = pgTable(
     email: text("email"),
     phone: text("phone"),
     preferredChannel: channelEnum("preferred_channel"),
+    // T3 follow-up per contact (Nivel 1): each person gets their own next action.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     // Do-not-contact flag. Enforced server-side when creating outbox drafts.
     optOut: boolean("opt_out").notNull().default(false),
     optOutAt: timestamp("opt_out_at", { withTimezone: true }),

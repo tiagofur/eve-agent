@@ -3,7 +3,7 @@ import { crmApi } from "../api";
 import { BellRing } from "lucide-react";
 
 interface Props {
-  kind: "lead" | "ticket" | "organization";
+  kind: "lead" | "ticket" | "organization" | "contact";
   entityId: string;
   currentAt?: string | null;
   currentNote?: string | null;
@@ -33,6 +33,7 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
       const payload = { nextFollowUpAt: iso, followUpNote: note.trim() || undefined };
       if (kind === "lead") await crmApi.setLeadFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
       else if (kind === "ticket") await crmApi.setTicketFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
+      else if (kind === "contact") await crmApi.setContactFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
       else await crmApi.setOrganizationFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
       if (!clear) {
         setDate(iso ? iso.slice(0, 16) : "");

@@ -66,6 +66,10 @@ reportsRouter.get("/daily", requireScope(["ops"]), async (c) => {
     .select({ value: count(organizations.id) })
     .from(organizations)
     .where(sql`${organizations.nextFollowUpAt} IS NOT NULL AND ${organizations.nextFollowUpAt} <= ${now}`);
+  const [overdueContactsResult] = await db
+    .select({ value: count(contacts.id) })
+    .from(contacts)
+    .where(sql`${contacts.nextFollowUpAt} IS NOT NULL AND ${contacts.nextFollowUpAt} <= ${now}`);
 
   return c.json({
     metrics: {
@@ -75,7 +79,8 @@ reportsRouter.get("/daily", requireScope(["ops"]), async (c) => {
       followUpsOverdue:
         Number(overdueLeadsResult?.value ?? 0) +
         Number(overdueTicketsResult?.value ?? 0) +
-        Number(overdueOrgsResult?.value ?? 0),
+        Number(overdueOrgsResult?.value ?? 0) +
+        Number(overdueContactsResult?.value ?? 0),
       generatedAt: new Date().toISOString(),
     },
   });
@@ -132,6 +137,19 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
     .where(sql`${organizations.nextFollowUpAt} IS NOT NULL AND ${organizations.nextFollowUpAt} <= ${now}`)
     .orderBy(asc(organizations.nextFollowUpAt));
 
+  const overdueContacts = await db
+    .select({
+      id: contacts.id,
+      name: contacts.name,
+      organizationName: organizations.name,
+      nextFollowUpAt: contacts.nextFollowUpAt,
+      followUpNote: contacts.followUpNote,
+    })
+    .from(contacts)
+    .leftJoin(organizations, eq(contacts.organizationId, organizations.id))
+    .where(sql`${contacts.nextFollowUpAt} IS NOT NULL AND ${contacts.nextFollowUpAt} <= ${now}`)
+    .orderBy(asc(contacts.nextFollowUpAt));
+
   const upcomingLeads = await db
     .select({
       id: leads.id,
@@ -160,6 +178,16 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
         detail: null as string | null,
         nextFollowUpAt: o.nextFollowUpAt,
         followUpNote: o.followUpNote,
+        stage: null as string | null,
+      })),
+      ...overdueContacts.map((ct) => ({
+        kind: "contact" as const,
+        id: ct.id,
+        name: ct.name,
+        organizationName: ct.organizationName,
+        detail: null as string | null,
+        nextFollowUpAt: ct.nextFollowUpAt,
+        followUpNote: ct.followUpNote,
         stage: null as string | null,
       })),
     ],

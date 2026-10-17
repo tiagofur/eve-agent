@@ -40,7 +40,7 @@ export interface InteractionItem {
 }
 
 export interface FollowUpItem {
-  kind: "lead" | "ticket" | "organization";
+  kind: "lead" | "ticket" | "organization" | "contact";
   id: string;
   name: string | null;
   organizationName: string | null;
@@ -278,7 +278,15 @@ export const crmApi = {
       body: JSON.stringify(data),
     }),
   getContactThread: (contactId: string) =>
-    request<{ interactions: InteractionItem[] }>(`/api/interactions/by-contact/${contactId}`),
+    request<{
+      contact: { id: string; name: string; nextFollowUpAt: string | null; followUpNote: string | null };
+      interactions: InteractionItem[];
+    }>(`/api/interactions/by-contact/${contactId}`),
+  setContactFollowUp: (contactId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
+    request<{ success: boolean }>(`/api/contacts/${contactId}/followup`, {
+      method: "PATCH",
+      body: JSON.stringify({ nextFollowUpAt, followUpNote }),
+    }),
   updateTicketStatus: (
     ticketId: string,
     status: string,

@@ -141,7 +141,7 @@ export function DashboardView() {
               <div key={`${f.kind}-${f.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-sm">
                 <div className="min-w-0">
                   <span className="mr-2 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-300">
-                    {f.kind === "lead" ? "Lead" : f.kind === "ticket" ? "Ticket" : "Cliente"}
+                    {f.kind === "lead" ? "Lead" : f.kind === "ticket" ? "Ticket" : f.kind === "contact" ? "Contacto" : "Cliente"}
                   </span>
                   <span className="font-medium text-white">{f.organizationName || f.name || f.id.slice(0, 8)}</span>
                   {f.followUpNote && <span className="ml-2 text-slate-400">— {f.followUpNote}</span>}

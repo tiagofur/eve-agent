@@ -5,7 +5,7 @@ import { contacts, leads, organizations, tickets } from "../db/schema";
 import { escapeHtml, sendTelegramMessage } from "./telegram";
 
 export interface DigestItem {
-  kind: "lead" | "ticket" | "organization";
+  kind: "lead" | "ticket" | "organization" | "contact";
   label: string;
   note: string | null;
   at: Date;
@@ -52,6 +52,19 @@ export async function getDueFollowups(now: Date = new Date()): Promise<DigestIte
     .where(sql`${organizations.nextFollowUpAt} IS NOT NULL AND ${organizations.nextFollowUpAt} <= ${endOfToday}`)
     .orderBy(asc(organizations.nextFollowUpAt));
 
+  const dueContacts = await db
+    .select({
+      id: contacts.id,
+      name: contacts.name,
+      organizationName: organizations.name,
+      note: contacts.followUpNote,
+      at: contacts.nextFollowUpAt,
+    })
+    .from(contacts)
+    .leftJoin(organizations, eq(contacts.organizationId, organizations.id))
+    .where(sql`${contacts.nextFollowUpAt} IS NOT NULL AND ${contacts.nextFollowUpAt} <= ${endOfToday}`)
+    .orderBy(asc(contacts.nextFollowUpAt));
+
   const items: DigestItem[] = [
     ...dueLeads.map((l) => ({
       kind: "lead" as const,
@@ -74,6 +87,13 @@ export async function getDueFollowups(now: Date = new Date()): Promise<DigestIte
       at: o.at!,
       overdue: o.at! < now,
     })),
+    ...dueContacts.map((ct) => ({
+      kind: "contact" as const,
+      label: `${ct.name}${ct.organizationName ? ` (${ct.organizationName})` : ""}`,
+      note: ct.note,
+      at: ct.at!,
+      overdue: ct.at! < now,
+    })),
   ];
 
   return items.sort((a, b) => a.at.getTime() - b.at.getTime());
@@ -85,8 +105,10 @@ export async function sendFollowupDigest(now: Date = new Date()): Promise<{ sent
 
   const overdue = items.filter((i) => i.overdue);
   const today = items.filter((i) => !i.overdue);
-  const line = (i: DigestItem) =>
-    `• [${i.kind === "lead" ? "Lead" : i.kind === "ticket" ? "Ticket" : "Cliente"}] ${escapeHtml(i.label)}${i.note ? ` — ${escapeHtml(i.note)}` : ""}`;
+  const line = (i: DigestItem) => {
+    const tag = i.kind === "lead" ? "Lead" : i.kind === "ticket" ? "Ticket" : i.kind === "contact" ? "Contacto" : "Cliente";
+    return `• [${tag}] ${escapeHtml(i.label)}${i.note ? ` — ${escapeHtml(i.note)}` : ""}`;
+  };
 
   const parts = [`☀️ <b>Seguimientos de hoy (${items.length})</b>`];
   if (overdue.length > 0) parts.push(`\n🔴 <b>Vencidos (${overdue.length})</b>\n${overdue.map(line).join("\n")}`);

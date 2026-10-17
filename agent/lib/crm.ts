@@ -180,7 +180,7 @@ export async function crmGetFunnelMetrics() {
 }
 
 export interface FollowUpQueueItem {
-  kind: "lead" | "ticket" | "organization";
+  kind: "lead" | "ticket" | "organization" | "contact";
   id: string;
   name: string | null;
   organizationName: string | null;

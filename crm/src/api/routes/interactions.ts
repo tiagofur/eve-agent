@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { asc, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { interactions, leads, tickets } from "../../db/schema";
+import { contacts, interactions, leads, tickets } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
 
@@ -66,6 +66,15 @@ interactionsRouter.post(
 interactionsRouter.get("/by-contact/:contactId", requireScope(["ops"]), async (c) => {
   const contactId = c.req.param("contactId");
 
+  const [contact] = await db
+    .select()
+    .from(contacts)
+    .where(sql`${contacts.id} = ${contactId}`)
+    .limit(1);
+  if (!contact) {
+    return c.json({ error: "Contact not found" }, 404);
+  }
+
   const entries = await db
     .select()
     .from(interactions)
@@ -73,7 +82,15 @@ interactionsRouter.get("/by-contact/:contactId", requireScope(["ops"]), async (c
     .orderBy(asc(interactions.createdAt))
     .limit(100);
 
-  return c.json({ interactions: entries });
+  return c.json({
+    contact: {
+      id: contact.id,
+      name: contact.name,
+      nextFollowUpAt: contact.nextFollowUpAt,
+      followUpNote: contact.followUpNote,
+    },
+    interactions: entries,
+  });
 });
 
 // Unified thread for one organization: direct + via its leads and tickets
