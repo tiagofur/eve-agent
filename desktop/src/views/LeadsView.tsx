@@ -24,6 +24,7 @@ import {
   Check,
   Globe,
   FileText,
+  Copy,
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, { label: string; color: string }> = {
@@ -170,6 +171,16 @@ export const LeadsView: React.FC = () => {
       alert(`No se pudo convertir: ${err.message}`);
     } finally {
       setConvertingId(null);
+    }
+  };
+
+  const handleCopyDraft = async (body: string) => {
+    try {
+      await navigator.clipboard.writeText(body);
+      setActionSuccess("Mensaje copiado al portapapeles.");
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch {
+      alert("No se pudo copiar el mensaje.");
     }
   };
 
@@ -614,8 +625,9 @@ export const LeadsView: React.FC = () => {
                           <Send className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
                           No outreach drafts in outbox for this lead.
                           <div className="text-xs text-zinc-500 mt-1">
-                            The Marketing agent writes tailored cold messages based on the
-                            prospect's dossier and queues them for your approval.
+                            Cada prospecto nuevo recibe su primer mensaje automáticamente:
+                            el orquestador delega al agente Marketing, que redacta desde el dossier
+                            y lo deja acá para tu aprobación.
                           </div>
                         </div>
                       ) : (
@@ -659,6 +671,18 @@ export const LeadsView: React.FC = () => {
                               </div>
                             )}
 
+                            {/* Missing-contact warning (lead-only draft) */}
+                            {draft.status === "pending_approval" && !draft.contactId && (
+                              <div className="p-2.5 bg-amber-950/20 border border-amber-900/40 rounded-lg text-xs text-amber-300 flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-semibold">Sin contacto verificado:</span>{" "}
+                                  el mensaje está listo, pero hace falta completar el contacto del lead
+                                  antes de aprobar y enviar. Podés copiarlo y enviarlo manualmente.
+                                </div>
+                              </div>
+                            )}
+
                             {/* Message Body */}
                             <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed">
                               {draft.body}
@@ -669,9 +693,26 @@ export const LeadsView: React.FC = () => {
                               <div className="flex gap-2 pt-2 border-t border-zinc-800/80">
                                 <button
                                   onClick={() => handleReviewDraft(draft.id, "approved")}
-                                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold rounded-lg transition"
+                                  disabled={!draft.contactId}
+                                  title={
+                                    draft.contactId
+                                      ? undefined
+                                      : "Falta contacto verificado: completá el contacto del lead antes de aprobar"
+                                  }
+                                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-black text-xs font-semibold rounded-lg transition ${
+                                    draft.contactId
+                                      ? "bg-emerald-500 hover:bg-emerald-400"
+                                      : "bg-zinc-700 cursor-not-allowed opacity-50"
+                                  }`}
                                 >
                                   <Check className="w-4 h-4" /> Approve & Send
+                                </button>
+                                <button
+                                  onClick={() => handleCopyDraft(draft.body)}
+                                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg transition"
+                                  title="Copiar el mensaje para enviarlo manualmente (WhatsApp, email...)"
+                                >
+                                  <Copy className="w-4 h-4" /> Copiar
                                 </button>
                                 <button
                                   onClick={() => handleReviewDraft(draft.id, "rejected")}

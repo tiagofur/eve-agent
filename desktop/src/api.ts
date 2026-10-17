@@ -70,7 +70,7 @@ export interface OutboxDraft {
   leadId: string | null;
   organizationId: string | null;
   organizationName: string | null;
-  contactId: string;
+  contactId: string | null;
   channel: string;
   subject: string | null;
   body: string;
