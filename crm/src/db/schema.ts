@@ -478,6 +478,9 @@ export const socialPosts = pgTable(
 export const chatThreads = pgTable("chat_threads", {
   id: id(),
   title: text("title").notNull().default("Nueva conversación"),
+  // Stable external mapping (e.g. "telegram:<chat_id>"): one persistent
+  // thread per external conversation, findable without scanning titles.
+  externalKey: text("external_key").unique(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   eveSessionId: text("eve_session_id"),
