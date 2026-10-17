@@ -1,8 +1,17 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { dossiers, organizations, leads } from "../db/schema";
-import { changeLeadStage, ingestLead } from "./leads";
+import { changeLeadStage, ingestLead, resolveOrCreateContact } from "./leads";
 import { logEvent } from "./events";
+
+export interface DossierContactInput {
+  /** Person name when research identified a decision maker. */
+  name?: string;
+  /** Verified email published by the business. Never guessed. */
+  email?: string;
+  /** Verified phone/WhatsApp published by the business. Never guessed. */
+  phone?: string;
+}
 
 export interface CreateDossierInput {
   leadId?: string;
@@ -13,6 +22,8 @@ export interface CreateDossierInput {
   summary: string;
   findings: Record<string, unknown>;
   sources: Array<{ url: string; retrievedAt: string; note?: string }>;
+  /** Verified contact discovered during research (S7): linked to the lead. */
+  contact?: DossierContactInput;
   actor: string;
 }
 
@@ -75,14 +86,47 @@ export async function createDossier(input: CreateDossierInput) {
       throw new Error("Cannot create dossier: organization not found and no companyName provided");
     }
     const ingested = await ingestLead({
-      clientName: companyName,
+      clientName: input.contact?.name?.trim() || companyName,
       companyName,
+      contact: input.contact?.email ?? input.contact?.phone,
       projectSummary: input.summary,
       source: "prospector_agent",
       actor: input.actor,
     });
     leadId = ingested.lead.id;
     if (!ingested.duplicate) autoCreatedLeadId = ingested.lead.id;
+  }
+
+  // 1c. Caller-provided lead: link a verified research contact the lead
+  // still lacks (S7) — never overwrite an existing contact.
+  if (input.contact && (input.contact.email || input.contact.phone)) {
+    const [lead] = leadId
+      ? await db.select().from(leads).where(eq(leads.id, leadId)).limit(1)
+      : [];
+    if (lead && !lead.contactId) {
+      const { contactId } = await resolveOrCreateContact({
+        orgId,
+        clientName: input.contact.name?.trim() || input.companyName || "Contacto verificado",
+        email: input.contact.email?.toLowerCase(),
+        phone: input.contact.phone,
+        actor: input.actor,
+      });
+      if (contactId) {
+        await db
+          .update(leads)
+          .set({ contactId, updatedAt: new Date() })
+          .where(eq(leads.id, lead.id));
+        await logEvent({
+          entity: "lead",
+          entityId: lead.id,
+          action: "contact_linked",
+          actor: input.actor,
+          before: { contactId: null },
+          after: { contactId },
+          reason: "Verified contact from dossier research",
+        });
+      }
+    }
   }
 
   // 2. Insert dossier (rolls back a self-created lead when the insert fails)
