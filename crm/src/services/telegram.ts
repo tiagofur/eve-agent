@@ -7,6 +7,12 @@ import { count, eq, sql } from "drizzle-orm";
 import { leads, tickets, outbox, contacts, organizations, socialPosts } from "../db/schema";
 import { reviewOutreachDraft } from "../domain/outbox";
 import { updateTicketStatus } from "../domain/tickets";
+import { ensureExternalThread } from "../domain/threads";
+import {
+  runOrchestratorTurn,
+  defaultTurnDeps,
+} from "../domain/telegram-chat";
+import { resolveEveProxyConfig } from "../domain/eve-client";
 
 function getCredentials() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -286,6 +292,83 @@ ${post.imagePrompt ? `<b>Prompt Visual (Muse Image):</b>\n<code>${escapeHtml(pos
 
 let isPolling = false;
 
+/**
+ * Sequential per-thread turn queue: eve sessions process one turn at a time,
+ * so Telegram messages for the same thread run in order while the polling
+ * loop keeps serving commands and approval buttons. Fire-and-forget with
+ * internal rejection handling — a failed turn never stalls the loop.
+ */
+const turnQueue = new Map<string, Promise<void>>();
+
+function enqueueTurn(threadId: string, work: () => Promise<void>): void {
+  const prev = turnQueue.get(threadId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(work)
+    .catch(() => {});
+  turnQueue.set(threadId, next);
+}
+
+/** Telegram text cap is 4096 chars: split long orchestrator replies safely. */
+function chunkTelegramText(text: string, max = 4000): string[] {
+  if (text.length <= max) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf("\n", max);
+    if (cut < max / 2) cut = max;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+async function replyLong(text: string): Promise<void> {
+  for (const chunk of chunkTelegramText(text)) {
+    await sendTelegramMessage(chunk);
+  }
+}
+
+/**
+ * Free-text from the admin chat: run it through the orchestrator via the
+ * same eve proxy the desktop chat uses (S2). Text from any other chat is
+ * silently ignored — driving the orchestrator is an admin-only surface.
+ */
+async function handleOrchestratorText(chatId: number, text: string): Promise<void> {
+  const { adminChatId } = getCredentials();
+  if (String(chatId) !== String(adminChatId)) return;
+
+  const proxy = resolveEveProxyConfig(process.env);
+  if (!proxy.enabled) {
+    await sendTelegramMessage(
+      "⚠️ El chat con el orquestador no está disponible: el agente eve no está configurado en el CRM."
+    );
+    return;
+  }
+
+  const key = `telegram:${chatId}`;
+  const thread = await ensureExternalThread({
+    key,
+    title: `Telegram — ${text.slice(0, 80)}`,
+  });
+
+  await sendTelegramMessage("🤖 En eso estoy, te aviso cuando termine…");
+
+  enqueueTurn(thread.id, async () => {
+    const result = await runOrchestratorTurn({
+      threadId: thread.id,
+      userContent: text,
+      deps: defaultTurnDeps(proxy),
+    });
+    if (result.reply) {
+      await replyLong(result.reply);
+    } else {
+      await sendTelegramMessage(`⚠️ No pude completar eso: ${result.error}`);
+    }
+  });
+}
+
 export async function startTelegramPolling() {
   const { token, adminChatId } = getCredentials();
   if (!token || !adminChatId) {
@@ -514,8 +597,11 @@ _Servidor CRM en línea (:8787)_`;
 Comandos disponibles:
 • \`/pipeline\` o \`/status\` - Métricas en tiempo real del CRM.
 • \`/followups\` - Seguimientos vencidos (leads y tickets).
+• Escribime en lenguaje normal y hablo con el orquestador (prospectos, mensajes, consultas) — respondo acá mismo.
 • Recibirás notificaciones interactivas automáticas cuando haya borradores en outbox o tickets de soporte con SLA crítico.`;
                 await sendTelegramMessage(reply);
+              } else {
+                await handleOrchestratorText(chatId, text);
               }
             }
           }
