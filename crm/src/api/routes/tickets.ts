@@ -47,8 +47,9 @@ ticketsRouter.post(
         slaDueAt: result.ticket.slaDueAt,
         slaHours: result.slaHours,
         status: result.ticket.status,
+        duplicate: result.duplicate ?? false,
       },
-      201
+      result.duplicate ? 200 : 201
     );
   }
 );

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { tickets, contacts, organizations, type ticketSeverityEnum, type ticketStatusEnum, type ticketKindEnum } from "../db/schema";
 import { logEvent } from "./events";
@@ -25,7 +25,7 @@ export interface CreateTicketInput {
 }
 
 export type CreateTicketResult =
-  | { success: true; ticket: typeof tickets.$inferSelect; slaHours: number }
+  | { success: true; ticket: typeof tickets.$inferSelect; slaHours: number; duplicate?: boolean }
   | { success: false; code: string; message: string };
 
 export function computeSlaDueAt(severity: TicketSeverity, kind: TicketKind = "support"): Date {
@@ -87,6 +87,43 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
       if (newContact) {
         contactId = newContact.id;
       }
+    }
+  }
+
+  // 2. Open-ticket dedup (S1): same contact + system + kind with a ticket
+  // still open (not resolved/closed) is the same incident — return it
+  // instead of duplicating and re-paging the owner. System matches
+  // case-insensitively; contact-less info tickets always log fresh.
+  if (contactId) {
+    const [openTicket] = await db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.contactId, contactId),
+          sql`LOWER(${tickets.system}) = LOWER(${input.system.trim()})`,
+          eq(tickets.kind, kind),
+          not(inArray(tickets.status, ["resolved", "closed"]))
+        )
+      )
+      .orderBy(desc(tickets.createdAt))
+      .limit(1);
+
+    if (openTicket) {
+      await logEvent({
+        entity: "ticket",
+        entityId: openTicket.id,
+        action: "ticket_duplicate_skipped",
+        actor: input.actor,
+        after: { kind, system: input.system },
+        reason: "Repeat report of an open incident",
+      });
+      return {
+        success: true,
+        ticket: openTicket,
+        slaHours: kind === "info" ? 24 : openTicket.severity === "critical" ? 1 : openTicket.severity === "major" ? 4 : 24,
+        duplicate: true as const,
+      };
     }
   }
 
