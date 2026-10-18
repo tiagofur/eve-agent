@@ -329,6 +329,10 @@ export const milestones = pgTable("milestones", {
   title: text("title").notNull(),
   dueDate: date("due_date"),
   doneAt: timestamp("done_at", { withTimezone: true }),
+  // Agreed price for the milestone, in minor units (e.g. cents). Null =
+  // not agreed/recorded: reminders must ask the owner, never guess.
+  amountCents: integer("amount_cents"),
+  currency: text("currency").notNull().default("USD"),
   createdAt: createdAt(),
 });
 

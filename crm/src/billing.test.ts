@@ -35,6 +35,38 @@ describe("T7 billing endpoint", () => {
     await pool.end();
   });
 
+  it("crea un proyecto con montos en los hitos", async () => {
+    const [org] = await db.insert(organizations).values({ name: "TEST-T7b Montos" }).returning();
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${opsKey}` };
+
+    const res = await app.request("/api/projects", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        organizationId: org!.id,
+        name: "TEST Proyecto Con Monto",
+        milestonesList: [
+          { title: "Anticipo 50%", dueDate: "2026-11-01", amountCents: 250000, currency: "MXN" },
+          { title: "Entrega final" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { success: boolean; project: { id: string } };
+    expect(body.success).toBe(true);
+
+    const rows = await db.select().from(milestones).where(eq(milestones.projectId, body.project.id));
+    const anticipo = rows.find((m) => m.title === "Anticipo 50%");
+    expect(anticipo?.amountCents).toBe(250000);
+    expect(anticipo?.currency).toBe("MXN");
+    const entrega = rows.find((m) => m.title === "Entrega final");
+    expect(entrega?.amountCents).toBeNull();
+
+    await db.delete(milestones).where(eq(milestones.projectId, body.project.id));
+    await db.delete(projects).where(eq(projects.id, body.project.id));
+    await db.delete(organizations).where(eq(organizations.id, org!.id));
+  });
+
   it("lista proyectos abiertos con hitos y contratos", async () => {
     const res = await app.request("/api/projects/billing", {
       headers: { Authorization: `Bearer ${opsKey}` },
@@ -56,3 +88,4 @@ describe("T7 billing endpoint", () => {
     expect(found!.contracts.some((c) => c.title === "Contrato base" && c.status === "sent")).toBe(true);
   });
 });
+

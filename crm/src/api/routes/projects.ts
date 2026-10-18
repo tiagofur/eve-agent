@@ -70,6 +70,8 @@ projectsRouter.post(
           z.object({
             title: z.string().min(1),
             dueDate: z.string().optional(),
+            amountCents: z.number().int().nonnegative().optional(),
+            currency: z.string().max(8).optional(),
           })
         )
         .optional(),

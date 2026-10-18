@@ -16,7 +16,7 @@ export interface CreateProjectInput {
   leadId?: string;
   name: string;
   repoUrl?: string;
-  milestonesList?: Array<{ title: string; dueDate?: string }>;
+  milestonesList?: Array<{ title: string; dueDate?: string; amountCents?: number; currency?: string }>;
   actor: string;
 }
 
@@ -43,6 +43,8 @@ export async function createProject(input: CreateProjectInput) {
         projectId: project.id,
         title: m.title,
         dueDate: m.dueDate,
+        amountCents: m.amountCents ?? null,
+        ...(m.currency ? { currency: m.currency } : {}),
       });
     }
   }
