@@ -65,6 +65,8 @@ beforeAll(async () => {
 const cleanupDrafts = async () => {
   await db.delete(outbox).where(eq(outbox.leadId, bareLeadId));
   await db.delete(outbox).where(eq(outbox.leadId, linkedLeadId));
+  await db.delete(outbox).where(eq(outbox.organizationId, orgId));
+  await db.delete(outbox).where(eq(outbox.organizationId, linkedOrgId));
 };
 
 // T1 dedup: one pending draft per lead — each test starts with a clean outbox.
@@ -274,5 +276,59 @@ describe("createOutreachDraft dedup (one pending draft per lead)", () => {
       actor: ACTOR,
     });
     expect(second.success).toBe(true);
+  });
+});
+
+describe("createOutreachDraft dedup per org+contact recipient", () => {
+  it("rejects a second pending draft for the same organization and contact", async () => {
+    const first = await createOutreachDraft({
+      organizationId: linkedOrgId,
+      contactId: linkedContactId,
+      channel: "email",
+      subject: "Recordatorio de pago",
+      body: "Primer recordatorio pendiente.",
+      actor: ACTOR,
+    });
+    expect(first.success).toBe(true);
+
+    const second = await createOutreachDraft({
+      organizationId: linkedOrgId,
+      contactId: linkedContactId,
+      channel: "email",
+      subject: "Otro recordatorio",
+      body: "Segundo recordatorio que nunca debe existir.",
+      actor: ACTOR,
+    });
+
+    expect(second.success).toBe(false);
+    if (second.success) return;
+    expect(second.code).toBe("draft_already_pending");
+  });
+
+  it("allows pending drafts for different recipients of the same organization", async () => {
+    const [other] = await db
+      .insert(contacts)
+      .values({ organizationId: linkedOrgId, name: "TEST Otro Contacto", email: "otro@test-outbox.example.com" })
+      .returning();
+
+    const first = await createOutreachDraft({
+      organizationId: linkedOrgId,
+      contactId: linkedContactId,
+      channel: "email",
+      body: "Recordatorio al contacto principal.",
+      actor: ACTOR,
+    });
+    expect(first.success).toBe(true);
+
+    const second = await createOutreachDraft({
+      organizationId: linkedOrgId,
+      contactId: other!.id,
+      channel: "email",
+      body: "Recordatorio a otra persona.",
+      actor: ACTOR,
+    });
+    expect(second.success).toBe(true);
+
+    await db.delete(contacts).where(eq(contacts.id, other!.id));
   });
 });

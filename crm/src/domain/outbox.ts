@@ -87,6 +87,31 @@ export async function createOutreachDraft(
     }
   }
 
+  // Same rule per recipient for existing-client drafts: one pending
+  // reminder per organization + contact. A second finding for the same
+  // person waits for the owner to review the pending one first.
+  if (input.organizationId && input.contactId) {
+    const [pendingOrg] = await db
+      .select({ id: outbox.id })
+      .from(outbox)
+      .where(
+        and(
+          eq(outbox.organizationId, input.organizationId),
+          eq(outbox.contactId, input.contactId),
+          eq(outbox.status, "pending_approval")
+        )
+      )
+      .limit(1);
+
+    if (pendingOrg) {
+      return {
+        success: false,
+        code: "draft_already_pending",
+        message: `This recipient already has pending draft ${pendingOrg.id} awaiting approval. Review that one instead of stacking another.`,
+      };
+    }
+  }
+
   // 1. Resolve the recipient: explicit contactId > the lead's contact > none.
   let resolved: ResolvedContact;
   if (input.contactId) {
