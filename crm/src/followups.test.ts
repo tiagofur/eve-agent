@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { app } from "./app";
 import { pool, db } from "./db/client";
 import { hashApiKey } from "./auth/keys";
-import { apiKeys, contacts, leads, organizations } from "./db/schema";
+import { apiKeys, contacts, leads, organizations, tickets } from "./db/schema";
 import { eq } from "drizzle-orm";
 
 describe("T3 follow-ups", () => {
@@ -122,6 +122,50 @@ describe("T3 follow-ups", () => {
     expect(item?.contactId).toBeNull();
   });
 
+  it("set + clear en ticket, contacto y organización", async () => {
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${opsKey}` };
+
+    const uniq = Date.now();
+    const [org] = await db.insert(organizations).values({ name: `TEST-T3b Followup ${uniq}` }).returning();
+    const orgId2 = org!.id;
+    const [contact] = await db
+      .insert(contacts)
+      .values({ organizationId: orgId2, name: "T3b Contacto", email: `t3b-${uniq}@example.com` })
+      .returning();
+    const contactId2 = contact!.id;
+    const [ticket] = await db
+      .insert(tickets)
+      .values({ organizationId: orgId2, contactId: contactId2, system: "Web", severity: "minor", description: "Bug T3b", status: "open", slaDueAt: new Date("2030-01-01T00:00:00.000Z") })
+      .returning();
+    const ticketId = ticket!.id;
+
+    for (const [kind, id] of [
+      ["tickets", ticketId],
+      ["contacts", contactId2],
+      ["organizations", orgId2],
+    ] as const) {
+      const set = await app.request(`/api/${kind}/${id}/followup`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ nextFollowUpAt: "2020-03-03T10:00:00.000Z", followUpNote: "T3b nota" }),
+      });
+      expect(set.status).toBe(200);
+      const setBody = (await set.json()) as { success: boolean };
+      expect(setBody.success).toBe(true);
+
+      const clear = await app.request(`/api/${kind}/${id}/followup`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ nextFollowUpAt: null }),
+      });
+      expect(clear.status).toBe(200);
+    }
+
+    await db.delete(tickets).where(eq(tickets.organizationId, orgId2));
+    await db.delete(contacts).where(eq(contacts.organizationId, orgId2));
+    await db.delete(organizations).where(eq(organizations.id, orgId2));
+  });
+
   it("limpia el follow-up con null", async () => {
     const res = await app.request(`/api/leads/${leadId}/followup`, {
       method: "PATCH",
@@ -137,3 +181,4 @@ describe("T3 follow-ups", () => {
     expect(body.overdue.some((f) => f.id === leadId)).toBe(false);
   });
 });
+

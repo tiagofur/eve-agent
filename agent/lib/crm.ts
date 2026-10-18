@@ -375,3 +375,41 @@ export async function crmGenerateMarketingPost(data: GenerateMarketingPostParams
   };
 }
 
+
+const FOLLOWUP_PATHS = {
+  lead: "leads",
+  ticket: "tickets",
+  organization: "organizations",
+  contact: "contacts",
+} as const;
+
+export type FollowupEntity = keyof typeof FOLLOWUP_PATHS;
+
+export interface SetFollowupParams {
+  entity: FollowupEntity;
+  id: string;
+  /** ISO datetime with offset to reschedule, or null to clear the reminder. */
+  nextFollowUpAt: string | null;
+  followUpNote?: string;
+}
+
+export async function crmSetFollowup(data: SetFollowupParams) {
+  const res = await fetch(`${getCrmUrl()}/api/${FOLLOWUP_PATHS[data.entity]}/${data.id}/followup`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify({
+      nextFollowUpAt: data.nextFollowUpAt,
+      followUpNote: data.followUpNote,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM follow-up update failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean };
+}
