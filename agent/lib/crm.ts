@@ -474,3 +474,28 @@ export async function crmSaveAnalystReport(data: SaveAnalystReportParams) {
     report: { id: string; summary: string; createdAt: string };
   };
 }
+
+export interface AnalystReportItem {
+  id: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  summary: string;
+  metrics: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+}
+
+export async function crmGetAnalystReports(limit = 10): Promise<{ reports: AnalystReportItem[] }> {
+  const res = await fetch(`${getCrmUrl()}/api/reports/analyst?limit=${limit}`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM analyst reports fetch failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { reports: AnalystReportItem[] };
+}
