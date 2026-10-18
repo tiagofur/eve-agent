@@ -17,7 +17,7 @@ same Telegram chat.
 - T1, S1/S2 — CRM: migration adds `chat_threads.external_key` (nullable, unique) + `ensureExternalThread` domain helper (find-or-create by key `telegram:<chat_id>`). Tests. Route: inline. Commit: a99a30a.
 - T2, S2/S3 — CRM: new domain module `telegram-chat` with `runOrchestratorTurn`: create/reuse the eve session with dead-session recovery, persist user + assistant messages in chat_threads/chat_messages, extract the final assistant reply. Tests with a mocked eve client. Route: inline. Commit: 1f62315.
 - T3, S2/S4 — CRM daemon: non-command text from the admin chat runs an orchestrator turn (immediate ack, sequential per-thread queue, honest error reply); non-admin chats stay ignored; /ayuda documents the chat. Route: inline. Commit: 60889c3.
-- T4, S1-S4 — verification: CRM suite + typecheck + one live turn driven through the domain module against :3000; user performs the true Telegram E2E. Route: inline. Commit: pending.
+- T4, S1-S4 — verification: CRM suite + typecheck + one live turn driven through the domain module against :3000; user performs the true Telegram E2E. Route: inline. Commit: user-verified (see L6).
 
 ## Log
 
@@ -26,3 +26,4 @@ same Telegram chat.
 - L3 (design evidence): Telegram allows exactly one getUpdates consumer per bot token — the CRM daemon already owns it, so a second eve channel bot would conflict. resolveEveProxyConfig/createEveSession/sendEveMessage/readEveStreamToTerminal are exported by eve-client and reusable without editing the user's WIP files.
 - L4 (T4 live turn, 2026-10-17): drove a real turn through runOrchestratorTurn + defaultTurnDeps against the rebuilt agent (:3000): 4s, orchestrator reply received, ["user","assistant"] persisted, smoke thread cleaned up. Daemon hot-reloaded via tsx watch. Remaining: user's true Telegram E2E from their phone.
 - L5 (T4 restart, 2026-10-17): server reload ambiguity resolved by clean restart — CRM relaunched from disk (job-2), :8787 HTTP 200, log confirms "[Telegram] Service active", agent :3000 HTTP 200. New daemon code guaranteed live. Remaining: user's true Telegram E2E from their phone.
+- L6 (user E2E, 2026-10-18): user confirms Telegram responds as designed (verified in their words: 'esta perfecto el telegram responde como tiene que ser'). Intermediate finding during the test: the two pasted greetings came from the desktop chat (thread 005014d7, no external_key), one reply per message — no duplication bug; /ayuda only exists on the Telegram bot, desktop treats it as free text.
