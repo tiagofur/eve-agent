@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { db } from "../db/client";
 import { outbox, contacts, leads, type ChannelType } from "../db/schema";
 import { logEvent } from "./events";
@@ -65,6 +65,26 @@ export async function createOutreachDraft(
       code: "target_required",
       message: "A draft must target a lead or an existing client organization.",
     };
+  }
+
+  // 0. Dedup (S1): one pending draft per lead. A second nudge while the
+  // first still awaits approval stacks noise in the outbox; the owner
+  // reviews the pending one instead. Resolved/rejected/approved drafts
+  // never block — only the pending one does.
+  if (input.leadId) {
+    const [pending] = await db
+      .select({ id: outbox.id })
+      .from(outbox)
+      .where(and(eq(outbox.leadId, input.leadId), eq(outbox.status, "pending_approval")))
+      .limit(1);
+
+    if (pending) {
+      return {
+        success: false,
+        code: "draft_already_pending",
+        message: `Lead already has pending draft ${pending.id} awaiting approval. Review that one instead of stacking another.`,
+      };
+    }
   }
 
   // 1. Resolve the recipient: explicit contactId > the lead's contact > none.

@@ -1,4 +1,4 @@
-import { describe, expect, it, afterAll, beforeAll } from "vitest";
+import { describe, expect, it, afterAll, beforeAll, beforeEach } from "vitest";
 import { pool, db } from "../db/client";
 import { eq } from "drizzle-orm";
 import { leads, organizations, contacts, outbox } from "../db/schema";
@@ -66,6 +66,9 @@ const cleanupDrafts = async () => {
   await db.delete(outbox).where(eq(outbox.leadId, bareLeadId));
   await db.delete(outbox).where(eq(outbox.leadId, linkedLeadId));
 };
+
+// T1 dedup: one pending draft per lead — each test starts with a clean outbox.
+beforeEach(cleanupDrafts);
 
 afterAll(async () => {
   await cleanupDrafts();
@@ -197,5 +200,79 @@ describe("reviewOutreachDraft (contact gate)", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+});
+
+describe("createOutreachDraft dedup (one pending draft per lead)", () => {
+  it("rejects a second pending draft for the same lead", async () => {
+    const first = await createOutreachDraft({
+      leadId: bareLeadId,
+      channel: "email",
+      body: "Primer nudge pendiente.",
+      actor: ACTOR,
+    });
+    expect(first.success).toBe(true);
+
+    const second = await createOutreachDraft({
+      leadId: bareLeadId,
+      channel: "whatsapp",
+      body: "Segundo nudge que nunca debe existir.",
+      actor: ACTOR,
+    });
+
+    expect(second.success).toBe(false);
+    if (second.success) return;
+    expect(second.code).toBe("draft_already_pending");
+  });
+
+  it("allows a new draft once the previous one left pending (rejected)", async () => {
+    const first = await createOutreachDraft({
+      leadId: bareLeadId,
+      channel: "email",
+      body: "Nudge rechazado.",
+      actor: ACTOR,
+    });
+    if (!first.success) throw new Error("setup failed");
+
+    const review = await reviewOutreachDraft({
+      draftId: first.draft.id,
+      decision: "rejected",
+      rejectedReason: "no aplica",
+      actor: "owner:test",
+    });
+    expect(review.success).toBe(true);
+
+    const second = await createOutreachDraft({
+      leadId: bareLeadId,
+      channel: "email",
+      body: "Nudge de reemplazo.",
+      actor: ACTOR,
+    });
+    expect(second.success).toBe(true);
+  });
+
+  it("allows a new draft once the previous one was approved", async () => {
+    const first = await createOutreachDraft({
+      leadId: linkedLeadId,
+      channel: "whatsapp",
+      body: "Nudge aprobado.",
+      actor: ACTOR,
+    });
+    if (!first.success) throw new Error("setup failed");
+
+    const review = await reviewOutreachDraft({
+      draftId: first.draft.id,
+      decision: "approved",
+      actor: "owner:test",
+    });
+    expect(review.success).toBe(true);
+
+    const second = await createOutreachDraft({
+      leadId: linkedLeadId,
+      channel: "whatsapp",
+      body: "Siguiente nudge del ciclo.",
+      actor: ACTOR,
+    });
+    expect(second.success).toBe(true);
   });
 });
