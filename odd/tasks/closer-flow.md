@@ -17,7 +17,7 @@ nudge advances the reminder so the same item never resurfaces forever.
 - T2, S2 — CRM: followups queue exposes explicit leadId + contactId on lead items (and contact/organization ids where the joins know them) so the closer never guesses IDs. Tests. Route: inline. Commit: b75f837.
 - T3, S1 — agent: narrow set_followup tool (lead|ticket|organization|contact by id; next date or clear + note) wired to the existing PATCH routes. Route: inline. Commit: aa9ca4f.
 - T4, S1 — agent instructions: closer drafts by leadId (contact-less OK), honors draft_already_pending (report + still advance the follow-up), advances every worked item with set_followup, honest errors. Route: inline. Commit: b794e0c.
-- T5, S1-S4 — verification: CRM suite + typechecks + API-level E2E (seed overdue lead → queue shows IDs → draft → duplicate blocked → follow-up advanced → queue drains). Route: inline. Commit: pending.
+- T5, S1-S4 — verification: CRM suite + typechecks + API-level E2E (seed overdue lead → queue shows IDs → draft → duplicate blocked → follow-up advanced → queue drains). Route: inline. Commit: n/a (verification only, evidence in L3).
 
 ## Log
 
