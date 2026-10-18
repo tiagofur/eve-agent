@@ -413,3 +413,64 @@ export async function crmSetFollowup(data: SetFollowupParams) {
 
   return (await res.json()) as { success: boolean };
 }
+
+export interface ConversionEdge {
+  from: string;
+  to: string;
+  count: number;
+  rate: number;
+}
+
+export interface ConversionsReport {
+  sampleSize: number;
+  minSample: number;
+  sufficientData: boolean;
+  entries: Record<string, number>;
+  edges: ConversionEdge[];
+  medianMsInStage: Record<string, number>;
+  lossReasons: Array<{ reason: string; count: number }>;
+}
+
+export async function crmGetConversions(): Promise<ConversionsReport> {
+  const res = await fetch(`${getCrmUrl()}/api/reports/conversions`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM conversions report failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as ConversionsReport;
+}
+
+export interface SaveAnalystReportParams {
+  summary: string;
+  metrics?: Record<string, unknown>;
+  periodStart?: string;
+  periodEnd?: string;
+  createdBy: string;
+}
+
+export async function crmSaveAnalystReport(data: SaveAnalystReportParams) {
+  const res = await fetch(`${getCrmUrl()}/api/reports/analyst`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM analyst report save failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    success: boolean;
+    report: { id: string; summary: string; createdAt: string };
+  };
+}
