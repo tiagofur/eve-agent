@@ -4,8 +4,17 @@ import { db } from "../../db/client";
 import { leads, tickets, outbox, organizations, contacts } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { FUNNEL_STAGES } from "../../domain/lead-stages";
+import { getConversions } from "../../domain/conversions";
 
 export const reportsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+// Honest funnel analytics (S1): edges, rates, time-in-stage and loss
+// reasons computed from the transition history of live leads — never from
+// snapshot stocks. Ops only.
+reportsRouter.get("/conversions", requireScope(["ops"]), async (c) => {
+  const report = await getConversions();
+  return c.json(report);
+});
 
 reportsRouter.get("/funnel", requireScope(["ops"]), async (c) => {
   // Aggregate count of leads grouped by stage
