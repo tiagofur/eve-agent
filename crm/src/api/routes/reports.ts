@@ -1,7 +1,9 @@
 import { Hono } from "hono";
-import { sql, eq, count, asc } from "drizzle-orm";
+import { zValidator } from "@hono/zod-validator";
+import { z } from "zod";
+import { sql, eq, count, asc, desc } from "drizzle-orm";
 import { db } from "../../db/client";
-import { leads, tickets, outbox, organizations, contacts } from "../../db/schema";
+import { leads, tickets, outbox, organizations, contacts, analystReports } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { FUNNEL_STAGES } from "../../domain/lead-stages";
 import { getConversions } from "../../domain/conversions";
@@ -14,6 +16,47 @@ export const reportsRouter = new Hono<{ Variables: AuthContextVariables }>();
 reportsRouter.get("/conversions", requireScope(["ops"]), async (c) => {
   const report = await getConversions();
   return c.json(report);
+});
+
+// Persisted analyst reports (S1): every analysis is stored with the frozen
+// metrics snapshot it was grounded in, so trends compare saved history.
+reportsRouter.post(
+  "/analyst",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      periodStart: z.string().datetime({ offset: true }).optional(),
+      periodEnd: z.string().datetime({ offset: true }).optional(),
+      summary: z.string().min(1),
+      metrics: z.record(z.string(), z.unknown()).default({}),
+      createdBy: z.string().min(1),
+    })
+  ),
+  async (c) => {
+    const data = c.req.valid("json");
+    const [report] = await db
+      .insert(analystReports)
+      .values({
+        periodStart: data.periodStart ? new Date(data.periodStart) : null,
+        periodEnd: data.periodEnd ? new Date(data.periodEnd) : null,
+        summary: data.summary,
+        metrics: data.metrics,
+        createdBy: data.createdBy,
+      })
+      .returning();
+    return c.json({ success: true, report }, 201);
+  }
+);
+
+reportsRouter.get("/analyst", requireScope(["ops"]), async (c) => {
+  const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 100);
+  const reports = await db
+    .select()
+    .from(analystReports)
+    .orderBy(desc(analystReports.createdAt))
+    .limit(limit);
+  return c.json({ reports });
 });
 
 reportsRouter.get("/funnel", requireScope(["ops"]), async (c) => {

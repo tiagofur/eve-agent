@@ -475,6 +475,19 @@ export const socialPosts = pgTable(
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
+export const analystReports = pgTable("analyst_reports", {
+  id: id(),
+  // Optional analysis window the report covers; null = snapshot "as of now".
+  periodStart: timestamp("period_start", { withTimezone: true }),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  // The full markdown briefing the analyst produced.
+  summary: text("summary").notNull(),
+  // Frozen metrics snapshot the briefing was grounded in (conversions, stocks).
+  metrics: jsonb("metrics").notNull().default({}),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
 export const chatThreads = pgTable("chat_threads", {
   id: id(),
   title: text("title").notNull().default("Nueva conversación"),
