@@ -46,11 +46,30 @@ projectsRouter.get("/billing", requireScope(["ops"]), async (c) => {
       : [];
 
   return c.json({
-    projects: openProjects.map((p) => ({
-      ...p,
-      milestones: allMilestones.filter((m) => m.projectId === p.id),
-      contracts: allContracts.filter((ct) => ct.projectId === p.id),
-    })),
+    projects: openProjects.map((p) => {
+      const milestones = allMilestones.filter((m) => m.projectId === p.id);
+      const contracts = allContracts.filter((ct) => ct.projectId === p.id);
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const in7days = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const dueDateOf = (m: { dueDate: string | null }) => (m.dueDate ? new Date(m.dueDate) : null);
+      return {
+        ...p,
+        milestones,
+        contracts,
+        // Server-side flags (single clock): overdue = past due and not done;
+        // due soon = due within the next 7 days; unsigned = sent but not signed.
+        overdueMilestones: milestones.filter((m) => {
+          const due = dueDateOf(m);
+          return !m.doneAt && due !== null && due < startOfToday;
+        }),
+        dueSoonMilestones: milestones.filter((m) => {
+          const due = dueDateOf(m);
+          return !m.doneAt && due !== null && due >= startOfToday && due <= in7days;
+        }),
+        unsignedContracts: contracts.filter((c) => c.status !== "signed" && c.status !== "void"),
+      };
+    }),
   });
 });
 
