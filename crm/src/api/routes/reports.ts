@@ -93,6 +93,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
   const overdueLeads = await db
     .select({
       id: leads.id,
+      leadId: leads.id,
+      contactId: leads.contactId,
       name: contacts.name,
       organizationName: organizations.name,
       detail: leads.summary,
@@ -111,6 +113,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
   const overdueTickets = await db
     .select({
       id: tickets.id,
+      organizationId: tickets.organizationId,
+      contactId: tickets.contactId,
       name: contacts.name,
       organizationName: organizations.name,
       detail: tickets.description,
@@ -153,6 +157,8 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
   const upcomingLeads = await db
     .select({
       id: leads.id,
+      leadId: leads.id,
+      contactId: leads.contactId,
       name: contacts.name,
       organizationName: organizations.name,
       detail: leads.summary,

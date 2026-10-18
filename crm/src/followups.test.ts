@@ -9,6 +9,8 @@ describe("T3 follow-ups", () => {
   const opsKey = "cp_ops_t3testkey1234567890abcdef12";
   let orgId = "";
   let leadId = "";
+  let contactId = "";
+  let bareOrgId = "";
 
   beforeAll(async () => {
     await db.insert(apiKeys).values([{ name: "T3 Ops", scope: "ops", keyHash: hashApiKey(opsKey) }]);
@@ -20,6 +22,7 @@ describe("T3 follow-ups", () => {
       .insert(contacts)
       .values({ organizationId: orgId, name: "Test Seguimiento", email: "t3-seguimiento@example.com" })
       .returning();
+    contactId = contact!.id;
 
     const [lead] = await db
       .insert(leads)
@@ -38,6 +41,10 @@ describe("T3 follow-ups", () => {
     await db.delete(leads).where(eq(leads.organizationId, orgId));
     await db.delete(contacts).where(eq(contacts.organizationId, orgId));
     await db.delete(organizations).where(eq(organizations.id, orgId));
+    if (bareOrgId) {
+      await db.delete(leads).where(eq(leads.organizationId, bareOrgId));
+      await db.delete(organizations).where(eq(organizations.id, bareOrgId));
+    }
     await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(opsKey)));
     await pool.end();
   });
@@ -72,6 +79,47 @@ describe("T3 follow-ups", () => {
     });
     const dailyBody = (await daily.json()) as { metrics: { followUpsOverdue: number } };
     expect(dailyBody.metrics.followUpsOverdue).toBeGreaterThanOrEqual(1);
+  });
+
+  it("expone leadId y contactId explícitos en el item de la cola", async () => {
+    const res = await app.request("/api/reports/followups", {
+      headers: { Authorization: `Bearer ${opsKey}` },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      overdue: Array<{ kind: string; id: string; leadId?: string; contactId?: string | null }>;
+    };
+    const item = body.overdue.find((f) => f.kind === "lead" && f.id === leadId);
+    expect(item).toBeTruthy();
+    expect(item?.leadId).toBe(leadId);
+    expect(item?.contactId).toBe(contactId);
+  });
+
+  it("expone leadId con contactId null cuando el lead no tiene contacto", async () => {
+    const [org] = await db.insert(organizations).values({ name: "TEST-T3 Sin Contacto" }).returning();
+    bareOrgId = org!.id;
+    const [lead] = await db
+      .insert(leads)
+      .values({ organizationId: bareOrgId, stage: "researched", source: "test", summary: "Lead sin contacto" })
+      .returning();
+
+    const patch = await app.request(`/api/leads/${lead!.id}/followup`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${opsKey}` },
+      body: JSON.stringify({ nextFollowUpAt: "2020-02-02T10:00:00.000Z", followUpNote: "Completar contacto" }),
+    });
+    expect(patch.status).toBe(200);
+
+    const res = await app.request("/api/reports/followups", {
+      headers: { Authorization: `Bearer ${opsKey}` },
+    });
+    const body = (await res.json()) as {
+      overdue: Array<{ kind: string; id: string; leadId?: string; contactId?: string | null }>;
+    };
+    const item = body.overdue.find((f) => f.kind === "lead" && f.id === lead!.id);
+    expect(item).toBeTruthy();
+    expect(item?.leadId).toBe(lead!.id);
+    expect(item?.contactId).toBeNull();
   });
 
   it("limpia el follow-up con null", async () => {
