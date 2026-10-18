@@ -61,9 +61,9 @@ export async function crmRegisterLead(data: RegisterLeadParams) {
 export interface CreateSupportTicketParams {
   clientName: string;
   companyName?: string;
-  contact: string;
+  contact?: string;
   system: string;
-  severity: "critical" | "major" | "minor";
+  severity?: "critical" | "major" | "minor";
   kind?: "support" | "info";
   description: string;
 }
@@ -91,6 +91,7 @@ export async function crmCreateTicket(data: CreateSupportTicketParams) {
     slaDueAt: string;
     slaHours: number;
     status: string;
+    duplicate: boolean;
   };
 }
 
