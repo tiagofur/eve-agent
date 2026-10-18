@@ -260,8 +260,32 @@ export async function crmGetBilling() {
       status: string;
       organizationId: string;
       organizationName: string | null;
-      milestones: Array<{ id: string; title: string; dueDate: string | null; doneAt: string | null }>;
+      milestones: Array<{
+        id: string;
+        title: string;
+        dueDate: string | null;
+        doneAt: string | null;
+        amountCents: number | null;
+        currency: string;
+      }>;
       contracts: Array<{ id: string; title: string; status: string }>;
+      overdueMilestones: Array<{
+        id: string;
+        title: string;
+        dueDate: string | null;
+        doneAt: string | null;
+        amountCents: number | null;
+        currency: string;
+      }>;
+      dueSoonMilestones: Array<{
+        id: string;
+        title: string;
+        dueDate: string | null;
+        doneAt: string | null;
+        amountCents: number | null;
+        currency: string;
+      }>;
+      unsignedContracts: Array<{ id: string; title: string; status: string }>;
     }>;
   };
 }
@@ -271,7 +295,7 @@ export interface CreateProjectParams {
   leadId?: string;
   name: string;
   repoUrl?: string;
-  milestonesList?: Array<{ title: string; dueDate?: string }>;
+  milestonesList?: Array<{ title: string; dueDate?: string; amountCents?: number; currency?: string }>;
 }
 
 export async function crmCreateProject(data: CreateProjectParams) {

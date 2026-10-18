@@ -4,20 +4,23 @@ import { crmGetBilling } from "../lib/crm";
 
 export default defineTool({
   description:
-    "Read billing status from Creapolis CRM: open projects with their milestones (due dates, completion) and contracts (draft, in review, sent, signed). Use it to spot overdue deliverables, unsigned contracts, and payment reminders to draft.",
+    "Read billing status from Creapolis CRM: open projects with server-computed flags — overdueMilestones (past due, not done), dueSoonMilestones (due within 7 days), unsignedContracts (sent but not signed) — each milestone carrying its agreed amount when recorded. Use it to report cashflow risks; drafting reminders is the owner's call, not this tool's.",
   inputSchema: z.object({}),
   async execute() {
     try {
       const data = await crmGetBilling();
-      const now = Date.now();
       const flagged = data.projects.map((p) => ({
         ...p,
-        overdueMilestones: p.milestones.filter((m) => !m.doneAt && m.dueDate && new Date(m.dueDate).getTime() < now),
-        unsignedContracts: p.contracts.filter((c) => c.status !== "signed" && c.status !== "void"),
+        overdueCount: p.overdueMilestones.length,
+        dueSoonCount: p.dueSoonMilestones.length,
+        unsignedCount: p.unsignedContracts.length,
       }));
+      const findings =
+        flagged.reduce((n, p) => n + p.overdueCount + p.dueSoonCount + p.unsignedCount, 0);
       return {
         status: "billing_retrieved",
         openProjects: flagged.length,
+        findings,
         projects: flagged,
         retrievedAt: new Date().toISOString(),
       };
