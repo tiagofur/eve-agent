@@ -18,9 +18,9 @@ ticketsRouter.post(
     z.object({
       clientName: z.string().min(1),
       companyName: z.string().optional(),
-      contact: z.string().min(1),
+      contact: z.string().min(1).optional(),
       system: z.string().min(1),
-      severity: z.enum(["critical", "major", "minor"]),
+      severity: z.enum(["critical", "major", "minor"]).optional(),
       kind: z.enum(["support", "info"]).default("support"),
       description: z.string().min(1),
     })
@@ -33,6 +33,10 @@ ticketsRouter.post(
       ...data,
       actor,
     });
+
+    if (!result.success) {
+      return c.json({ error: result.message, code: result.code }, 400);
+    }
 
     return c.json(
       {
