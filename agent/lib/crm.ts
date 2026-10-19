@@ -135,6 +135,7 @@ export interface SaveDossierParams {
   summary: string;
   findings: Record<string, unknown>;
   sources: Array<{ url: string; retrievedAt: string; note?: string }>;
+  contact?: { name?: string; email?: string; phone?: string };
 }
 
 export async function crmSaveDossier(data: SaveDossierParams) {
@@ -211,7 +212,7 @@ export async function crmGetFollowups() {
 export interface CreateDraftParams {
   leadId?: string;
   organizationId?: string;
-  contactId: string;
+  contactId?: string;
   channel: "email" | "linkedin" | "whatsapp" | "phone" | "telegram" | "web" | "other";
   subject?: string;
   body: string;
@@ -235,7 +236,8 @@ export async function crmCreateDraft(data: CreateDraftParams) {
 
   return (await res.json()) as {
     success: boolean;
-    draft: { id: string; status: string };
+    draft: { id: string; status: string; contactId: string | null };
+    contactResolution?: "explicit" | "lead" | "missing";
   };
 }
 

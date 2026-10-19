@@ -283,8 +283,9 @@ export const outbox = pgTable(
     organizationId: uuid("organization_id").references(() => organizations.id, {
       onDelete: "cascade",
     }),
+    // Nullable (S5): first-touch drafts may be addressed to a lead before any
+    // contact is verified; approval is blocked until a contact is resolved.
     contactId: uuid("contact_id")
-      .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     channel: channelEnum("channel").notNull(),
     subject: text("subject"),

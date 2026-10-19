@@ -18,7 +18,7 @@ outboxRouter.post(
     z.object({
       leadId: z.string().uuid().optional(),
       organizationId: z.string().uuid().optional(),
-      contactId: z.string().uuid(),
+      contactId: z.string().uuid().optional(),
       channel: z.enum(["email", "linkedin", "whatsapp", "phone", "telegram", "web", "other"]),
       subject: z.string().optional(),
       body: z.string().min(1),
@@ -38,7 +38,10 @@ outboxRouter.post(
       return c.json({ error: result.message, code: result.code }, 400);
     }
 
-    return c.json({ success: true, draft: result.draft }, 201);
+    return c.json(
+      { success: true, draft: result.draft, contactResolution: result.contactResolution },
+      201
+    );
   }
 );
 
