@@ -603,3 +603,72 @@ export async function crmGetEstimates(params: {
 
   return (await res.json()) as { estimates: SavedEstimate[] };
 }
+
+export type ContractStatus = "draft" | "in_review" | "sent" | "signed" | "void";
+
+export interface SaveContractParams {
+  leadId?: string;
+  projectId?: string;
+  title: string;
+  body: string;
+  reviewerNote?: string;
+  createdBy: string;
+}
+
+export interface SavedContract {
+  id: string;
+  leadId: string | null;
+  projectId: string | null;
+  title: string;
+  body: string;
+  status: ContractStatus;
+  reviewerNote: string | null;
+  voidReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function crmSaveContract(data: SaveContractParams) {
+  const res = await fetch(`${getCrmUrl()}/api/contracts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM contract save failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean; contract: SavedContract };
+}
+
+export async function crmMoveContract(data: {
+  contractId: string;
+  status: ContractStatus;
+  reason?: string;
+  reviewerNote?: string;
+}) {
+  const res = await fetch(`${getCrmUrl()}/api/contracts/${data.contractId}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify({
+      status: data.status,
+      reason: data.reason,
+      reviewerNote: data.reviewerNote,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM contract move failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean; contract: SavedContract };
+}
