@@ -150,7 +150,12 @@ projectsRouter.post(
       actor,
     });
 
-    return c.json({ success: true, task }, 201);
+    if (!task.success) {
+      const status = task.code === "project_not_found" ? 404 : 400;
+      return c.json({ error: task.message, code: task.code }, status as 400);
+    }
+
+    return c.json({ success: true, task: task.task }, 201);
   }
 );
 
@@ -199,6 +204,11 @@ projectsRouter.patch(
       actor,
     });
 
-    return c.json({ success: true, task: updated });
+    if (!updated.success) {
+      const statusCode = updated.code === "task_not_found" ? 404 : 400;
+      return c.json({ error: updated.message, code: updated.code }, statusCode as 400);
+    }
+
+    return c.json({ success: true, task: updated.task });
   }
 );

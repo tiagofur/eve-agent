@@ -83,7 +83,36 @@ export interface CreateTaskInput {
   actor: string;
 }
 
-export async function createTask(input: CreateTaskInput) {
+export type CreateTaskResult =
+  | { success: true; task: typeof tasks.$inferSelect }
+  | { success: false; code: string; message: string };
+
+export async function createTask(input: CreateTaskInput): Promise<CreateTaskResult> {
+  // Link validation (S1): ghost projects 404, cross-project milestones 400
+  // — never a bare FK 500, never a silently wrong link.
+  const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+  if (!project) {
+    return { success: false, code: "project_not_found", message: `Project ${input.projectId} not found` };
+  }
+
+  if (input.milestoneId) {
+    const [milestone] = await db
+      .select()
+      .from(milestones)
+      .where(eq(milestones.id, input.milestoneId))
+      .limit(1);
+    if (!milestone) {
+      return { success: false, code: "milestone_not_found", message: `Milestone ${input.milestoneId} not found` };
+    }
+    if (milestone.projectId !== input.projectId) {
+      return {
+        success: false,
+        code: "milestone_mismatch",
+        message: "Milestone belongs to a different project.",
+      };
+    }
+  }
+
   const [task] = await db
     .insert(tasks)
     .values({
@@ -114,7 +143,7 @@ export async function createTask(input: CreateTaskInput) {
     reason: input.title,
   });
 
-  return task;
+  return { success: true as const, task };
 }
 
 export interface UpdateTaskStatusInput {
@@ -124,10 +153,41 @@ export interface UpdateTaskStatusInput {
   actor: string;
 }
 
-export async function updateTaskStatus(input: UpdateTaskStatusInput) {
+export type UpdateTaskStatusResult =
+  | { success: true; task: typeof tasks.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/**
+ * Strict machine (S1): backlog → ready → dispatched → in_progress →
+ * in_review → done, with blocked along the way, retry from blocked, and
+ * rework from in_review. Done is terminal. Bad jumps are rejected.
+ */
+const TASK_MACHINE: Record<TaskStatus, TaskStatus[]> = {
+  backlog: ["ready"],
+  ready: ["dispatched", "blocked"],
+  dispatched: ["in_progress", "blocked"],
+  in_progress: ["in_review", "blocked"],
+  in_review: ["done", "in_progress", "blocked"],
+  blocked: ["ready"],
+  done: [],
+};
+
+export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<UpdateTaskStatusResult> {
   const [currentTask] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
   if (!currentTask) {
-    throw new Error(`Task ${input.taskId} not found`);
+    return { success: false, code: "task_not_found", message: `Task ${input.taskId} not found` };
+  }
+
+  const from = currentTask.status as TaskStatus;
+  if (from === input.status) {
+    return { success: true, task: currentTask };
+  }
+  if (!TASK_MACHINE[from].includes(input.status)) {
+    return {
+      success: false,
+      code: "invalid_transition",
+      message: `Invalid task transition: ${from} → ${input.status}`,
+    };
   }
 
   const [updated] = await db
@@ -149,5 +209,5 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput) {
     after: { status: input.status, prUrl: input.prUrl },
   });
 
-  return updated;
+  return { success: true as const, task: updated! };
 }
