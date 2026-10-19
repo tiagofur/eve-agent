@@ -12,6 +12,7 @@ import { organizationsRouter } from "./api/routes/organizations";
 import { interactionsRouter } from "./api/routes/interactions";
 import { contactsRouter } from "./api/routes/contacts";
 import { estimatesRouter } from "./api/routes/estimates";
+import { contractsRouter } from "./api/routes/contracts";
 
 export const app = new Hono();
 
@@ -47,4 +48,5 @@ app.route("/api/organizations", organizationsRouter);
 app.route("/api/interactions", interactionsRouter);
 app.route("/api/contacts", contactsRouter);
 app.route("/api/estimates", estimatesRouter);
+app.route("/api/contracts", contractsRouter);
 

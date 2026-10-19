@@ -391,6 +391,7 @@ export const contracts = pgTable("contracts", {
   // Always requires a human/lawyer reviewer before leaving `draft`.
   status: contractStatusEnum("status").notNull().default("draft"),
   reviewerNote: text("reviewer_note"),
+  voidReason: text("void_reason"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
