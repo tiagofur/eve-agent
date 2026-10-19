@@ -51,13 +51,38 @@ export interface ParsedEveStream {
   turnId?: string;
 }
 
+/**
+ * Scoping options for replayed streams.
+ *
+ * The session stream is durable: opening it without a cursor replays every
+ * recorded event, so a follow-up read sees the previous turn's events (and
+ * its turn.completed/session.waiting) before the new turn's. Every event
+ * carries `meta.deliveryIds` naming the accepted messages that own its turn,
+ * and the follow-up POST response returns its `deliveryId`. Passing it here
+ * keeps only the events of the turn that message owns.
+ */
+export interface ParseEveStreamOptions {
+  deliveryId?: string;
+}
+
 interface RawEnvelope {
   type?: unknown;
   data?: unknown;
   meta?: unknown;
 }
 
-export function parseEveStream(ndjson: string): ParsedEveStream {
+function eventBelongsToDelivery(evt: RawEnvelope, deliveryId?: string): boolean {
+  if (!deliveryId) return true;
+  const meta =
+    evt.meta && typeof evt.meta === "object" ? (evt.meta as Record<string, unknown>) : {};
+  const ids = Array.isArray(meta.deliveryIds) ? meta.deliveryIds : [];
+  return ids.includes(deliveryId);
+}
+
+export function parseEveStream(
+  ndjson: string,
+  options?: ParseEveStreamOptions
+): ParsedEveStream {
   const messages: ParsedEveMessage[] = [];
   const deltas: string[] = [];
   let turnCompleted = false;
@@ -76,6 +101,8 @@ export function parseEveStream(ndjson: string): ParsedEveStream {
     } catch {
       continue;
     }
+
+    if (!eventBelongsToDelivery(evt, options?.deliveryId)) continue;
 
     const type = typeof evt.type === "string" ? evt.type : "";
     const data =
@@ -203,7 +230,7 @@ export async function createEveSession(
 export async function sendEveMessage(
   input: EveCall & { sessionId: string; message: string },
   fetchImpl: FetchImpl = fetch
-): Promise<void> {
+): Promise<{ deliveryId?: string }> {
   const res = await fetchImpl(
     `${input.baseUrl}/eve/v1/session/${input.sessionId}`,
     {
@@ -213,17 +240,24 @@ export async function sendEveMessage(
     }
   );
   if (!res.ok) throw eveError("session message", res, await readErrorCode(res));
+  const data = (await res.json().catch(() => ({}))) as { deliveryId?: unknown };
+  const deliveryId = typeof data.deliveryId === "string" ? data.deliveryId : undefined;
+  return deliveryId ? { deliveryId } : {};
 }
 
 export async function readEveStreamToTerminal(
-  input: EveCall & { sessionId: string; follow?: boolean; signal?: AbortSignal },
+  input: EveCall & {
+    sessionId: string;
+    follow?: boolean;
+    signal?: AbortSignal;
+    deliveryId?: string;
+  },
   fetchImpl: FetchImpl = fetch
 ): Promise<string> {
   input.signal?.throwIfAborted?.();
+  const streamUrl = `${input.baseUrl}/eve/v1/session/${input.sessionId}/stream`;
   const url =
-    input.follow === false
-      ? `${input.baseUrl}/eve/v1/session/${input.sessionId}/stream?follow=false`
-      : `${input.baseUrl}/eve/v1/session/${input.sessionId}/stream`;
+    input.follow === false ? `${streamUrl}?follow=false` : streamUrl;
   const res = await fetchImpl(url, {
     headers: { Authorization: basicAuthHeader(input.auth.username, input.auth.password) },
     signal: input.signal,
@@ -243,7 +277,7 @@ export async function readEveStreamToTerminal(
       const { done, value } = await reader.read();
       if (value) {
         acc += decoder.decode(value, { stream: true });
-        const parsed = parseEveStream(acc);
+        const parsed = parseEveStream(acc, { deliveryId: input.deliveryId });
         if (parsed.turnCompleted || parsed.sessionWaiting) {
           await reader.cancel().catch(() => {});
           return acc;
