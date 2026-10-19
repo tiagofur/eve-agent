@@ -329,6 +329,10 @@ export const milestones = pgTable("milestones", {
   title: text("title").notNull(),
   dueDate: date("due_date"),
   doneAt: timestamp("done_at", { withTimezone: true }),
+  // Agreed price for the milestone, in minor units (e.g. cents). Null =
+  // not agreed/recorded: reminders must ask the owner, never guess.
+  amountCents: integer("amount_cents"),
+  currency: text("currency").notNull().default("USD"),
   createdAt: createdAt(),
 });
 
@@ -347,6 +351,10 @@ export const tasks = pgTable(
     status: taskStatusEnum("status").notNull().default("backlog"),
     assignee: text("assignee"),
     prUrl: text("pr_url"),
+    // Verification evidence reported by the coding agent on each advance:
+    // what ran (tests, typecheck, build) and the outcome. The pm reviews
+    // this — never blind sign-off — before client acceptance.
+    resultSummary: text("result_summary"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -387,6 +395,7 @@ export const contracts = pgTable("contracts", {
   // Always requires a human/lawyer reviewer before leaving `draft`.
   status: contractStatusEnum("status").notNull().default("draft"),
   reviewerNote: text("reviewer_note"),
+  voidReason: text("void_reason"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -475,9 +484,46 @@ export const socialPosts = pgTable(
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
+export const estimates = pgTable("estimates", {
+  id: id(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  organizationId: uuid("organization_id").references(() => organizations.id, {
+    onDelete: "set null",
+  }),
+  // Service category + complexity mirror the ballpark tool's taxonomy.
+  category: text("category").notNull(),
+  complexity: text("complexity").notNull(),
+  // What was proposed, in the solutions agent's own words.
+  scopeSummary: text("scope_summary").notNull(),
+  // [{ title, timeframe }] — milestone breakdown with realistic timeframes.
+  phases: jsonb("phases").notNull().default([]),
+  timelineText: text("timeline_text"),
+  // Agreed/quoted money, in minor units. Null = not quoted: never guessed.
+  valueCents: integer("value_cents"),
+  currency: text("currency").notNull().default("USD"),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
+export const analystReports = pgTable("analyst_reports", {
+  id: id(),
+  // Optional analysis window the report covers; null = snapshot "as of now".
+  periodStart: timestamp("period_start", { withTimezone: true }),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  // The full markdown briefing the analyst produced.
+  summary: text("summary").notNull(),
+  // Frozen metrics snapshot the briefing was grounded in (conversions, stocks).
+  metrics: jsonb("metrics").notNull().default({}),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
 export const chatThreads = pgTable("chat_threads", {
   id: id(),
   title: text("title").notNull().default("Nueva conversación"),
+  // Stable external mapping (e.g. "telegram:<chat_id>"): one persistent
+  // thread per external conversation, findable without scanning titles.
+  externalKey: text("external_key").unique(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   eveSessionId: text("eve_session_id"),

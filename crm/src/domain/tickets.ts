@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { tickets, contacts, organizations, type ticketSeverityEnum, type ticketStatusEnum, type ticketKindEnum } from "../db/schema";
 import { logEvent } from "./events";
@@ -11,13 +11,22 @@ export type TicketKind = (typeof ticketKindEnum.enumValues)[number];
 export interface CreateTicketInput {
   clientName: string;
   companyName?: string;
-  contact: string;
+  /**
+   * Follow-up channel (email/phone). Optional for `info` questions from
+   * strangers; required for `support` incidents (rejected loudly otherwise).
+   */
+  contact?: string;
   system: string;
-  severity: TicketSeverity;
+  /** Meaningless for `info` (24h commercial SLA always): defaults to minor. */
+  severity?: TicketSeverity;
   kind?: TicketKind;
   description: string;
   actor: string;
 }
+
+export type CreateTicketResult =
+  | { success: true; ticket: typeof tickets.$inferSelect; slaHours: number; duplicate?: boolean }
+  | { success: false; code: string; message: string };
 
 export function computeSlaDueAt(severity: TicketSeverity, kind: TicketKind = "support"): Date {
   const now = new Date();
@@ -36,33 +45,85 @@ export function computeSlaDueAt(severity: TicketSeverity, kind: TicketKind = "su
   }
 }
 
-export async function createTicket(input: CreateTicketInput) {
+export async function createTicket(input: CreateTicketInput): Promise<CreateTicketResult> {
   const kind = input.kind ?? "support";
-  const slaDueAt = computeSlaDueAt(input.severity, kind);
+  const severity = input.severity ?? "minor";
+  const rawContact = input.contact?.trim() || undefined;
+
+  // Support incidents without a follow-up channel cannot be worked:
+  // refuse loudly instead of logging a dead ticket.
+  if (kind === "support" && !rawContact) {
+    return {
+      success: false,
+      code: "contact_required",
+      message: "Support incidents require a contact email or phone for follow-up.",
+    };
+  }
+
+  const slaDueAt = computeSlaDueAt(severity, kind);
 
   // 1. Resolve contact/org if possible
-  const isEmail = input.contact.includes("@");
+  const isEmail = !!rawContact && rawContact.includes("@");
   let contactId: string | undefined = undefined;
 
-  const [existingContact] = await db
-    .select()
-    .from(contacts)
-    .where(isEmail ? eq(contacts.email, input.contact.trim().toLowerCase()) : eq(contacts.phone, input.contact.trim()))
-    .limit(1);
+  if (rawContact) {
+    const [existingContact] = await db
+      .select()
+      .from(contacts)
+      .where(isEmail ? eq(contacts.email, rawContact.toLowerCase()) : eq(contacts.phone, rawContact))
+      .limit(1);
 
-  if (existingContact) {
-    contactId = existingContact.id;
-  } else {
-    const [newContact] = await db
-      .insert(contacts)
-      .values({
-        name: input.clientName.trim(),
-        email: isEmail ? input.contact.trim().toLowerCase() : undefined,
-        phone: !isEmail ? input.contact.trim() : undefined,
-      })
-      .returning();
-    if (newContact) {
-      contactId = newContact.id;
+    if (existingContact) {
+      contactId = existingContact.id;
+    } else {
+      const [newContact] = await db
+        .insert(contacts)
+        .values({
+          name: input.clientName.trim(),
+          email: isEmail ? rawContact.toLowerCase() : undefined,
+          phone: !isEmail ? rawContact : undefined,
+        })
+        .returning();
+      if (newContact) {
+        contactId = newContact.id;
+      }
+    }
+  }
+
+  // 2. Open-ticket dedup (S1): same contact + system + kind with a ticket
+  // still open (not resolved/closed) is the same incident — return it
+  // instead of duplicating and re-paging the owner. System matches
+  // case-insensitively; contact-less info tickets always log fresh.
+  if (contactId) {
+    const [openTicket] = await db
+      .select()
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.contactId, contactId),
+          sql`LOWER(${tickets.system}) = LOWER(${input.system.trim()})`,
+          eq(tickets.kind, kind),
+          not(inArray(tickets.status, ["resolved", "closed"]))
+        )
+      )
+      .orderBy(desc(tickets.createdAt))
+      .limit(1);
+
+    if (openTicket) {
+      await logEvent({
+        entity: "ticket",
+        entityId: openTicket.id,
+        action: "ticket_duplicate_skipped",
+        actor: input.actor,
+        after: { kind, system: input.system },
+        reason: "Repeat report of an open incident",
+      });
+      return {
+        success: true,
+        ticket: openTicket,
+        slaHours: kind === "info" ? 24 : openTicket.severity === "critical" ? 1 : openTicket.severity === "major" ? 4 : 24,
+        duplicate: true as const,
+      };
     }
   }
 
@@ -72,7 +133,7 @@ export async function createTicket(input: CreateTicketInput) {
       contactId,
       kind,
       system: input.system,
-      severity: input.severity,
+      severity,
       status: "open",
       description: input.description,
       slaDueAt,
@@ -90,7 +151,7 @@ export async function createTicket(input: CreateTicketInput) {
     actor: input.actor,
     after: {
       kind,
-      severity: input.severity,
+      severity,
       system: input.system,
       slaDueAt: slaDueAt.toISOString(),
     },
@@ -98,15 +159,16 @@ export async function createTicket(input: CreateTicketInput) {
   });
 
   // Only support incidents page the owner; info requests wait in the queue.
-  if (kind === "support" && (input.severity === "critical" || input.severity === "major")) {
+  if (kind === "support" && (severity === "critical" || severity === "major")) {
     notifyCriticalTicketCreated(ticket.id).catch((err) =>
       console.error("Failed to dispatch telegram ticket alert:", err)
     );
   }
 
   return {
+    success: true,
     ticket,
-    slaHours: kind === "info" ? 24 : input.severity === "critical" ? 1 : input.severity === "major" ? 4 : 24,
+    slaHours: kind === "info" ? 24 : severity === "critical" ? 1 : severity === "major" ? 4 : 24,
   };
 }
 

@@ -46,11 +46,30 @@ projectsRouter.get("/billing", requireScope(["ops"]), async (c) => {
       : [];
 
   return c.json({
-    projects: openProjects.map((p) => ({
-      ...p,
-      milestones: allMilestones.filter((m) => m.projectId === p.id),
-      contracts: allContracts.filter((ct) => ct.projectId === p.id),
-    })),
+    projects: openProjects.map((p) => {
+      const milestones = allMilestones.filter((m) => m.projectId === p.id);
+      const contracts = allContracts.filter((ct) => ct.projectId === p.id);
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const in7days = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
+      const dueDateOf = (m: { dueDate: string | null }) => (m.dueDate ? new Date(m.dueDate) : null);
+      return {
+        ...p,
+        milestones,
+        contracts,
+        // Server-side flags (single clock): overdue = past due and not done;
+        // due soon = due within the next 7 days; unsigned = sent but not signed.
+        overdueMilestones: milestones.filter((m) => {
+          const due = dueDateOf(m);
+          return !m.doneAt && due !== null && due < startOfToday;
+        }),
+        dueSoonMilestones: milestones.filter((m) => {
+          const due = dueDateOf(m);
+          return !m.doneAt && due !== null && due >= startOfToday && due <= in7days;
+        }),
+        unsignedContracts: contracts.filter((c) => c.status !== "signed" && c.status !== "void"),
+      };
+    }),
   });
 });
 
@@ -70,6 +89,8 @@ projectsRouter.post(
           z.object({
             title: z.string().min(1),
             dueDate: z.string().optional(),
+            amountCents: z.number().int().nonnegative().optional(),
+            currency: z.string().max(8).optional(),
           })
         )
         .optional(),
@@ -129,7 +150,46 @@ projectsRouter.post(
       actor,
     });
 
-    return c.json({ success: true, task }, 201);
+    if (!task.success) {
+      const status = task.code === "project_not_found" ? 404 : 400;
+      return c.json({ error: task.message, code: task.code }, status as 400);
+    }
+
+    return c.json({ success: true, task: task.task }, 201);
+  }
+);
+
+// Get all tasks of a project (ops): the pm review surface — every status
+// with specs, PR urls and verification evidence for QA before sign-off.
+projectsRouter.get(
+  "/:projectId/tasks",
+  requireScope(["ops"]),
+  async (c) => {
+    const projectId = c.req.param("projectId");
+
+    const [project] = await db.select().from(projects).where(sql`${projects.id} = ${projectId}`).limit(1);
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const result = await db
+      .select({
+        id: tasks.id,
+        milestoneId: tasks.milestoneId,
+        title: tasks.title,
+        spec: tasks.spec,
+        status: tasks.status,
+        assignee: tasks.assignee,
+        prUrl: tasks.prUrl,
+        resultSummary: tasks.resultSummary,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+      })
+      .from(tasks)
+      .where(sql`${tasks.projectId} = ${projectId}`)
+      .orderBy(desc(tasks.createdAt));
+
+    return c.json({ tasks: result });
   }
 );
 
@@ -145,6 +205,7 @@ projectsRouter.get("/tasks/ready", requireScope(["dev", "ops"]), async (c) => {
       spec: tasks.spec,
       status: tasks.status,
       assignee: tasks.assignee,
+      resultSummary: tasks.resultSummary,
       createdAt: tasks.createdAt,
     })
     .from(tasks)
@@ -164,20 +225,27 @@ projectsRouter.patch(
     z.object({
       status: z.enum(["ready", "dispatched", "in_progress", "in_review", "done", "blocked"]),
       prUrl: z.string().url().optional(),
+      resultSummary: z.string().max(2000).optional(),
     })
   ),
   async (c) => {
     const taskId = c.req.param("id");
-    const { status, prUrl } = c.req.valid("json");
+    const { status, prUrl, resultSummary } = c.req.valid("json");
     const actor = c.get("actor");
 
     const updated = await updateTaskStatus({
       taskId,
       status,
       prUrl,
+      resultSummary,
       actor,
     });
 
-    return c.json({ success: true, task: updated });
+    if (!updated.success) {
+      const statusCode = updated.code === "task_not_found" ? 404 : 400;
+      return c.json({ error: updated.message, code: updated.code }, statusCode as 400);
+    }
+
+    return c.json({ success: true, task: updated.task });
   }
 );

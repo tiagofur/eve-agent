@@ -7,6 +7,12 @@ import { count, eq, sql } from "drizzle-orm";
 import { leads, tickets, outbox, contacts, organizations, socialPosts } from "../db/schema";
 import { reviewOutreachDraft } from "../domain/outbox";
 import { updateTicketStatus } from "../domain/tickets";
+import { ensureExternalThread } from "../domain/threads";
+import {
+  runOrchestratorTurn,
+  defaultTurnDeps,
+} from "../domain/telegram-chat";
+import { resolveEveProxyConfig } from "../domain/eve-client";
 
 function getCredentials() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -100,7 +106,8 @@ export async function editTelegramMessage(
   chatId: number | string,
   text: string,
   inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>,
-  parseMode: "HTML" | "Markdown" = "HTML"
+  parseMode: "HTML" | "Markdown" = "HTML",
+  hasPhoto = false
 ) {
   const { token } = getCredentials();
   if (!token) return;
@@ -120,7 +127,9 @@ export async function editTelegramMessage(
       body: JSON.stringify({ ...payload, text }),
     });
     const data = await res.json();
-    if (!data.ok) {
+    // Caption fallback applies ONLY to photo messages: on text messages
+    // editMessageCaption always 400s and only buries the real error.
+    if (!data.ok && hasPhoto) {
       // If message is a media/photo message, Telegram requires editMessageCaption
       const captionRes = await fetch(`https://api.telegram.org/bot${token}/editMessageCaption`, {
         method: "POST",
@@ -131,9 +140,35 @@ export async function editTelegramMessage(
       if (!captionData.ok) {
         console.error("[Telegram] editMessageCaption API error:", captionData);
       }
+    } else if (!data.ok) {
+      console.error("[Telegram] editMessageText API error:", data);
     }
   } catch (err) {
     console.error("[Telegram] Failed to edit telegram message:", err);
+  }
+}
+
+/**
+ * Remove the inline keyboard from a message, independent of text edits.
+ * Text edits can fail (length limits, race with a second tap) while the
+ * decision already succeeded — buttons must never outlive the decision.
+ * Uses the dedicated editMessageReplyMarkup endpoint for exactly this.
+ */
+export async function removeTelegramKeyboard(messageId: number, chatId: number | string): Promise<void> {
+  const { token } = getCredentials();
+  if (!token) return;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("[Telegram] removeKeyboard API error:", data);
+    }
+  } catch (err) {
+    console.error("[Telegram] Failed to remove keyboard:", err);
   }
 }
 
@@ -191,11 +226,11 @@ export async function notifyOutboxDraftCreated(draftId: string) {
 <b>Mensaje Propuesto:</b>
 <pre>${bodyDisplay}</pre>
 
-¿Deseas autorizar el envío?`;
+¿Aprobás este borrador? El envío es manual: copiá el mensaje y mandalo por el canal indicado.`;
 
   const keyboard = [
     [
-      { text: "✅ Aprobar Envío", callback_data: `approve_draft:${draft.id}` },
+      { text: "✅ Aprobar", callback_data: `approve_draft:${draft.id}` },
       { text: "❌ Rechazar", callback_data: `reject_draft:${draft.id}` },
     ],
   ];
@@ -286,6 +321,83 @@ ${post.imagePrompt ? `<b>Prompt Visual (Muse Image):</b>\n<code>${escapeHtml(pos
 
 let isPolling = false;
 
+/**
+ * Sequential per-thread turn queue: eve sessions process one turn at a time,
+ * so Telegram messages for the same thread run in order while the polling
+ * loop keeps serving commands and approval buttons. Fire-and-forget with
+ * internal rejection handling — a failed turn never stalls the loop.
+ */
+const turnQueue = new Map<string, Promise<void>>();
+
+function enqueueTurn(threadId: string, work: () => Promise<void>): void {
+  const prev = turnQueue.get(threadId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => {})
+    .then(work)
+    .catch(() => {});
+  turnQueue.set(threadId, next);
+}
+
+/** Telegram text cap is 4096 chars: split long orchestrator replies safely. */
+function chunkTelegramText(text: string, max = 4000): string[] {
+  if (text.length <= max) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf("\n", max);
+    if (cut < max / 2) cut = max;
+    chunks.push(rest.slice(0, cut));
+    rest = rest.slice(cut).trimStart();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
+}
+
+async function replyLong(text: string): Promise<void> {
+  for (const chunk of chunkTelegramText(text)) {
+    await sendTelegramMessage(chunk);
+  }
+}
+
+/**
+ * Free-text from the admin chat: run it through the orchestrator via the
+ * same eve proxy the desktop chat uses (S2). Text from any other chat is
+ * silently ignored — driving the orchestrator is an admin-only surface.
+ */
+async function handleOrchestratorText(chatId: number, text: string): Promise<void> {
+  const { adminChatId } = getCredentials();
+  if (String(chatId) !== String(adminChatId)) return;
+
+  const proxy = resolveEveProxyConfig(process.env);
+  if (!proxy.enabled) {
+    await sendTelegramMessage(
+      "⚠️ El chat con el orquestador no está disponible: el agente eve no está configurado en el CRM."
+    );
+    return;
+  }
+
+  const key = `telegram:${chatId}`;
+  const thread = await ensureExternalThread({
+    key,
+    title: `Telegram — ${text.slice(0, 80)}`,
+  });
+
+  await sendTelegramMessage("🤖 En eso estoy, te aviso cuando termine…");
+
+  enqueueTurn(thread.id, async () => {
+    const result = await runOrchestratorTurn({
+      threadId: thread.id,
+      userContent: text,
+      deps: defaultTurnDeps(proxy),
+    });
+    if (result.reply) {
+      await replyLong(result.reply);
+    } else {
+      await sendTelegramMessage(`⚠️ No pude completar eso: ${result.error}`);
+    }
+  });
+}
+
 export async function startTelegramPolling() {
   const { token, adminChatId } = getCredentials();
   if (!token || !adminChatId) {
@@ -327,7 +439,8 @@ export async function startTelegramPolling() {
                 });
 
                 if (result.success) {
-                  await answerCallbackQuery(cq.id, "✅ Borrador aprobado y listo para entrega.");
+                  await answerCallbackQuery(cq.id, "✅ Borrador aprobado. El envío es manual.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -347,6 +460,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "❌ Borrador rechazado.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -366,6 +480,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "⚡ Ticket en progreso.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -383,6 +498,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "✅ Ticket marcado como resuelto.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -402,6 +518,8 @@ export async function startTelegramPolling() {
 
                 if (reviewRes.success) {
                   await answerCallbackQuery(cq.id, "🚀 Aprobando y enviando a Meta...");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  const hasPhoto = !!msg.photo;
                   try {
                     const pubRes = await publishSocialPost(postId, "telegram_admin");
                     const postUrl = pubRes.publishResult?.externalPostUrl || "";
@@ -411,16 +529,19 @@ export async function startTelegramPolling() {
                       msg.chat.id,
                       `${originalContent}\n\n🚀 <b>¡PUBLICADO EN META CON ÉXITO!</b>\n🆔 ID: <code>${escapeHtml(postIdMeta)}</code>${postUrl ? `\n🔗 <a href="${postUrl}">Ver publicación</a>` : ""}`,
                       undefined,
-                      "HTML"
+                      "HTML",
+                      hasPhoto
                     );
                   } catch (publishErr: any) {
                     console.error("Meta auto-publish error after approval:", publishErr);
+                    await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                     await editTelegramMessage(
                       msg.message_id,
                       msg.chat.id,
                       `${originalContent}\n\n⚠️ <b>Aprobado en CRM, pero falló el envío a Meta:</b> ${escapeHtml(publishErr.message)}`,
                       undefined,
-                      "HTML"
+                      "HTML",
+                      hasPhoto
                     );
                   }
                 } else {
@@ -440,12 +561,15 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "❌ Publicación rechazada.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  const hasPhotoReject = !!msg.photo;
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
                     `${originalContent}\n\n❌ <b>Rechazado vía Telegram a las ${new Date().toLocaleTimeString()}</b>`,
                     undefined,
-                    "HTML"
+                    "HTML",
+                    hasPhotoReject
                   );
                 } else {
                   await answerCallbackQuery(cq.id, "Error al rechazar.");
@@ -514,8 +638,11 @@ _Servidor CRM en línea (:8787)_`;
 Comandos disponibles:
 • \`/pipeline\` o \`/status\` - Métricas en tiempo real del CRM.
 • \`/followups\` - Seguimientos vencidos (leads y tickets).
+• Escribime en lenguaje normal y hablo con el orquestador (prospectos, mensajes, consultas) — respondo acá mismo.
 • Recibirás notificaciones interactivas automáticas cuando haya borradores en outbox o tickets de soporte con SLA crítico.`;
                 await sendTelegramMessage(reply);
+              } else {
+                await handleOrchestratorText(chatId, text);
               }
             }
           }
