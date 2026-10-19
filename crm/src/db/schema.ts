@@ -479,6 +479,27 @@ export const socialPosts = pgTable(
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
+export const estimates = pgTable("estimates", {
+  id: id(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  organizationId: uuid("organization_id").references(() => organizations.id, {
+    onDelete: "set null",
+  }),
+  // Service category + complexity mirror the ballpark tool's taxonomy.
+  category: text("category").notNull(),
+  complexity: text("complexity").notNull(),
+  // What was proposed, in the solutions agent's own words.
+  scopeSummary: text("scope_summary").notNull(),
+  // [{ title, timeframe }] — milestone breakdown with realistic timeframes.
+  phases: jsonb("phases").notNull().default([]),
+  timelineText: text("timeline_text"),
+  // Agreed/quoted money, in minor units. Null = not quoted: never guessed.
+  valueCents: integer("value_cents"),
+  currency: text("currency").notNull().default("USD"),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
 export const analystReports = pgTable("analyst_reports", {
   id: id(),
   // Optional analysis window the report covers; null = snapshot "as of now".
