@@ -62,6 +62,8 @@ export const outboxStatusEnum = pgEnum("outbox_status", [
 
 export const ticketSeverityEnum = pgEnum("ticket_severity", ["critical", "major", "minor"]);
 
+export const ticketKindEnum = pgEnum("ticket_kind", ["support", "info"]);
+
 export const ticketStatusEnum = pgEnum("ticket_status", [
   "open",
   "in_progress",
@@ -119,6 +121,7 @@ export type DirectionType = (typeof directionEnum.enumValues)[number];
 export type ServiceType = (typeof serviceTypeEnum.enumValues)[number];
 export type OutboxStatus = (typeof outboxStatusEnum.enumValues)[number];
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
+export type TicketKind = (typeof ticketKindEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type TaskStatus = (typeof taskStatusEnum.enumValues)[number];
@@ -156,6 +159,9 @@ export const organizations = pgTable(
     industry: text("industry"),
     city: text("city"),
     country: text("country"),
+    // T3 follow-up: when to contact this client next + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -178,6 +184,9 @@ export const contacts = pgTable(
     email: text("email"),
     phone: text("phone"),
     preferredChannel: channelEnum("preferred_channel"),
+    // T3 follow-up per contact (Nivel 1): each person gets their own next action.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     // Do-not-contact flag. Enforced server-side when creating outbox drafts.
     optOut: boolean("opt_out").notNull().default(false),
     optOutAt: timestamp("opt_out_at", { withTimezone: true }),
@@ -206,6 +215,9 @@ export const leads = pgTable(
     estimatedValueCents: integer("estimated_value_cents"),
     currency: text("currency").notNull().default("USD"),
     lostReason: text("lost_reason"),
+    // T3 follow-up: when to contact this lead next + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -235,7 +247,13 @@ export const interactions = pgTable(
   "interactions",
   {
     id: id(),
+    // T5: polymorphic links — at least one should be set, contact preferred.
     leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    ticketId: uuid("ticket_id").references(() => tickets.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     channel: channelEnum("channel").notNull(),
     direction: directionEnum("direction").notNull(),
@@ -243,7 +261,12 @@ export const interactions = pgTable(
     metadata: jsonb("metadata").notNull().default({}),
     createdAt: createdAt(),
   },
-  (t) => [index("interactions_lead_idx").on(t.leadId)],
+  (t) => [
+    index("interactions_lead_idx").on(t.leadId),
+    index("interactions_contact_idx").on(t.contactId),
+    index("interactions_org_idx").on(t.organizationId),
+    index("interactions_ticket_idx").on(t.ticketId),
+  ],
 );
 
 /**
@@ -254,11 +277,15 @@ export const outbox = pgTable(
   "outbox",
   {
     id: id(),
-    leadId: uuid("lead_id")
-      .notNull()
-      .references(() => leads.id, { onDelete: "cascade" }),
+    // T6: drafts may target a lead (prospecting) OR an existing client directly.
+    // At least one of leadId / organizationId must be set (enforced in domain).
+    leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "cascade",
+    }),
+    // Nullable (S5): first-touch drafts may be addressed to a lead before any
+    // contact is verified; approval is blocked until a contact is resolved.
     contactId: uuid("contact_id")
-      .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     channel: channelEnum("channel").notNull(),
     subject: text("subject"),
@@ -302,6 +329,10 @@ export const milestones = pgTable("milestones", {
   title: text("title").notNull(),
   dueDate: date("due_date"),
   doneAt: timestamp("done_at", { withTimezone: true }),
+  // Agreed price for the milestone, in minor units (e.g. cents). Null =
+  // not agreed/recorded: reminders must ask the owner, never guess.
+  amountCents: integer("amount_cents"),
+  currency: text("currency").notNull().default("USD"),
   createdAt: createdAt(),
 });
 
@@ -320,6 +351,10 @@ export const tasks = pgTable(
     status: taskStatusEnum("status").notNull().default("backlog"),
     assignee: text("assignee"),
     prUrl: text("pr_url"),
+    // Verification evidence reported by the coding agent on each advance:
+    // what ran (tests, typecheck, build) and the outcome. The pm reviews
+    // this — never blind sign-off — before client acceptance.
+    resultSummary: text("result_summary"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -335,12 +370,16 @@ export const tickets = pgTable(
     }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    kind: ticketKindEnum("kind").notNull().default("support"),
     system: text("system").notNull(),
     severity: ticketSeverityEnum("severity").notNull(),
     status: ticketStatusEnum("status").notNull().default("open"),
     description: text("description").notNull(),
     slaDueAt: timestamp("sla_due_at", { withTimezone: true }).notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    // T3 follow-up: when to ping the client about this ticket + why.
+    nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
+    followUpNote: text("follow_up_note"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -356,6 +395,7 @@ export const contracts = pgTable("contracts", {
   // Always requires a human/lawyer reviewer before leaving `draft`.
   status: contractStatusEnum("status").notNull().default("draft"),
   reviewerNote: text("reviewer_note"),
+  voidReason: text("void_reason"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -444,9 +484,46 @@ export const socialPosts = pgTable(
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
+export const estimates = pgTable("estimates", {
+  id: id(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  organizationId: uuid("organization_id").references(() => organizations.id, {
+    onDelete: "set null",
+  }),
+  // Service category + complexity mirror the ballpark tool's taxonomy.
+  category: text("category").notNull(),
+  complexity: text("complexity").notNull(),
+  // What was proposed, in the solutions agent's own words.
+  scopeSummary: text("scope_summary").notNull(),
+  // [{ title, timeframe }] — milestone breakdown with realistic timeframes.
+  phases: jsonb("phases").notNull().default([]),
+  timelineText: text("timeline_text"),
+  // Agreed/quoted money, in minor units. Null = not quoted: never guessed.
+  valueCents: integer("value_cents"),
+  currency: text("currency").notNull().default("USD"),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
+export const analystReports = pgTable("analyst_reports", {
+  id: id(),
+  // Optional analysis window the report covers; null = snapshot "as of now".
+  periodStart: timestamp("period_start", { withTimezone: true }),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  // The full markdown briefing the analyst produced.
+  summary: text("summary").notNull(),
+  // Frozen metrics snapshot the briefing was grounded in (conversions, stocks).
+  metrics: jsonb("metrics").notNull().default({}),
+  createdBy: text("created_by").notNull(),
+  createdAt: createdAt(),
+});
+
 export const chatThreads = pgTable("chat_threads", {
   id: id(),
   title: text("title").notNull().default("Nueva conversación"),
+  // Stable external mapping (e.g. "telegram:<chat_id>"): one persistent
+  // thread per external conversation, findable without scanning titles.
+  externalKey: text("external_key").unique(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   eveSessionId: text("eve_session_id"),

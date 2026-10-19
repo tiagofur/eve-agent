@@ -23,6 +23,16 @@ export default defineTool({
         })
       )
       .min(1, "At least one verified source URL is required for auditability"),
+    contact: z
+      .object({
+        name: z.string().optional().describe("Decision maker's name when identified"),
+        email: z.string().optional().describe("Verified email published by the business"),
+        phone: z.string().optional().describe("Verified phone/WhatsApp published by the business"),
+      })
+      .optional()
+      .describe(
+        "Contact data you actually verified on the business's pages. The CRM links it to the lead so outreach drafts have a recipient. NEVER guess or pattern-fill."
+      ),
   }),
   async execute(input) {
     try {
@@ -35,6 +45,7 @@ export default defineTool({
         summary: input.summary,
         findings: input.findings,
         sources: input.sources,
+        contact: input.contact,
       });
 
       return {

@@ -31,6 +31,13 @@ dossiersRouter.post(
           })
         )
         .min(1, "At least one verified source URL is required"),
+      contact: z
+        .object({
+          name: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+        })
+        .optional(),
     })
   ),
   async (c) => {

@@ -1,0 +1,1 @@
+ALTER TABLE "outbox" ALTER COLUMN "contact_id" DROP NOT NULL;

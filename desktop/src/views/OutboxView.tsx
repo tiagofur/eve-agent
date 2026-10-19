@@ -1,11 +1,21 @@
 import { useState, useEffect } from "react";
-import { crmApi, type OutboxDraft } from "../api";
-import { Check, X, Send, Clock, User } from "lucide-react";
+import { crmApi, type OutboxDraft, type OrganizationItem, type OrganizationSummary } from "../api";
+import { Check, X, Send, Clock, User, Plus, Building2 } from "lucide-react";
 
 export function OutboxView() {
   const [drafts, setDrafts] = useState<OutboxDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [orgs, setOrgs] = useState<OrganizationItem[]>([]);
+  const [formOrgId, setFormOrgId] = useState("");
+  const [formContacts, setFormContacts] = useState<Array<{ id: string; name: string }>>([]);
+  const [formContactId, setFormContactId] = useState("");
+  const [formChannel, setFormChannel] = useState("email");
+  const [formSubject, setFormSubject] = useState("");
+  const [formBody, setFormBody] = useState("");
+  const [formRationale, setFormRationale] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const loadDrafts = async () => {
     try {
@@ -22,6 +32,60 @@ export function OutboxView() {
   useEffect(() => {
     loadDrafts();
   }, []);
+
+  const openForm = async () => {
+    setShowForm(true);
+    if (orgs.length === 0) {
+      try {
+        const res = await crmApi.getOrganizations();
+        setOrgs(res.organizations);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "No se pudieron cargar clientes");
+      }
+    }
+  };
+
+  const handleOrgChange = async (orgId: string) => {
+    setFormOrgId(orgId);
+    setFormContactId("");
+    if (!orgId) {
+      setFormContacts([]);
+      return;
+    }
+    try {
+      const res: OrganizationSummary = await crmApi.getOrganizationSummary(orgId);
+      setFormContacts(res.contacts);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudieron cargar contactos");
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!formOrgId || !formContactId || !formBody.trim()) return;
+    try {
+      setCreating(true);
+      await crmApi.createDraft({
+        organizationId: formOrgId,
+        contactId: formContactId,
+        channel: formChannel,
+        subject: formSubject.trim() || undefined,
+        body: formBody.trim(),
+        rationale: formRationale.trim() || undefined,
+      });
+      setShowForm(false);
+      setFormOrgId("");
+      setFormContactId("");
+      setFormContacts([]);
+      setFormSubject("");
+      setFormBody("");
+      setFormRationale("");
+      await loadDrafts();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudo crear el borrador");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const handleDecision = async (draftId: string, decision: "approved" | "rejected") => {
     try {
@@ -53,6 +117,83 @@ export function OutboxView() {
         </div>
       </div>
 
+      <button
+        onClick={() => (showForm ? setShowForm(false) : void openForm())}
+        className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3.5 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-700"
+      >
+        <Plus className="h-4 w-4" />
+        {showForm ? "Cerrar formulario" : "Nuevo borrador para cliente"}
+      </button>
+
+      {showForm && (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-white">
+            <Building2 className="h-4 w-4 text-teal-400" /> Borrador directo a cliente existente
+          </h3>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <select
+              value={formOrgId}
+              onChange={(e) => void handleOrgChange(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
+            >
+              <option value="">Elegir cliente...</option>
+              {orgs.map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+            <select
+              value={formContactId}
+              onChange={(e) => setFormContactId(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
+              disabled={!formOrgId}
+            >
+              <option value="">Elegir contacto...</option>
+              {formContacts.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <select
+              value={formChannel}
+              onChange={(e) => setFormChannel(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
+            >
+              {['email', 'whatsapp', 'telegram', 'linkedin', 'phone', 'web', 'other'].map((ch) => (
+                <option key={ch} value={ch}>{ch}</option>
+              ))}
+            </select>
+            <input
+              value={formSubject}
+              onChange={(e) => setFormSubject(e.target.value)}
+              placeholder="Asunto (opcional)"
+              className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+            />
+          </div>
+          <textarea
+            value={formBody}
+            onChange={(e) => setFormBody(e.target.value)}
+            placeholder="Mensaje..."
+            rows={4}
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+          />
+          <input
+            value={formRationale}
+            onChange={(e) => setFormRationale(e.target.value)}
+            placeholder="Por qué este mensaje / ángulo (opcional)"
+            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600"
+          />
+          <div className="flex justify-end">
+            <button
+              onClick={() => void handleCreate()}
+              disabled={creating || !formOrgId || !formContactId || !formBody.trim()}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {creating ? "Creando..." : "Crear en pending_approval"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-12 text-center text-sm text-slate-400">Cargando borradores...</div>
       ) : drafts.length === 0 ? (
@@ -81,6 +222,9 @@ export function OutboxView() {
                     </div>
                     <div className="text-xs text-slate-400">
                       {draft.contactEmail || draft.contactPhone || "Sin datos de contacto"}
+                    </div>
+                    <div className="mt-1 text-[11px] font-mono text-slate-500">
+                      {draft.organizationName ? `Cliente: ${draft.organizationName}` : "Prospección (lead)"}
                     </div>
                   </div>
                 </div>

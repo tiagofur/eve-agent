@@ -4,6 +4,7 @@ import {
   LeadItem,
   LeadDetailsResponse,
 } from "../api";
+import { FollowUpForm } from "./FollowUpForm";
 import {
   Users,
   Search,
@@ -23,37 +24,38 @@ import {
   Check,
   Globe,
   FileText,
+  Copy,
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, { label: string; color: string }> = {
-  intake: { label: "Intake", color: "bg-slate-700 text-slate-200" },
-  qualifying: { label: "Qualifying", color: "bg-blue-900/60 text-blue-300 border border-blue-700" },
-  solutions_review: {
-    label: "Solutions Review",
-    color: "bg-purple-900/60 text-purple-300 border border-purple-700",
-  },
-  proposal_sent: {
-    label: "Proposal Sent",
-    color: "bg-amber-900/60 text-amber-300 border border-amber-700",
-  },
-  negotiation: {
-    label: "Negotiation",
-    color: "bg-orange-900/60 text-orange-300 border border-orange-700",
-  },
-  won: { label: "Won 🎉", color: "bg-emerald-900/60 text-emerald-300 border border-emerald-700" },
-  lost: { label: "Lost", color: "bg-rose-900/60 text-rose-300 border border-rose-700" },
-  disqualified: { label: "Disqualified", color: "bg-zinc-800 text-zinc-400" },
+  new: { label: "Nuevo", color: "bg-slate-700 text-slate-200" },
+  researched: { label: "Investigado", color: "bg-sky-900/60 text-sky-300 border border-sky-700" },
+  contacted: { label: "Contactado", color: "bg-blue-900/60 text-blue-300 border border-blue-700" },
+  qualified: { label: "Calificado", color: "bg-indigo-900/60 text-indigo-300 border border-indigo-700" },
+  discovery: { label: "Discovery", color: "bg-purple-900/60 text-purple-300 border border-purple-700" },
+  proposal: { label: "Propuesta", color: "bg-amber-900/60 text-amber-300 border border-amber-700" },
+  contract: { label: "Contrato", color: "bg-orange-900/60 text-orange-300 border border-orange-700" },
+  won: { label: "Ganado 🎉", color: "bg-emerald-900/60 text-emerald-300 border border-emerald-700" },
+  lost: { label: "Perdido", color: "bg-rose-900/60 text-rose-300 border border-rose-700" },
+  onboarding: { label: "Onboarding", color: "bg-teal-900/60 text-teal-300 border border-teal-700" },
+  active: { label: "Activo", color: "bg-emerald-800/60 text-emerald-200 border border-emerald-600" },
+  support: { label: "Soporte", color: "bg-cyan-900/60 text-cyan-300 border border-cyan-700" },
 };
 
+// Espejo exacto de crm/src/domain/lead-stages.ts (TRANSITIONS).
 const NEXT_STAGES: Record<string, string[]> = {
-  intake: ["qualifying", "disqualified"],
-  qualifying: ["solutions_review", "disqualified"],
-  solutions_review: ["proposal_sent", "disqualified"],
-  proposal_sent: ["negotiation", "lost"],
-  negotiation: ["won", "lost"],
-  won: [],
-  lost: ["qualifying"],
-  disqualified: ["intake"],
+  new: ["researched", "contacted", "qualified", "lost"],
+  researched: ["contacted", "lost"],
+  contacted: ["qualified", "lost"],
+  qualified: ["discovery", "lost"],
+  discovery: ["proposal", "lost"],
+  proposal: ["contract", "discovery", "lost"],
+  contract: ["won", "lost"],
+  won: ["onboarding"],
+  lost: ["new"],
+  onboarding: ["active"],
+  active: ["support"],
+  support: ["active"],
 };
 
 export const LeadsView: React.FC = () => {
@@ -149,12 +151,45 @@ export const LeadsView: React.FC = () => {
     }
   };
 
+  const [convertingId, setConvertingId] = useState<string | null>(null);
+
+  const handleConvert = async (lead: LeadItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const projectName = window.prompt(
+      `Convertir lead en cliente/proyecto - nombre del proyecto:`,
+      lead.organizationName ? `${lead.organizationName} - Proyecto` : undefined
+    );
+    if (projectName === null) return;
+    try {
+      setConvertingId(lead.id);
+      const res = await crmApi.convertLead(lead.id, projectName.trim() || undefined);
+      setActionSuccess(`Cliente creado: proyecto "${res.project.name}" en onboarding.`);
+      if (activeLeadId === lead.id) openLeadDrawer(lead.id);
+      fetchLeads();
+      setTimeout(() => setActionSuccess(null), 5000);
+    } catch (err: any) {
+      alert(`No se pudo convertir: ${err.message}`);
+    } finally {
+      setConvertingId(null);
+    }
+  };
+
+  const handleCopyDraft = async (body: string) => {
+    try {
+      await navigator.clipboard.writeText(body);
+      setActionSuccess("Mensaje copiado al portapapeles.");
+      setTimeout(() => setActionSuccess(null), 3000);
+    } catch {
+      alert("No se pudo copiar el mensaje.");
+    }
+  };
+
   const handleReviewDraft = async (draftId: string, decision: "approved" | "rejected") => {
     try {
       await crmApi.reviewDraft(draftId, decision);
       setActionSuccess(
         decision === "approved"
-          ? "Outreach message approved and queued for sending!"
+          ? "Outreach message approved. Sending is manual: copy it and send it yourself."
           : "Draft rejected. Marketing agent notified to revise."
       );
       if (activeLeadId) {
@@ -331,6 +366,15 @@ export const LeadsView: React.FC = () => {
                         {new Date(lead.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {lead.stage === "won" && (
+                          <button
+                            onClick={(e) => handleConvert(lead, e)}
+                            disabled={convertingId === lead.id}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md transition mr-2"
+                          >
+                            {convertingId === lead.id ? "Convirtiendo..." : "Convertir en cliente"}
+                          </button>
+                        )}
                         <button
                           onClick={(e) => openTransitionModal(lead, e)}
                           className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-md transition mr-2"
@@ -398,6 +442,30 @@ export const LeadsView: React.FC = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {leadDetails?.lead.stage === "won" && (
+              <div className="px-6 py-3 border-b border-zinc-800/80 bg-teal-950/30">
+                <button
+                  onClick={() =>
+                    handleConvert({
+                      id: leadDetails.lead.id,
+                      stage: leadDetails.lead.stage,
+                      source: leadDetails.lead.source,
+                      serviceType: leadDetails.lead.serviceType,
+                      summary: leadDetails.lead.summary,
+                      createdAt: leadDetails.lead.createdAt,
+                      organizationName: leadDetails.lead.organizationName,
+                      contactName: leadDetails.lead.contactName,
+                      contactEmail: leadDetails.lead.contactEmail,
+                      contactPhone: (leadDetails.lead as LeadItem).contactPhone ?? null,
+                    })
+                  }
+                  disabled={convertingId === leadDetails.lead.id}
+                  className="w-full px-3 py-2 text-sm font-semibold bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition disabled:opacity-50"
+                >
+                  {convertingId === leadDetails.lead.id ? "Convirtiendo..." : "Convertir en cliente / crear proyecto"}
+                </button>
+              </div>
+            )}
 
             {drawerLoading ? (
               <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
@@ -445,6 +513,15 @@ export const LeadsView: React.FC = () => {
 
                 {/* Drawer Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-5">
+                  {leadDetails && (
+                    <FollowUpForm
+                      kind="lead"
+                      entityId={leadDetails.lead.id}
+                      currentAt={leadDetails.lead.nextFollowUpAt}
+                      currentNote={leadDetails.lead.followUpNote}
+                      onSaved={() => openLeadDrawer(leadDetails.lead.id)}
+                    />
+                  )}
                   {/* TAB 1: AI INTELLIGENCE & DOSSIER */}
                   {drawerTab === "intelligence" && (
                     <div className="space-y-4">
@@ -548,8 +625,9 @@ export const LeadsView: React.FC = () => {
                           <Send className="w-8 h-8 text-zinc-600 mx-auto mb-2" />
                           No outreach drafts in outbox for this lead.
                           <div className="text-xs text-zinc-500 mt-1">
-                            The Marketing agent writes tailored cold messages based on the
-                            prospect's dossier and queues them for your approval.
+                            Cada prospecto nuevo recibe su primer mensaje automáticamente:
+                            el orquestador delega al agente Marketing, que redacta desde el dossier
+                            y lo deja acá para tu aprobación.
                           </div>
                         </div>
                       ) : (
@@ -593,19 +671,62 @@ export const LeadsView: React.FC = () => {
                               </div>
                             )}
 
+                            {/* Missing-contact warning (lead-only draft) */}
+                            {draft.status === "pending_approval" && !draft.contactId && (
+                              <div className="p-2.5 bg-amber-950/20 border border-amber-900/40 rounded-lg text-xs text-amber-300 flex items-start gap-2">
+                                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-semibold">Sin contacto verificado:</span>{" "}
+                                  el mensaje está listo, pero hace falta completar el contacto del lead
+                                  antes de aprobar y enviar. Podés copiarlo y enviarlo manualmente.
+                                </div>
+                              </div>
+                            )}
+
                             {/* Message Body */}
                             <div className="bg-zinc-950 p-3 rounded-lg border border-zinc-800 text-xs text-zinc-200 whitespace-pre-wrap leading-relaxed">
                               {draft.body}
                             </div>
+
+                            {/* Approved drafts: manual send helper */}
+                            {draft.status === "approved" && (
+                              <div className="flex gap-2 pt-2 border-t border-zinc-800/80 items-center">
+                                <button
+                                  onClick={() => handleCopyDraft(draft.body)}
+                                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg transition"
+                                  title="Copiar el mensaje aprobado para enviarlo manualmente"
+                                >
+                                  <Copy className="w-4 h-4" /> Copiar para enviar
+                                </button>
+                                <span className="text-[11px] text-zinc-500">El envío es manual.</span>
+                              </div>
+                            )}
 
                             {/* 1-Click Action Buttons if pending */}
                             {draft.status === "pending_approval" && (
                               <div className="flex gap-2 pt-2 border-t border-zinc-800/80">
                                 <button
                                   onClick={() => handleReviewDraft(draft.id, "approved")}
-                                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-semibold rounded-lg transition"
+                                  disabled={!draft.contactId}
+                                  title={
+                                    draft.contactId
+                                      ? undefined
+                                      : "Falta contacto verificado: completá el contacto del lead antes de aprobar"
+                                  }
+                                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-black text-xs font-semibold rounded-lg transition ${
+                                    draft.contactId
+                                      ? "bg-emerald-500 hover:bg-emerald-400"
+                                      : "bg-zinc-700 cursor-not-allowed opacity-50"
+                                  }`}
                                 >
-                                  <Check className="w-4 h-4" /> Approve & Send
+                                  <Check className="w-4 h-4" /> Approve
+                                </button>
+                                <button
+                                  onClick={() => handleCopyDraft(draft.body)}
+                                  className="flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg transition"
+                                  title="Copiar el mensaje para enviarlo manualmente (WhatsApp, email...)"
+                                >
+                                  <Copy className="w-4 h-4" /> Copiar
                                 </button>
                                 <button
                                   onClick={() => handleReviewDraft(draft.id, "rejected")}

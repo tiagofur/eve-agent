@@ -22,7 +22,32 @@ export interface DailyMetrics {
   totalLeads: number;
   openTickets: number;
   pendingDraftsApproval: number;
+  followUpsOverdue: number;
   generatedAt: string;
+}
+
+export interface InteractionItem {
+  id: string;
+  leadId: string | null;
+  organizationId: string | null;
+  ticketId: string | null;
+  projectId: string | null;
+  contactId: string | null;
+  channel: string;
+  direction: "inbound" | "outbound";
+  content: string;
+  createdAt: string;
+}
+
+export interface FollowUpItem {
+  kind: "lead" | "ticket" | "organization" | "contact";
+  id: string;
+  name: string | null;
+  organizationName: string | null;
+  detail: string | null;
+  nextFollowUpAt: string;
+  followUpNote: string | null;
+  stage: string | null;
 }
 
 export interface LeadItem {
@@ -36,12 +61,16 @@ export interface LeadItem {
   contactName: string | null;
   contactEmail: string | null;
   contactPhone: string | null;
+  nextFollowUpAt?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface OutboxDraft {
   id: string;
-  leadId: string;
-  contactId: string;
+  leadId: string | null;
+  organizationId: string | null;
+  organizationName: string | null;
+  contactId: string | null;
   channel: string;
   subject: string | null;
   body: string;
@@ -56,6 +85,7 @@ export interface OutboxDraft {
 
 export interface TicketItem {
   id: string;
+  kind: "support" | "info";
   system: string;
   severity: "critical" | "major" | "minor";
   status: string;
@@ -64,6 +94,8 @@ export interface TicketItem {
   createdAt: string;
   contactName: string | null;
   contactEmail: string | null;
+  nextFollowUpAt?: string | null;
+  followUpNote?: string | null;
 }
 
 export interface ProjectItem {
@@ -103,6 +135,32 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   return (await res.json()) as T;
+}
+
+export interface OrganizationItem {
+  id: string;
+  name: string;
+  domain: string | null;
+  website: string | null;
+  industry: string | null;
+  city: string | null;
+  country: string | null;
+  createdAt: string;
+  projectCount: number;
+  leadCount: number;
+  nextFollowUpAt?: string | null;
+  followUpNote?: string | null;
+}
+
+export interface OrganizationSummary {
+  organization: OrganizationItem;
+  contacts: Array<{ id: string; name: string; email: string | null; phone: string | null; role: string | null }>;
+  leads: LeadItem[];
+  projects: ProjectItem[];
+  tickets: TicketItem[];
+  dossiers: DossierItem[];
+  drafts: OutboxDraft[];
+  timeline: TimelineEvent[];
 }
 
 export interface DossierItem {
@@ -152,6 +210,15 @@ export const crmApi = {
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
   getFunnelReport: () => request<FunnelReport>("/api/reports/funnel"),
   getLeads: () => request<{ leads: LeadItem[] }>("/api/leads"),
+  getOrganizations: () =>
+    request<{ organizations: OrganizationItem[] }>("/api/organizations"),
+  getOrganizationSummary: (orgId: string) =>
+    request<OrganizationSummary>(`/api/organizations/${orgId}/summary`),
+  convertLead: (leadId: string, projectName?: string) =>
+    request<{ success: boolean; project: ProjectItem }>(`/api/leads/${leadId}/convert`, {
+      method: "POST",
+      body: JSON.stringify(projectName ? { projectName } : {}),
+    }),
   getLeadDetails: (leadId: string) => request<LeadDetailsResponse>(`/api/leads/${leadId}/details`),
   updateLeadStage: (leadId: string, targetStage: string, reason: string, lostReason?: string) =>
     request<{ success: boolean }>(`/api/leads/${leadId}/stage`, {
@@ -159,6 +226,19 @@ export const crmApi = {
       body: JSON.stringify({ targetStage, reason, lostReason }),
     }),
   getPendingDrafts: () => request<{ drafts: OutboxDraft[] }>("/api/outbox/pending"),
+  createDraft: (data: {
+    leadId?: string;
+    organizationId?: string;
+    contactId: string;
+    channel: string;
+    subject?: string;
+    body: string;
+    rationale?: string;
+  }) =>
+    request<{ success: boolean; draft: OutboxDraft }>("/api/outbox", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   reviewDraft: (draftId: string, decision: "approved" | "rejected", rejectedReason?: string) =>
     request<{ success: boolean }>(`/api/outbox/${draftId}/review`, {
       method: "POST",
@@ -167,6 +247,46 @@ export const crmApi = {
   getTickets: () => request<{ tickets: TicketItem[] }>("/api/tickets"),
   getTicketDetails: (ticketId: string) =>
     request<TicketDetailsResponse>(`/api/tickets/${ticketId}/details`),
+  setLeadFollowUp: (leadId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
+    request<{ success: boolean }>(`/api/leads/${leadId}/followup`, {
+      method: "PATCH",
+      body: JSON.stringify({ nextFollowUpAt, followUpNote }),
+    }),
+  setTicketFollowUp: (ticketId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
+    request<{ success: boolean }>(`/api/tickets/${ticketId}/followup`, {
+      method: "PATCH",
+      body: JSON.stringify({ nextFollowUpAt, followUpNote }),
+    }),
+  setOrganizationFollowUp: (orgId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
+    request<{ success: boolean }>(`/api/organizations/${orgId}/followup`, {
+      method: "PATCH",
+      body: JSON.stringify({ nextFollowUpAt, followUpNote }),
+    }),
+  getFollowups: () => request<{ overdue: FollowUpItem[]; upcoming: FollowUpItem[] }>("/api/reports/followups"),
+  logInteraction: (data: {
+    leadId?: string;
+    organizationId?: string;
+    ticketId?: string;
+    projectId?: string;
+    contactId?: string;
+    channel: string;
+    direction: "inbound" | "outbound";
+    content: string;
+  }) =>
+    request<{ success: boolean; interaction: InteractionItem }>("/api/interactions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  getContactThread: (contactId: string) =>
+    request<{
+      contact: { id: string; name: string; nextFollowUpAt: string | null; followUpNote: string | null };
+      interactions: InteractionItem[];
+    }>(`/api/interactions/by-contact/${contactId}`),
+  setContactFollowUp: (contactId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
+    request<{ success: boolean }>(`/api/contacts/${contactId}/followup`, {
+      method: "PATCH",
+      body: JSON.stringify({ nextFollowUpAt, followUpNote }),
+    }),
   updateTicketStatus: (
     ticketId: string,
     status: string,

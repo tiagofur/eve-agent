@@ -87,6 +87,7 @@ async function runProxiedTurn(args: {
   // Ensure EVE session, recreating once when the mapped one is dead.
   // The create-once operationId keeps retried creates from duplicating sessions.
   let sessionId: string | null = null;
+  let deliveryId: string | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!sessionId) {
       const [thread] = await db
@@ -110,12 +111,15 @@ async function runProxiedTurn(args: {
           .set({ eveSessionId: sessionId })
           .where(eq(chatThreads.id, threadId));
       } else {
-        await sendEveMessage({
+        const sent = await sendEveMessage({
           baseUrl: eve.baseUrl,
           auth: eve,
           sessionId,
           message: userContent,
         });
+        // The session stream replays every recorded event; the follow-up's
+        // deliveryId scopes the read below to the turn this message owns.
+        deliveryId = sent.deliveryId;
       }
       break;
     } catch (err) {
@@ -139,14 +143,24 @@ async function runProxiedTurn(args: {
     auth: eve,
     sessionId,
     signal: args.signal ?? undefined,
+    deliveryId,
   });
-  const parsed = parseEveStream(raw);
+  const parsed = parseEveStream(raw, { deliveryId });
   if (!parsed.turnCompleted && !parsed.sessionWaiting) {
     throw new EveClientError("EVE turn ended without a terminal event", { status: 502 });
   }
   // One row per completed message keeps the sync dedupe exact; the common
   // single-message turn persists exactly one row like the legacy path.
-  for (const m of parsed.messages) {
+  // Replay or a retried request can hand back events already persisted, so
+  // dedupe on eve_event_id before inserting (mirrors syncThreadFromEve).
+  const existingRows = await db
+    .select({ eveEventId: chatMessages.eveEventId })
+    .from(chatMessages)
+    .where(eq(chatMessages.threadId, threadId));
+  const known = new Set(
+    existingRows.map((r) => r.eveEventId).filter((id): id is string => !!id)
+  );
+  for (const m of findMissingEveMessages(known, parsed.messages)) {
     await db.insert(chatMessages).values({
       threadId,
       role: "assistant",

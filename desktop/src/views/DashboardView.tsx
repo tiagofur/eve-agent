@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
-import { crmApi, type DailyMetrics, type FunnelReport } from "../api";
-import { Users, AlertTriangle, Send, CheckCircle2, TrendingUp, RefreshCw } from "lucide-react";
+import { crmApi, type DailyMetrics, type FunnelReport, type FollowUpItem } from "../api";
+import { Users, AlertTriangle, Send, CheckCircle2, TrendingUp, RefreshCw, BellRing } from "lucide-react";
 
 export function DashboardView() {
   const [metrics, setMetrics] = useState<DailyMetrics | null>(null);
   const [funnel, setFunnel] = useState<FunnelReport | null>(null);
+  const [followups, setFollowups] = useState<{ overdue: FollowUpItem[]; upcoming: FollowUpItem[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -12,12 +13,14 @@ export function DashboardView() {
     try {
       setLoading(true);
       setError(null);
-      const [metricsRes, funnelRes] = await Promise.all([
+      const [metricsRes, funnelRes, followupsRes] = await Promise.all([
         crmApi.getDailyMetrics(),
         crmApi.getFunnelReport(),
+        crmApi.getFollowups(),
       ]);
       setMetrics(metricsRes.metrics);
       setFunnel(funnelRes);
+      setFollowups(followupsRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error connecting to CRM API");
     } finally {
@@ -117,6 +120,39 @@ export function DashboardView() {
             <span className="text-xs text-slate-400">en onboarding</span>
           </div>
         </div>
+      </div>
+
+      {/* Follow-ups vencidos */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-6 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BellRing className="h-5 w-5 text-amber-400" />
+            <h3 className="font-semibold text-white">Seguimientos vencidos</h3>
+          </div>
+          <span className="text-xs text-slate-400">
+            {metrics?.followUpsOverdue ?? 0} vencidos · {followups?.upcoming.length ?? 0} próximos
+          </span>
+        </div>
+        {!followups || followups.overdue.length === 0 ? (
+          <p className="text-sm text-slate-500">Al día — ningún seguimiento vencido. 🎉</p>
+        ) : (
+          <div className="space-y-2">
+            {followups.overdue.slice(0, 10).map((f) => (
+              <div key={`${f.kind}-${f.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <span className="mr-2 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-slate-300">
+                    {f.kind === "lead" ? "Lead" : f.kind === "ticket" ? "Ticket" : f.kind === "contact" ? "Contacto" : "Cliente"}
+                  </span>
+                  <span className="font-medium text-white">{f.organizationName || f.name || f.id.slice(0, 8)}</span>
+                  {f.followUpNote && <span className="ml-2 text-slate-400">— {f.followUpNote}</span>}
+                </div>
+                <span className="shrink-0 font-mono text-xs text-amber-300">
+                  {new Date(f.nextFollowUpAt).toLocaleDateString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Funnel Conversion Breakdown */}

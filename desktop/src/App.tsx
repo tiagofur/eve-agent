@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   Send,
   Users,
+  Building2,
   LifeBuoy,
   FolderKanban,
   Cpu,
@@ -14,18 +15,25 @@ import {
 import { DashboardView } from "./views/DashboardView";
 import { OutboxView } from "./views/OutboxView";
 import { LeadsView } from "./views/LeadsView";
+import { ClientesView } from "./views/ClientesView";
 import { TicketsView } from "./views/TicketsView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
 import { MarketingView } from "./views/MarketingView";
 import { crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "marketing" | "outbox" | "leads" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "marketing" | "outbox" | "leads" | "clientes" | "tickets" | "projects";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
+  const [chatPrompt, setChatPrompt] = useState<{ id: number; text: string } | null>(null);
+
+  const askOrchestrator = (text: string) => {
+    setChatPrompt({ id: Date.now(), text });
+    setActiveTab("chat");
+  };
 
   const checkStatus = async () => {
     try {
@@ -136,6 +144,18 @@ export const App: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab("clientes")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "clientes"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <Building2 className="w-4 h-4 text-teal-400" />
+              <span>Clientes 360°</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab("tickets")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
                 activeTab === "tickets"
@@ -205,10 +225,13 @@ export const App: React.FC = () => {
 
         <div className="flex-1 overflow-y-auto p-8 max-w-7xl w-full mx-auto">
           {activeTab === "dashboard" && <DashboardView />}
-          {activeTab === "chat" && <ChatView />}
+          {activeTab === "chat" && (
+            <ChatView externalPrompt={chatPrompt} onPromptConsumed={() => setChatPrompt(null)} />
+          )}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "outbox" && <OutboxView />}
           {activeTab === "leads" && <LeadsView />}
+          {activeTab === "clientes" && <ClientesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "tickets" && <TicketsView />}
           {activeTab === "projects" && <ProjectsView />}
         </div>

@@ -26,6 +26,85 @@ export interface IngestLeadInput {
   actor: string;
 }
 
+export interface ResolvedContactResult {
+  contactId?: string;
+  hasOptOut: boolean;
+}
+
+/**
+ * Resolve or create a contact by verified email/phone (dedup first),
+ * creating it under the given organization when nothing matches.
+ * Exported for the dossier path so verified research contacts land on
+ * the pipeline lead (S7) instead of being dropped.
+ */
+export async function resolveOrCreateContact(params: {
+  orgId?: string;
+  clientName: string;
+  email?: string;
+  phone?: string;
+  actor: string;
+}): Promise<ResolvedContactResult> {
+  const { orgId, clientName, email, phone, actor } = params;
+  let contactId: string | undefined = undefined;
+  let hasOptOut = false;
+
+  if (email) {
+    const [existingContact] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.email, email))
+      .limit(1);
+
+    if (existingContact) {
+      contactId = existingContact.id;
+      hasOptOut = existingContact.optOut;
+    }
+  }
+
+  if (!contactId && phone) {
+    const [existingContact] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.phone, phone))
+      .limit(1);
+
+    if (existingContact) {
+      contactId = existingContact.id;
+      hasOptOut = existingContact.optOut;
+    }
+  }
+
+  if (!contactId && (email || phone)) {
+    // Only create a contact when research actually verified a channel
+    // (S7): a name-only row would block later backfill of real data and
+    // adds nothing the organization name doesn't already carry.
+    const [newContact] = await db
+      .insert(contacts)
+      .values({
+        organizationId: orgId,
+        name: clientName.trim(),
+        email,
+        phone,
+        preferredChannel: email ? "email" : phone ? "whatsapp" : undefined,
+        whatsappConsent: !!phone, // Only a phone the contact themselves provided implies consent
+      })
+      .returning();
+
+    if (newContact) {
+      contactId = newContact.id;
+      await logEvent({
+        entity: "contact",
+        entityId: newContact.id,
+        action: "created",
+        actor,
+        after: { name: newContact.name, email, phone },
+      });
+    }
+  }
+
+  return { contactId, hasOptOut };
+}
+
 export async function ingestLead(input: IngestLeadInput) {
   const rawContact = input.contact?.trim() || undefined;
   const isEmail = !!rawContact && rawContact.includes("@");
@@ -65,59 +144,13 @@ export async function ingestLead(input: IngestLeadInput) {
   }
 
   // 2. Resolve or create contact with deduplication
-  let contactId: string | undefined = undefined;
-  let hasOptOut = false;
-
-  if (email) {
-    const [existingContact] = await db
-      .select()
-      .from(contacts)
-      .where(eq(contacts.email, email))
-      .limit(1);
-
-    if (existingContact) {
-      contactId = existingContact.id;
-      hasOptOut = existingContact.optOut;
-    }
-  }
-
-  if (!contactId && phone) {
-    const [existingContact] = await db
-      .select()
-      .from(contacts)
-      .where(eq(contacts.phone, phone))
-      .limit(1);
-
-    if (existingContact) {
-      contactId = existingContact.id;
-      hasOptOut = existingContact.optOut;
-    }
-  }
-
-  if (!contactId) {
-    const [newContact] = await db
-      .insert(contacts)
-      .values({
-        organizationId: orgId,
-        name: input.clientName.trim(),
-        email,
-        phone,
-        preferredChannel: email ? "email" : phone ? "whatsapp" : undefined,
-        whatsappConsent: !!phone, // Only a phone the contact themselves provided implies consent
-      })
-      .returning();
-
-    if (newContact) {
-      contactId = newContact.id;
-      await logEvent({
-        entity: "contact",
-        entityId: newContact.id,
-        action: "created",
-        actor: input.actor,
-        after: { name: newContact.name, email, phone },
-      });
-    }
-  }
+  const { contactId, hasOptOut } = await resolveOrCreateContact({
+    orgId,
+    clientName: input.clientName,
+    email,
+    phone,
+    actor: input.actor,
+  });
 
   // 2b. Duplicate guard: if an open lead already exists for the same
   // organization or contact, the business is already prospected.
@@ -138,6 +171,28 @@ export async function ingestLead(input: IngestLeadInput) {
       .limit(1);
 
     if (existingLead) {
+      // S7 backfill: research may verify a contact after the lead exists
+      // (e.g. dossier first, discovery later). Link it instead of dropping
+      // it — never overwrite a contact the lead already has.
+      if (contactId && !existingLead.contactId) {
+        const [updated] = await db
+          .update(leads)
+          .set({ contactId, updatedAt: new Date() })
+          .where(eq(leads.id, existingLead.id))
+          .returning();
+        if (updated) {
+          await logEvent({
+            entity: "lead",
+            entityId: existingLead.id,
+            action: "contact_linked",
+            actor: input.actor,
+            before: { contactId: null },
+            after: { contactId },
+            reason: "Verified contact discovered after lead creation",
+          });
+          return { lead: updated, hasOptOut, duplicate: true as const };
+        }
+      }
       return { lead: existingLead, hasOptOut, duplicate: true as const };
     }
   }
