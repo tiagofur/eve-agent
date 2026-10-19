@@ -150,6 +150,8 @@ export interface UpdateTaskStatusInput {
   taskId: string;
   status: TaskStatus;
   prUrl?: string;
+  /** Verification evidence: what ran (tests, typecheck, build) + outcome. */
+  resultSummary?: string;
   actor: string;
 }
 
@@ -195,6 +197,7 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<Up
     .set({
       status: input.status,
       prUrl: input.prUrl ?? currentTask.prUrl,
+      resultSummary: input.resultSummary ?? currentTask.resultSummary,
       updatedAt: new Date(),
     })
     .where(eq(tasks.id, input.taskId))
@@ -206,7 +209,7 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<Up
     action: "task_status_changed",
     actor: input.actor,
     before: { status: currentTask.status },
-    after: { status: input.status, prUrl: input.prUrl },
+    after: { status: input.status, prUrl: input.prUrl, resultSummary: input.resultSummary ?? null },
   });
 
   return { success: true as const, task: updated! };

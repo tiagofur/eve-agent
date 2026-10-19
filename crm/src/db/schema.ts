@@ -351,6 +351,10 @@ export const tasks = pgTable(
     status: taskStatusEnum("status").notNull().default("backlog"),
     assignee: text("assignee"),
     prUrl: text("pr_url"),
+    // Verification evidence reported by the coding agent on each advance:
+    // what ran (tests, typecheck, build) and the outcome. The pm reviews
+    // this — never blind sign-off — before client acceptance.
+    resultSummary: text("result_summary"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

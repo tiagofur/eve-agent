@@ -171,6 +171,7 @@ projectsRouter.get("/tasks/ready", requireScope(["dev", "ops"]), async (c) => {
       spec: tasks.spec,
       status: tasks.status,
       assignee: tasks.assignee,
+      resultSummary: tasks.resultSummary,
       createdAt: tasks.createdAt,
     })
     .from(tasks)
@@ -190,17 +191,19 @@ projectsRouter.patch(
     z.object({
       status: z.enum(["ready", "dispatched", "in_progress", "in_review", "done", "blocked"]),
       prUrl: z.string().url().optional(),
+      resultSummary: z.string().max(2000).optional(),
     })
   ),
   async (c) => {
     const taskId = c.req.param("id");
-    const { status, prUrl } = c.req.valid("json");
+    const { status, prUrl, resultSummary } = c.req.valid("json");
     const actor = c.get("actor");
 
     const updated = await updateTaskStatus({
       taskId,
       status,
       prUrl,
+      resultSummary,
       actor,
     });
 

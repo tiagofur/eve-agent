@@ -112,4 +112,28 @@ describe("task machine and links", () => {
     expect((await move(task.id, "in_review")).status).toBe(200);
     expect((await move(task.id, "in_progress")).status).toBe(200);
   });
+
+  it("records verification evidence on advances and returns it on readback", async () => {
+    const created = await dispatch({ projectId: projectA, title: "Tarea con evidencia", spec: "Spec." });
+    const { task } = (await created.json()) as { task: { id: string } };
+    createdTaskIds.push(task.id);
+
+    const evidence = "npm test: 12 passed. tsc clean. Build ok.";
+    const res = await app.request(`/api/projects/tasks/${task.id}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "dispatched", resultSummary: evidence }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { success: boolean; task: { resultSummary: string | null } };
+    expect(body.task.resultSummary).toBe(evidence);
+
+    const ready = await app.request("/api/projects/tasks/ready", { headers });
+    expect(ready.status).toBe(200);
+    const readyBody = (await ready.json()) as {
+      tasks: Array<{ id: string; resultSummary: string | null }>;
+    };
+    const found = readyBody.tasks.find((t) => t.id === task.id);
+    expect(found?.resultSummary).toBe(evidence);
+  });
 });
