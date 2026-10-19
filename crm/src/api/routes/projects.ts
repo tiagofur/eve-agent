@@ -159,6 +159,40 @@ projectsRouter.post(
   }
 );
 
+// Get all tasks of a project (ops): the pm review surface — every status
+// with specs, PR urls and verification evidence for QA before sign-off.
+projectsRouter.get(
+  "/:projectId/tasks",
+  requireScope(["ops"]),
+  async (c) => {
+    const projectId = c.req.param("projectId");
+
+    const [project] = await db.select().from(projects).where(sql`${projects.id} = ${projectId}`).limit(1);
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const result = await db
+      .select({
+        id: tasks.id,
+        milestoneId: tasks.milestoneId,
+        title: tasks.title,
+        spec: tasks.spec,
+        status: tasks.status,
+        assignee: tasks.assignee,
+        prUrl: tasks.prUrl,
+        resultSummary: tasks.resultSummary,
+        createdAt: tasks.createdAt,
+        updatedAt: tasks.updatedAt,
+      })
+      .from(tasks)
+      .where(sql`${tasks.projectId} = ${projectId}`)
+      .orderBy(desc(tasks.createdAt));
+
+    return c.json({ tasks: result });
+  }
+);
+
 // Get tasks ready for coding agents (accessible via 'dev' scope as well as ops/owner)
 projectsRouter.get("/tasks/ready", requireScope(["dev", "ops"]), async (c) => {
   const result = await db

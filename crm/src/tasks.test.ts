@@ -136,4 +136,25 @@ describe("task machine and links", () => {
     const found = readyBody.tasks.find((t) => t.id === task.id);
     expect(found?.resultSummary).toBe(evidence);
   });
+
+  it("lists a project's tasks with evidence for pm review", async () => {
+    const created = await dispatch({ projectId: projectA, title: "Tarea para QA", spec: "Spec." });
+    const { task } = (await created.json()) as { task: { id: string } };
+    createdTaskIds.push(task.id);
+    await move(task.id, "dispatched");
+    await app.request(`/api/projects/tasks/${task.id}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "in_progress", resultSummary: "Trabajo en curso." }),
+    });
+
+    const res = await app.request(`/api/projects/${projectA}/tasks`, { headers });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      tasks: Array<{ id: string; status: string; resultSummary: string | null; prUrl: string | null }>;
+    };
+    const listed = body.tasks.find((t) => t.id === task.id);
+    expect(listed?.status).toBe("in_progress");
+    expect(listed?.resultSummary).toBe("Trabajo en curso.");
+  });
 });

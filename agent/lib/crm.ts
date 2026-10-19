@@ -672,3 +672,31 @@ export async function crmMoveContract(data: {
 
   return (await res.json()) as { success: boolean; contract: SavedContract };
 }
+
+export interface ProjectTaskItem {
+  id: string;
+  milestoneId: string | null;
+  title: string;
+  spec: string | null;
+  status: string;
+  assignee: string | null;
+  prUrl: string | null;
+  resultSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function crmGetProjectTasks(projectId: string): Promise<{ tasks: ProjectTaskItem[] }> {
+  const res = await fetch(`${getCrmUrl()}/api/projects/${projectId}/tasks`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM project tasks fetch failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { tasks: ProjectTaskItem[] };
+}
