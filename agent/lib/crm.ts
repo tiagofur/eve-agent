@@ -524,3 +524,82 @@ export async function crmGetAnalystReports(limit = 10): Promise<{ reports: Analy
 
   return (await res.json()) as { reports: AnalystReportItem[] };
 }
+
+export type EstimateCategory =
+  | "web_mobile_app"
+  | "workflow_automation"
+  | "enterprise_ai_agent"
+  | "full_system_integration";
+export type EstimateComplexity = "mvp" | "standard" | "enterprise";
+
+export interface SaveEstimateParams {
+  leadId?: string;
+  organizationId?: string;
+  category: EstimateCategory;
+  complexity: EstimateComplexity;
+  scopeSummary: string;
+  phases?: Array<{ title: string; timeframe?: string }>;
+  timelineText?: string;
+  /** Agreed/quoted money in minor units. Omit when not quoted — never guess. */
+  valueCents?: number;
+  currency?: string;
+  createdBy: string;
+}
+
+export interface SavedEstimate {
+  id: string;
+  leadId: string | null;
+  organizationId: string | null;
+  category: string;
+  complexity: string;
+  scopeSummary: string;
+  phases: Array<{ title: string; timeframe?: string }>;
+  timelineText: string | null;
+  valueCents: number | null;
+  currency: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export async function crmSaveEstimate(data: SaveEstimateParams) {
+  const res = await fetch(`${getCrmUrl()}/api/estimates`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM estimate save failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean; estimate: SavedEstimate };
+}
+
+export async function crmGetEstimates(params: {
+  leadId?: string;
+  organizationId?: string;
+  limit?: number;
+}): Promise<{ estimates: SavedEstimate[] }> {
+  const query = new URLSearchParams();
+  if (params.leadId) query.set("leadId", params.leadId);
+  if (params.organizationId) query.set("organizationId", params.organizationId);
+  if (params.limit) query.set("limit", String(params.limit));
+  const qs = query.toString();
+
+  const res = await fetch(`${getCrmUrl()}/api/estimates${qs ? `?${qs}` : ""}`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM estimates fetch failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { estimates: SavedEstimate[] };
+}
