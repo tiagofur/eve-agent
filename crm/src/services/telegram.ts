@@ -106,7 +106,8 @@ export async function editTelegramMessage(
   chatId: number | string,
   text: string,
   inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>,
-  parseMode: "HTML" | "Markdown" = "HTML"
+  parseMode: "HTML" | "Markdown" = "HTML",
+  hasPhoto = false
 ) {
   const { token } = getCredentials();
   if (!token) return;
@@ -126,7 +127,9 @@ export async function editTelegramMessage(
       body: JSON.stringify({ ...payload, text }),
     });
     const data = await res.json();
-    if (!data.ok) {
+    // Caption fallback applies ONLY to photo messages: on text messages
+    // editMessageCaption always 400s and only buries the real error.
+    if (!data.ok && hasPhoto) {
       // If message is a media/photo message, Telegram requires editMessageCaption
       const captionRes = await fetch(`https://api.telegram.org/bot${token}/editMessageCaption`, {
         method: "POST",
@@ -137,9 +140,35 @@ export async function editTelegramMessage(
       if (!captionData.ok) {
         console.error("[Telegram] editMessageCaption API error:", captionData);
       }
+    } else if (!data.ok) {
+      console.error("[Telegram] editMessageText API error:", data);
     }
   } catch (err) {
     console.error("[Telegram] Failed to edit telegram message:", err);
+  }
+}
+
+/**
+ * Remove the inline keyboard from a message, independent of text edits.
+ * Text edits can fail (length limits, race with a second tap) while the
+ * decision already succeeded — buttons must never outlive the decision.
+ * Uses the dedicated editMessageReplyMarkup endpoint for exactly this.
+ */
+export async function removeTelegramKeyboard(messageId: number, chatId: number | string): Promise<void> {
+  const { token } = getCredentials();
+  if (!token) return;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/editMessageReplyMarkup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("[Telegram] removeKeyboard API error:", data);
+    }
+  } catch (err) {
+    console.error("[Telegram] Failed to remove keyboard:", err);
   }
 }
 
@@ -197,11 +226,11 @@ export async function notifyOutboxDraftCreated(draftId: string) {
 <b>Mensaje Propuesto:</b>
 <pre>${bodyDisplay}</pre>
 
-¿Deseas autorizar el envío?`;
+¿Aprobás este borrador? El envío es manual: copiá el mensaje y mandalo por el canal indicado.`;
 
   const keyboard = [
     [
-      { text: "✅ Aprobar Envío", callback_data: `approve_draft:${draft.id}` },
+      { text: "✅ Aprobar", callback_data: `approve_draft:${draft.id}` },
       { text: "❌ Rechazar", callback_data: `reject_draft:${draft.id}` },
     ],
   ];
@@ -410,7 +439,8 @@ export async function startTelegramPolling() {
                 });
 
                 if (result.success) {
-                  await answerCallbackQuery(cq.id, "✅ Borrador aprobado y listo para entrega.");
+                  await answerCallbackQuery(cq.id, "✅ Borrador aprobado. El envío es manual.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -430,6 +460,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "❌ Borrador rechazado.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -449,6 +480,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "⚡ Ticket en progreso.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -466,6 +498,7 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "✅ Ticket marcado como resuelto.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
@@ -485,6 +518,8 @@ export async function startTelegramPolling() {
 
                 if (reviewRes.success) {
                   await answerCallbackQuery(cq.id, "🚀 Aprobando y enviando a Meta...");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  const hasPhoto = !!msg.photo;
                   try {
                     const pubRes = await publishSocialPost(postId, "telegram_admin");
                     const postUrl = pubRes.publishResult?.externalPostUrl || "";
@@ -494,16 +529,19 @@ export async function startTelegramPolling() {
                       msg.chat.id,
                       `${originalContent}\n\n🚀 <b>¡PUBLICADO EN META CON ÉXITO!</b>\n🆔 ID: <code>${escapeHtml(postIdMeta)}</code>${postUrl ? `\n🔗 <a href="${postUrl}">Ver publicación</a>` : ""}`,
                       undefined,
-                      "HTML"
+                      "HTML",
+                      hasPhoto
                     );
                   } catch (publishErr: any) {
                     console.error("Meta auto-publish error after approval:", publishErr);
+                    await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                     await editTelegramMessage(
                       msg.message_id,
                       msg.chat.id,
                       `${originalContent}\n\n⚠️ <b>Aprobado en CRM, pero falló el envío a Meta:</b> ${escapeHtml(publishErr.message)}`,
                       undefined,
-                      "HTML"
+                      "HTML",
+                      hasPhoto
                     );
                   }
                 } else {
@@ -523,12 +561,15 @@ export async function startTelegramPolling() {
 
                 if (result.success) {
                   await answerCallbackQuery(cq.id, "❌ Publicación rechazada.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  const hasPhotoReject = !!msg.photo;
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
                     `${originalContent}\n\n❌ <b>Rechazado vía Telegram a las ${new Date().toLocaleTimeString()}</b>`,
                     undefined,
-                    "HTML"
+                    "HTML",
+                    hasPhotoReject
                   );
                 } else {
                   await answerCallbackQuery(cq.id, "Error al rechazar.");

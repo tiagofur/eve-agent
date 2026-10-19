@@ -189,7 +189,7 @@ export const LeadsView: React.FC = () => {
       await crmApi.reviewDraft(draftId, decision);
       setActionSuccess(
         decision === "approved"
-          ? "Outreach message approved and queued for sending!"
+          ? "Outreach message approved. Sending is manual: copy it and send it yourself."
           : "Draft rejected. Marketing agent notified to revise."
       );
       if (activeLeadId) {
@@ -688,6 +688,20 @@ export const LeadsView: React.FC = () => {
                               {draft.body}
                             </div>
 
+                            {/* Approved drafts: manual send helper */}
+                            {draft.status === "approved" && (
+                              <div className="flex gap-2 pt-2 border-t border-zinc-800/80 items-center">
+                                <button
+                                  onClick={() => handleCopyDraft(draft.body)}
+                                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg transition"
+                                  title="Copiar el mensaje aprobado para enviarlo manualmente"
+                                >
+                                  <Copy className="w-4 h-4" /> Copiar para enviar
+                                </button>
+                                <span className="text-[11px] text-zinc-500">El envío es manual.</span>
+                              </div>
+                            )}
+
                             {/* 1-Click Action Buttons if pending */}
                             {draft.status === "pending_approval" && (
                               <div className="flex gap-2 pt-2 border-t border-zinc-800/80">
@@ -705,7 +719,7 @@ export const LeadsView: React.FC = () => {
                                       : "bg-zinc-700 cursor-not-allowed opacity-50"
                                   }`}
                                 >
-                                  <Check className="w-4 h-4" /> Approve & Send
+                                  <Check className="w-4 h-4" /> Approve
                                 </button>
                                 <button
                                   onClick={() => handleCopyDraft(draft.body)}
