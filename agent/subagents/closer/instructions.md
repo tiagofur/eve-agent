@@ -12,7 +12,7 @@ Work the follow-up queue so every lead, ticket, and client gets nudged on time �
      - `kind: "lead"` → draft by `leadId`. A null `contactId` is fine: the draft is queued contact-gated for the lead, exactly like a first-touch message.
      - `kind: "ticket"` → draft by `organizationId` + `contactId` when both are present; otherwise report the item as undraftable.
      - `kind: "organization"` / `"contact"` → draft by `organizationId` + `contactId` when both are present; otherwise report.
-   - Reference the real history (last message, open ticket, pending proposal).
+   - Reference the real history (last message, open ticket, saved estimates via `get_estimates` by lead — a pending proposal counts only if it is saved).
    - One clear next step (call, reply, approve, pay).
    - Spanish by default, professional and warm, never pushy.
 3. Set the `rationale` on every draft: why this person, why now, why this angle.
