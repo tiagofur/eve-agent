@@ -1,0 +1,85 @@
+services:
+  creapolis-db:
+    image: postgres:17
+    container_name: creapolis-crm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-creapolis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-creapolis}
+      POSTGRES_DB: ${POSTGRES_DB:-creapolis}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - creapolis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-creapolis} -d ${POSTGRES_DB:-creapolis}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  eve-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.eve
+    container_name: creapolis-eve-agent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3200:3200"
+    environment:
+      - NODE_ENV=production
+      - PORT=3200
+      - META_API_BASE_URL=${META_API_BASE_URL}
+      - META_API_KEY=${META_API_KEY}
+      - META_MODEL_ID=${META_MODEL_ID}
+      - DEFAULT_MODEL=${DEFAULT_MODEL}
+      - EVE_CHANNEL_USER=${EVE_CHANNEL_USER}
+      - EVE_CHANNEL_PASSWORD=${EVE_CHANNEL_PASSWORD}
+      - CRM_API_URL=http://creapolis-crm:8787
+      - CRM_FRONT_KEY=${CRM_FRONT_KEY}
+      - CRM_OPS_KEY=${CRM_OPS_KEY}
+      - CRM_OWNER_KEY=${CRM_OWNER_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
+      - GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}
+    volumes:
+      - eve_workflow_data:/app/.eve/.workflow-data
+    depends_on:
+      - creapolis-db
+
+  creapolis-crm:
+    build:
+      context: .
+      dockerfile: Dockerfile.crm
+    container_name: creapolis-crm-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      - NODE_ENV=production
+      - PORT=8787
+      - DATABASE_URL=postgres://${POSTGRES_USER:-creapolis}:${POSTGRES_PASSWORD:-creapolis}@creapolis-db:5432/${POSTGRES_DB:-creapolis}
+      - FRONT_API_KEY=${CRM_FRONT_KEY}
+      - OPS_API_KEY=${CRM_OPS_KEY}
+      - OWNER_API_KEY=${CRM_OWNER_KEY}
+      - DEV_API_KEY=${DEV_API_KEY}
+      - EVE_AGENT_URL=http://eve-agent:3200
+      - EVE_CHANNEL_USER=${EVE_CHANNEL_USER}
+      - EVE_CHANNEL_PASSWORD=${EVE_CHANNEL_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME}
+      - META_FACEBOOK_PAGE_ID=${META_FACEBOOK_PAGE_ID}
+      - META_PAGE_ACCESS_TOKEN=${META_PAGE_ACCESS_TOKEN}
+      - META_INSTAGRAM_ACCOUNT_ID=${META_INSTAGRAM_ACCOUNT_ID}
+      - SEARCH_PROVIDER=${SEARCH_PROVIDER}
+      - SEARCH_API_KEY=${SEARCH_API_KEY}
+    depends_on:
+      creapolis-db:
+        condition: service_healthy
+      eve-agent:
+        condition: service_started
+
+volumes:
+  creapolis_pgdata:
+  eve_workflow_data:
