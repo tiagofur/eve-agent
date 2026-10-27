@@ -312,6 +312,83 @@ function randomRequestId(): string {
   return `creapolis-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export interface CalendarEventItem {
+  id: string;
+  summary: string;
+  description?: string;
+  start: string;
+  end: string;
+  meetLink?: string;
+  htmlLink?: string;
+  attendees?: string[];
+}
+
+export async function getUpcomingAppointments(
+  days = 7,
+  env: GoogleCalendarEnv | null = readCalendarEnv(),
+  now: Date = new Date()
+): Promise<{ ok: boolean; message: string; events?: CalendarEventItem[] }> {
+  if (!env) {
+    return { ok: false, message: setupHint() };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await refreshAccessToken(env);
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Fallo de autenticación con Google.",
+    };
+  }
+
+  const timeMin = now.toISOString();
+  const timeMax = new Date(now.getTime() + days * 86_400_000).toISOString();
+
+  const url =
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.calendarId)}/events?` +
+    new URLSearchParams({
+      timeMin,
+      timeMax,
+      singleEvents: "true",
+      orderBy: "startTime",
+      timeZone: COSTA_RICA_TZ,
+    }).toString();
+
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      throw new Error(`Calendar API respondió HTTP ${res.status}`);
+    }
+    const data = (await res.json()) as any;
+    const items: any[] = data.items || [];
+    const events: CalendarEventItem[] = items.map((ev) => ({
+      id: ev.id,
+      summary: ev.summary || "Sin título",
+      description: ev.description,
+      start: ev.start?.dateTime || ev.start?.date || "",
+      end: ev.end?.dateTime || ev.end?.date || "",
+      meetLink: ev.hangoutLink,
+      htmlLink: ev.htmlLink,
+      attendees: (ev.attendees || []).map((a: any) => a.email).filter(Boolean),
+    }));
+
+    return {
+      ok: true,
+      message: `Se encontraron ${events.length} cita(s) en los próximos ${days} días.`,
+      events,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : "Error al obtener las citas de Google Calendar.",
+    };
+  }
+}
+
 export async function scheduleConsultation(
   input: ConsultationInput,
   env: GoogleCalendarEnv | null = readCalendarEnv()
