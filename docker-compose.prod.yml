@@ -44,6 +44,7 @@ services:
       - GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}
     volumes:
       - eve_workflow_data:/app/.eve/.workflow-data
+      - /root/.config/eve-agent:/root/.config/eve-agent:rw
     depends_on:
       - creapolis-db
 
