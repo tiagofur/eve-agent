@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
@@ -166,6 +166,7 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
   );
   const [showForm, setShowForm] = useState(false);
   const [liveLogs, setLiveLogs] = useState<Record<string, string>>({});
+  const newCorrectionBtnRef = useRef<HTMLButtonElement>(null);
 
   interface ActiveRun {
     runId: string;
@@ -420,7 +421,9 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
             Lanzar al aprobar
           </label>
           <button
+            ref={newCorrectionBtnRef}
             onClick={() => setShowForm((v) => !v)}
+            aria-haspopup="dialog"
             className="flex items-center gap-1.5 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition"
           >
             <Plus className="w-4 h-4" /> Nueva corrección
@@ -497,6 +500,7 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
               }}
               onCancel={() => setShowForm(false)}
               onAskOrchestrator={onAskOrchestrator}
+              openButtonRef={newCorrectionBtnRef}
             />
           )}
 
@@ -770,14 +774,26 @@ const NewCorrectionForm: React.FC<{
   onCreated: () => void;
   onCancel: () => void;
   onAskOrchestrator?: (text: string) => void;
-}> = ({ projects, onCreated, onCancel, onAskOrchestrator }) => {
+  openButtonRef?: React.RefObject<HTMLButtonElement>;
+}> = ({ projects, onCreated, onCancel, onAskOrchestrator, openButtonRef }) => {
   const [projectId, setProjectId] = useState("");
   const [title, setTitle] = useState("");
   const [spec, setSpec] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const panelRef = useRef<HTMLDivElement>(null);
+  const projectSelectRef = useRef<HTMLSelectElement>(null);
+
   const selected = projects.find((p) => p.id === projectId);
+
+  // Dismiss paths (Cancel button, X, ESC, backdrop) only close the dialog:
+  // they never call the API and are inert while a submission is in flight.
+  // Unmounting on close resets fields, errors and the submitting flag, so
+  // reopening always starts from an empty form.
+  const close = useCallback(() => {
+    if (!busy) onCancel();
+  }, [busy, onCancel]);
 
   const submit = async () => {
     if (!projectId || !title.trim() || !spec.trim()) {
@@ -796,93 +812,149 @@ const NewCorrectionForm: React.FC<{
     }
   };
 
+  // Initial focus on the first field; when the dialog closes, focus returns
+  // to the button that opened it.
+  useEffect(() => {
+    projectSelectRef.current?.focus();
+    return () => openButtonRef?.current?.focus();
+  }, [openButtonRef]);
+
+  // ESC closes the dialog; Tab is trapped inside it while it is open.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        close();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey && (active === first || !panel.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !panel.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [close]);
+
   return (
-    <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 space-y-3">
-      <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-        <Plus className="w-4 h-4 text-cyan-400" /> Nueva corrección (cae en pendiente de aprobación)
-        <button
-          onClick={onCancel}
-          disabled={busy}
-          title="Cerrar sin crear"
-          className="ml-auto p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-40 rounded transition"
+    <div
+      className="fixed inset-0 z-50 flex justify-center overflow-y-auto bg-black/70 backdrop-blur-sm p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) close();
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-correction-title"
+        className="my-auto w-full max-w-2xl space-y-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl"
+      >
+        <h3
+          id="new-correction-title"
+          className="text-sm font-semibold text-zinc-200 flex items-center gap-2"
         >
-          <X className="w-4 h-4" />
-        </button>
-      </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs text-zinc-400">Proyecto</label>
-          <select
-            value={projectId}
-            onChange={(e) => setProjectId(e.target.value)}
-            className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200"
+          <Plus className="w-4 h-4 text-cyan-400" /> Nueva corrección (cae en pendiente de aprobación)
+          <button
+            onClick={close}
+            disabled={busy}
+            aria-label="Cerrar"
+            title="Cerrar sin crear"
+            className="ml-auto p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-40 rounded transition"
           >
-            <option value="">— elegir —</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.localPath ? (p.folderVerifiedAt ? " ✅" : " ⚠️ sin verificar") : " ⚠️ sin carpeta"}
-              </option>
-            ))}
-          </select>
-          {selected && !selected.localPath && (
-            <p className="text-xs text-amber-400 mt-1">
-              Este proyecto no tiene carpeta configurada: configúrala abajo antes de lanzar.
-            </p>
-          )}
+            <X className="w-4 h-4" />
+          </button>
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-zinc-400">Proyecto</label>
+            <select
+              ref={projectSelectRef}
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200"
+            >
+              <option value="">— elegir —</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.localPath ? (p.folderVerifiedAt ? " ✅" : " ⚠️ sin verificar") : " ⚠️ sin carpeta"}
+                </option>
+              ))}
+            </select>
+            {selected && !selected.localPath && (
+              <p className="text-xs text-amber-400 mt-1">
+                Este proyecto no tiene carpeta configurada: configúrala abajo antes de lanzar.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="text-xs text-zinc-400">Título</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Ej: Login falla al expirar la sesión"
+              className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200"
+            />
+          </div>
         </div>
         <div>
-          <label className="text-xs text-zinc-400">Título</label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ej: Login falla al expirar la sesión"
-            className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200"
+          <label className="text-xs text-zinc-400">
+            Descripción del issue (contexto, comportamiento esperado, criterios de aceptación)
+          </label>
+          <textarea
+            value={spec}
+            onChange={(e) => setSpec(e.target.value)}
+            rows={5}
+            className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 font-mono"
           />
         </div>
-      </div>
-      <div>
-        <label className="text-xs text-zinc-400">
-          Descripción del issue (contexto, comportamiento esperado, criterios de aceptación)
-        </label>
-        <textarea
-          value={spec}
-          onChange={(e) => setSpec(e.target.value)}
-          rows={5}
-          className="mt-1 w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 font-mono"
-        />
-      </div>
-      {err && <p className="text-xs text-rose-400">{err}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          onClick={submit}
-          disabled={busy}
-          className="flex items-center gap-1.5 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white rounded-lg text-sm font-semibold transition"
-        >
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          Crear issue
-        </button>
-        {onAskOrchestrator && (
+        {err && <p className="text-xs text-rose-400">{err}</p>}
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() =>
-              onAskOrchestrator(
-                `Redacta una corrección (issue con contexto, criterios de aceptación, archivos afectados y comandos de verificación) para el proyecto ${
-                  selected?.name ?? "(dime cuál)"
-                }: ${title || "(describe la corrección)"} — ${spec}`
-              )
-            }
-            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition"
+            onClick={submit}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-60 text-white rounded-lg text-sm font-semibold transition"
           >
-            Redactar con Eve
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            Crear issue
           </button>
-        )}
-        <button
-          onClick={onCancel}
-          disabled={busy}
-          className="flex items-center gap-1.5 px-3 py-2 bg-transparent hover:bg-zinc-800 disabled:opacity-60 text-zinc-400 hover:text-zinc-200 rounded-lg text-sm font-medium transition"
-        >
-          Cancelar
-        </button>
+          <button
+            onClick={close}
+            disabled={busy}
+            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800/60 border border-zinc-700 hover:bg-zinc-800 disabled:opacity-60 text-zinc-300 hover:text-zinc-100 rounded-lg text-sm font-medium transition"
+          >
+            Cancelar
+          </button>
+          {onAskOrchestrator && (
+            <button
+              onClick={() =>
+                onAskOrchestrator(
+                  `Redacta una corrección (issue con contexto, criterios de aceptación, archivos afectados y comandos de verificación) para el proyecto ${
+                    selected?.name ?? "(dime cuál)"
+                  }: ${title || "(describe la corrección)"} — ${spec}`
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition"
+            >
+              Redactar con Eve
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
