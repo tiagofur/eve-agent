@@ -1,0 +1,14 @@
+.git
+.output
+.eve
+.zcode
+.pnpm-store
+node_modules
+**/node_modules
+.env
+.env.*
+desktop/src-tauri/target
+desktop/dist
+dist
+*.log
+.DS_Store
