@@ -1,29 +1,8 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { crmListProjects, type CrmProjectItem } from "../lib/crm";
+import { crmListProjects } from "../lib/crm";
+import { scoreProject } from "../lib/project-match";
 import { requireStaff } from "../lib/guard";
-
-export const norm = (s: string) =>
-  s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "")
-    .trim();
-
-export function scoreProject(p: CrmProjectItem, query: string): number {
-  if (p.id.toLowerCase() === query.trim().toLowerCase()) return 100;
-  const q = norm(query);
-  if (!q) return 0;
-  const name = norm(p.name);
-  const org = norm(p.organizationName ?? "");
-  if (name === q) return 100;
-  if (org && org === q) return 80;
-  if (name.startsWith(q) || q.startsWith(name)) return 60;
-  if (name.includes(q) || q.includes(name)) return 40;
-  if (org && (org.includes(q) || q.includes(org))) return 30;
-  return 0;
-}
 
 export default defineTool({
   description:

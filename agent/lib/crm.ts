@@ -66,6 +66,8 @@ export interface CreateSupportTicketParams {
   severity?: "critical" | "major" | "minor";
   kind?: "support" | "info";
   description: string;
+  /** Affected client project, when known — ties the ticket to its system. */
+  projectId?: string;
 }
 
 export async function crmCreateTicket(data: CreateSupportTicketParams) {
@@ -93,6 +95,85 @@ export async function crmCreateTicket(data: CreateSupportTicketParams) {
     status: string;
     duplicate: boolean;
   };
+}
+
+export interface CrmTicketItem {
+  id: string;
+  kind: string;
+  system: string;
+  severity: string;
+  status: string;
+  description: string;
+  slaDueAt: string;
+  projectId: string | null;
+  projectName: string | null;
+  createdAt: string;
+  contactName: string | null;
+  contactEmail: string | null;
+}
+
+export async function crmGetTickets(status?: string): Promise<{ tickets: CrmTicketItem[] }> {
+  const url = new URL(`${getCrmUrl()}/api/tickets`);
+  if (status) url.searchParams.set("status", status);
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM ticket list failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { tickets: CrmTicketItem[] };
+}
+
+export interface UpdateTicketContentParams {
+  description?: string;
+  system?: string;
+  severity?: "critical" | "major" | "minor";
+  kind?: "support" | "info";
+  projectId?: string | null;
+  reason?: string;
+}
+
+export async function crmUpdateTicketContent(ticketId: string, data: UpdateTicketContentParams) {
+  const res = await fetch(`${getCrmUrl()}/api/tickets/${ticketId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM ticket update failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean; ticket: { id: string; status: string } };
+}
+
+export async function crmUpdateTicketStatus(
+  ticketId: string,
+  status: "open" | "in_progress" | "waiting_client" | "resolved" | "closed",
+  extra?: { reason?: string; clientMessage?: string }
+) {
+  const res = await fetch(`${getCrmUrl()}/api/tickets/${ticketId}/status`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify({ status, ...extra }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM ticket status change failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { success: boolean; ticket: { id: string; status: string } };
 }
 
 export interface LogInteractionParams {
@@ -329,6 +410,8 @@ export async function crmCreateProject(data: CreateProjectParams) {
 export interface CreateTaskParams {
   projectId: string;
   milestoneId?: string;
+  /** Originating support ticket — required gate for corrections. */
+  ticketId?: string;
   title: string;
   spec: string;
   assignee?: string;
