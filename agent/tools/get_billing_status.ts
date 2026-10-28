@@ -1,12 +1,14 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmGetBilling } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
     "Read billing status from Creapolis CRM: open projects with server-computed flags — overdueMilestones (past due, not done), dueSoonMilestones (due within 7 days), unsignedContracts (sent but not signed) — each milestone carrying its agreed amount when recorded. Use it to report cashflow risks; drafting reminders is the owner's call, not this tool's.",
   inputSchema: z.object({}),
-  async execute() {
+  async execute(_input, ctx) {
+    requireStaff(ctx, "get_billing_status");
     try {
       const data = await crmGetBilling();
       const flagged = data.projects.map((p) => ({

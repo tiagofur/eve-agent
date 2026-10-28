@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmGenerateMarketingPost } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -24,7 +25,8 @@ export default defineTool({
       .optional()
       .describe("Target reader persona"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "generate_marketing_post");
     try {
       const result = await crmGenerateMarketingPost(input);
       return {

@@ -1,5 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
+import { requireStaff } from "../lib/guard";
 
 const FETCH_TIMEOUT_MS = 12_000;
 const DEFAULT_COUNT = 8;
@@ -152,7 +153,8 @@ export default defineTool({
       .optional()
       .describe("Number of results (default 8, max 10)"),
   }),
-  async execute({ query, count }) {
+  async execute({ query, count }, ctx) {
+    requireStaff(ctx, "web_search");
     try {
       const outcome = await searchWeb(query.trim(), count ?? DEFAULT_COUNT);
       if (!outcome.ok) {

@@ -4,7 +4,8 @@ dotenv.config();
 dotenv.config({ path: "../.env.local" });
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, asc } from "drizzle-orm";
+import { and, eq, asc, gte, like, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import { db } from "../../db/client";
 import { chatThreads, chatMessages } from "../../db/schema";
 import {
@@ -13,7 +14,7 @@ import {
   findMissingEveMessages,
   parseEveStream,
   readEveStreamToTerminal,
-  resolveEveProxyConfig,
+  resolvePublicEveProxyConfig,
   sendEveMessage,
   type EnabledEveProxyConfig,
 } from "../../domain/eve-client";
@@ -22,6 +23,18 @@ import {
 const ipRateMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX_TURNS = 20;
+
+// Cost guardrails. Public threads are tagged with a "public:" externalKey so
+// the daily budget counts only visitor traffic (staff threads carry keys like
+// "telegram:<id>"), and per-thread caps bound any single conversation.
+const PUBLIC_KEY_PREFIX = "public:";
+const MAX_TURNS_PER_THREAD = Number(process.env.PUBLIC_CHAT_MAX_TURNS_PER_THREAD ?? 60);
+const DAILY_TURN_BUDGET = Number(process.env.PUBLIC_CHAT_DAILY_TURN_BUDGET ?? 400);
+
+const THREAD_CAP_REPLY =
+  "Alcanzaste el límite de mensajes de esta conversación. Si quieres seguir con tu proyecto, deja tu nombre y un correo o WhatsApp y el equipo de Creapolis.Dev te contacta.";
+const DAILY_BUDGET_REPLY =
+  "El chat llegó a su límite de uso por hoy. Deja tu nombre y un correo o WhatsApp y el equipo de Creapolis.Dev te escribe a la brevedad.";
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -35,6 +48,35 @@ function checkRateLimit(ip: string): boolean {
   }
   entry.count++;
   return true;
+}
+
+function utcDayStart(): Date {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+async function countUserTurnsToday(): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(chatMessages)
+    .innerJoin(chatThreads, eq(chatMessages.threadId, chatThreads.id))
+    .where(
+      and(
+        eq(chatMessages.role, "user"),
+        gte(chatMessages.createdAt, utcDayStart()),
+        like(chatThreads.externalKey, `${PUBLIC_KEY_PREFIX}%`)
+      )
+    );
+  return rows[0]?.n ?? 0;
+}
+
+async function countUserTurnsInThread(threadId: string): Promise<number> {
+  const rows = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(chatMessages)
+    .where(and(eq(chatMessages.threadId, threadId), eq(chatMessages.role, "user")));
+  return rows[0]?.n ?? 0;
 }
 
 export const publicChatRouter = new Hono();
@@ -124,7 +166,10 @@ publicChatRouter.post(
     const { title } = c.req.valid("json");
     const [created] = await db
       .insert(chatThreads)
-      .values({ title: title?.trim() || "Chat Web" })
+      .values({
+        title: title?.trim() || "Chat Web",
+        externalKey: `${PUBLIC_KEY_PREFIX}${randomUUID()}`,
+      })
       .returning();
 
     if (!created) return c.json({ error: "No se pudo iniciar el chat" }, 500);
@@ -159,18 +204,33 @@ publicChatRouter.post(
         .where(eq(chatThreads.id, threadId))
         .limit(1);
       if (!existing) return c.json({ error: "Conversación no encontrada" }, 404);
+      // This route only serves its own public threads: a staff thread id
+      // (telegram/desktop) must never be continued by an anonymous visitor.
+      if (!existing.externalKey?.startsWith(PUBLIC_KEY_PREFIX)) {
+        return c.json({ error: "Conversación no encontrada" }, 404);
+      }
     } else {
       const [created] = await db
         .insert(chatThreads)
-        .values({ title: message.slice(0, 50) })
+        .values({
+          title: message.slice(0, 50),
+          externalKey: `${PUBLIC_KEY_PREFIX}${randomUUID()}`,
+        })
         .returning();
       if (!created) return c.json({ error: "Error al crear conversación" }, 500);
       threadId = created.id;
     }
 
-    const eve = resolveEveProxyConfig(process.env);
+    // Public visitor traffic authenticates with the dedicated public proxy
+    // credential so eve can mechanically distinguish it from staff callers.
+    const eve = resolvePublicEveProxyConfig(process.env);
     if (!eve.enabled) {
       return c.json({ error: "Servicio de asistente temporalmente no disponible" }, 503);
+    }
+
+    const turnsToday = await countUserTurnsToday();
+    if (turnsToday >= DAILY_TURN_BUDGET) {
+      return c.json({ error: DAILY_BUDGET_REPLY }, 429);
     }
 
     try {
@@ -179,6 +239,16 @@ publicChatRouter.post(
         role: "user",
         content: message,
       });
+
+      if ((await countUserTurnsInThread(threadId)) >= MAX_TURNS_PER_THREAD) {
+        await db.insert(chatMessages).values({
+          threadId,
+          role: "assistant",
+          content: THREAD_CAP_REPLY,
+          toolCalls: [],
+        });
+        return c.json({ reply: THREAD_CAP_REPLY, threadId });
+      }
 
       const out = await runPublicTurn({
         threadId,

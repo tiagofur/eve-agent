@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmCreateDraft } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -25,7 +26,8 @@ export default defineTool({
       .optional()
       .describe("Why this message, why this angle: the owner reads it before approving"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "create_outreach_draft");
     try {
       const result = await crmCreateDraft({
         leadId: input.leadId,

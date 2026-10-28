@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { getUpcomingAppointments } from "../lib/google-calendar";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -15,7 +16,8 @@ export default defineTool({
       .default(7)
       .describe("Number of days ahead to search for appointments (default: 7)"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "get_upcoming_appointments");
     try {
       const res = await getUpcomingAppointments(input.days);
       return res;

@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmGetProjectTasks } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -8,7 +9,8 @@ export default defineTool({
   inputSchema: z.object({
     projectId: z.string().uuid().describe("Project UUID to review"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "get_project_tasks");
     try {
       const data = await crmGetProjectTasks(input.projectId);
       return {

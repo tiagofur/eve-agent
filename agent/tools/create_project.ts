@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmCreateProject } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description: "Initialize an active client project and deliverables milestones in Creapolis CRM, moving the won lead to onboarding.",
@@ -19,7 +20,8 @@ export default defineTool({
       .optional()
       .describe("Initial milestone schedule"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "create_project");
     try {
       const result = await crmCreateProject({
         organizationId: input.organizationId,

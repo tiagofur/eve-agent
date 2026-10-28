@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmGetAnalystReports } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -8,7 +9,8 @@ export default defineTool({
   inputSchema: z.object({
     limit: z.number().int().min(1).max(50).optional().describe("How many past reports to read (default 10)"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "get_analyst_reports");
     try {
       const data = await crmGetAnalystReports(input.limit ?? 10);
       return {

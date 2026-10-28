@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmLogInteraction } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -17,7 +18,8 @@ export default defineTool({
     direction: z.enum(["inbound", "outbound"]).describe("inbound = client wrote; outbound = we replied"),
     content: z.string().min(1).max(4000).describe("Message text (verbatim when inbound, final reply when outbound)"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "log_client_interaction");
     try {
       const result = await crmLogInteraction({
         leadId: input.leadId,

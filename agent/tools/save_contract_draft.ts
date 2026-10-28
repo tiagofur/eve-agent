@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmSaveContract } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -16,7 +17,8 @@ export default defineTool({
       .describe("What the human reviewer must verify before this leaves draft (entity, jurisdiction, amounts)"),
     createdBy: z.string().describe("Author tag, e.g. legal:chat"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "save_contract_draft");
     try {
       const result = await crmSaveContract({
         leadId: input.leadId,

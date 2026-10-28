@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmMoveContract } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -19,7 +20,8 @@ export default defineTool({
       .optional()
       .describe("Reviewer flags to attach on the move"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "update_contract_status");
     try {
       const result = await crmMoveContract({
         contractId: input.contractId,

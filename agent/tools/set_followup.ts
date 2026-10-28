@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmSetFollowup } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -20,7 +21,8 @@ export default defineTool({
       .optional()
       .describe("Short note on why it was moved (e.g. 'nudge drafted, waiting owner approval')"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "set_followup");
     try {
       await crmSetFollowup({
         entity: input.entity,

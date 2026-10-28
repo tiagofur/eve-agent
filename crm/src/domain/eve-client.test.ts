@@ -140,7 +140,8 @@ describe("parseEveStream", () => {
   it("pins unscoped parsing of a replayed stream for history sync", () => {
     const parsed = parseEveStream(TWO_TURN_REPLAY);
     expect(parsed.messages.map((m) => m.text)).toEqual(["SPIKE-OK", "SEGUNDO"]);
-    expect(parsed.text).toBe("SPIKE-OKSEGUNDO");
+    // Multi-message turns are joined with a paragraph break (see parseEveStream).
+    expect(parsed.text).toBe("SPIKE-OK\n\nSEGUNDO");
     expect(parsed.turnId).toBe("turn_1");
   });
 });

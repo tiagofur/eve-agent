@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { crmApi, type DailyMetrics, type FunnelReport, type FollowUpItem } from "../api";
+import { API_BASE, crmApi, type DailyMetrics, type FunnelReport, type FollowUpItem } from "../api";
 import { Users, AlertTriangle, Send, CheckCircle2, TrendingUp, RefreshCw, BellRing } from "lucide-react";
 
 export function DashboardView() {
@@ -55,7 +55,7 @@ export function DashboardView() {
 
       {error && (
         <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
-          ⚠️ {error} — Asegúrate de que el backend esté corriendo en <code className="font-mono text-xs">localhost:8787</code>.
+          ⚠️ {error} — Asegúrate de que el backend esté accesible en <code className="font-mono text-xs">{API_BASE}</code>.
         </div>
       )}
 

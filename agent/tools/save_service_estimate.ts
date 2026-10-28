@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmSaveEstimate } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -27,7 +28,8 @@ export default defineTool({
     currency: z.string().max(8).optional().describe("Currency code (default USD)"),
     createdBy: z.string().describe("Author tag, e.g. solutions:chat"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "save_service_estimate");
     try {
       const result = await crmSaveEstimate({
         leadId: input.leadId,

@@ -7,8 +7,17 @@ import { httpBasic, localDev, placeholderAuth, vercelOidc } from "eve/channels/a
 const channelUser = process.env.EVE_CHANNEL_USER;
 const channelPassword = process.env.EVE_CHANNEL_PASSWORD;
 
+// Dedicated credential for the CRM's PUBLIC web-chat proxy. Sessions
+// authenticated with this username carry a public principal, and staff-only
+// tools (lib/guard.ts) deny them. Keep the username in sync with EVE_PUBLIC_USER.
+const publicUser = process.env.EVE_PUBLIC_USER;
+const publicPassword = process.env.EVE_PUBLIC_PASSWORD;
+
 export default eveChannel({
   auth: [
+    ...(publicUser && publicPassword
+      ? [httpBasic({ username: publicUser, password: publicPassword })]
+      : []),
     ...(channelUser && channelPassword
       ? [httpBasic({ username: channelUser, password: channelPassword })]
       : []),

@@ -18,6 +18,8 @@
     "@hono/zod-validator": "^0.9.1",
     "dotenv": "^18.0.8",
     "drizzle-orm": "^0.45.4",
+    "ai": "^7.0.137",
+    "@ai-sdk/openai": "^4.0.93",
     "hono": "^4.13.13",
     "node-cron": "^4.6.0",
     "pg": "^8.23.1",

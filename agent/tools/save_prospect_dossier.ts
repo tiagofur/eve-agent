@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmSaveDossier } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description: "Save a verified research dossier for a prospective business into Creapolis CRM, automatically transitioning lead to 'researched' stage.",
@@ -34,7 +35,8 @@ export default defineTool({
         "Contact data you actually verified on the business's pages. The CRM links it to the lead so outreach drafts have a recipient. NEVER guess or pattern-fill."
       ),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "save_prospect_dossier");
     try {
       const result = await crmSaveDossier({
         leadId: input.leadId,

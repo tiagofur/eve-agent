@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import { crmSaveAnalystReport } from "../lib/crm";
+import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
@@ -15,7 +16,8 @@ export default defineTool({
     periodEnd: z.string().optional().describe("ISO datetime the analysis window ends at"),
     createdBy: z.string().describe("Author tag, e.g. analyst:scheduled or analyst:chat"),
   }),
-  async execute(input) {
+  async execute(input, ctx) {
+    requireStaff(ctx, "save_analyst_report");
     try {
       const result = await crmSaveAnalystReport({
         summary: input.summary,

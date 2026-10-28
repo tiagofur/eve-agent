@@ -33,6 +33,23 @@ export function resolveEveProxyConfig(
   return { enabled: true, baseUrl, username, password };
 }
 
+/**
+ * Credentials for PUBLIC visitor traffic (web chat). Deliberately separate
+ * from the staff proxy above: eve marks this exact username as a public
+ * principal and denies staff-only tools to it. There is no fallback to the
+ * staff credential — if these are unset, public chat fails closed (503)
+ * instead of silently authenticating visitors as staff.
+ */
+export function resolvePublicEveProxyConfig(
+  env: Record<string, string | undefined>
+): EveProxyConfig {
+  const baseUrl = (env.EVE_AGENT_URL ?? "").trim().replace(/\/+$/, "");
+  const username = (env.EVE_PUBLIC_USER ?? "").trim();
+  const password = env.EVE_PUBLIC_PASSWORD ?? "";
+  if (!baseUrl || !username || !password) return { enabled: false };
+  return { enabled: true, baseUrl, username, password };
+}
+
 export function basicAuthHeader(username: string, password: string): string {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }
@@ -143,7 +160,9 @@ export function parseEveStream(
 
   return {
     messages,
-    text: messages.length > 0 ? messages.map((m) => m.text).join("") : deltas.join(""),
+    // Multi-message turns (status preamble + final answer) need a paragraph
+    // break between messages; the streaming-deltas fallback stays unjoined.
+    text: messages.length > 0 ? messages.map((m) => m.text).join("\n\n") : deltas.join(""),
     turnCompleted,
     sessionWaiting,
     turnId,
