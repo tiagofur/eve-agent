@@ -365,15 +365,28 @@ export async function markDraftSent(input: MarkDraftSentInput): Promise<MarkDraf
     metadata: { outboxDraftId: draft.id, subject: draft.subject ?? null },
   });
 
-  // Ticket-linked notification: the client now has the answer in flight.
+  // Ticket-linked notification: the client now has the answer in flight. A
+  // failed transition (ticket reopened/closed meanwhile, or deleted) must be
+  // audited — never silently swallowed while the draft claims success.
   if (draft.ticketId) {
     const { updateTicketStatus } = await import("./tickets");
-    await updateTicketStatus({
+    const transition = await updateTicketStatus({
       ticketId: draft.ticketId,
       status: "waiting_client",
       actor: input.actor,
       reason: "Resolution notification sent to the client",
     });
+
+    if (!transition.success) {
+      await logEvent({
+        entity: "outbox",
+        entityId: input.draftId,
+        action: "draft_sent_ticket_sync_failed",
+        actor: input.actor,
+        after: { ticketId: draft.ticketId, code: transition.code, error: transition.message },
+        reason: "Draft marked sent but the ticket could not move to waiting_client",
+      });
+    }
   }
 
   return { success: true, draft: updated! };

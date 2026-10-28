@@ -149,6 +149,15 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
         message: `Ticket ${input.ticketId} is closed and cannot receive new corrections.`,
       };
     }
+    // Never a silently wrong link: a ticket already bound to a project may
+    // only spawn corrections in THAT project.
+    if (ticket.projectId && ticket.projectId !== input.projectId) {
+      return {
+        success: false,
+        code: "ticket_project_mismatch",
+        message: `Ticket ${input.ticketId} belongs to a different project; dispatch to its own project.`,
+      };
+    }
     linkedTicket = ticket;
   }
 

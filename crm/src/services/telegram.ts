@@ -238,6 +238,29 @@ export async function notifyOutboxDraftCreated(draftId: string) {
   return await sendTelegramMessage(text, keyboard, "HTML");
 }
 
+// Ticket-page throttle: ticket creation is front-scoped (reachable through
+// the public chat), so a flooding reporter must not be able to page the
+// owner's Telegram at will. Window-bounded per contact; overflow is dropped
+// (the ticket still exists — only the page is suppressed).
+const TICKET_PAGE_WINDOW_MS = 10 * 60 * 1000;
+const TICKET_PAGE_MAX = 3;
+const ticketPagesByContact = new Map<string, number[]>();
+
+function shouldPageTicket(contactId: string | null): boolean {
+  const key = contactId ?? "anonymous";
+  const now = Date.now();
+  const recent = (ticketPagesByContact.get(key) ?? []).filter(
+    (t) => now - t < TICKET_PAGE_WINDOW_MS
+  );
+  if (recent.length >= TICKET_PAGE_MAX) {
+    ticketPagesByContact.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  ticketPagesByContact.set(key, recent);
+  return true;
+}
+
 export async function notifySupportTicketCreated(ticketId: string) {
   const [ticket] = await db
     .select({
@@ -247,6 +270,7 @@ export async function notifySupportTicketCreated(ticketId: string) {
       system: tickets.system,
       description: tickets.description,
       slaDueAt: tickets.slaDueAt,
+      contactId: tickets.contactId,
       contactName: contacts.name,
       contactEmail: contacts.email,
     })
@@ -257,7 +281,12 @@ export async function notifySupportTicketCreated(ticketId: string) {
 
   if (!ticket) return;
 
+  // Critical incidents always page; everything else respects the throttle.
   const urgent = ticket.severity === "critical" || ticket.severity === "major";
+  if (!urgent && !shouldPageTicket(ticket.contactId)) {
+    console.log(`[telegram] ticket ${ticketId} page suppressed (contact throttle)`);
+    return;
+  }
   const header = urgent
     ? `🚨 <b>INCIDENTE DE SOPORTE (${ticket.severity.toUpperCase()})</b>\n<i>Contrato SLA Activo — acción inmediata requerida</i>`
     : `🎫 <b>Ticket de soporte (${ticket.severity.toUpperCase()})</b>\n<i>Requiere tu aprobación para iniciar atención</i>`;

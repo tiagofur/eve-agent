@@ -11,8 +11,9 @@ import {
   contacts,
   outbox,
   interactions,
+  events,
 } from "./db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 /**
  * Support lifecycle (ITIL-inspired): ticket → owner triage → linked
@@ -127,10 +128,18 @@ describe("support ticket → correction → client notification lifecycle", () =
     const { body } = await createTicket("Lifecycle App flow");
     const ticketId = body.ticketId;
 
+    // Gate 1 is mechanical: ops key (the agent) CANNOT approve its own ticket.
+    const opsTry = await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "in_progress", reason: "Agent trying to triage itself" }),
+    });
+    expect(opsTry.status).toBe(403);
+
     // Owner triage: open → in_progress (approval to start work).
     const approve = await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
-      headers,
+      headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress", reason: "Owner approved attention" }),
     });
     expect(approve.status).toBe(200);
@@ -162,7 +171,7 @@ describe("support ticket → correction → client notification lifecycle", () =
     const ticketId = body.ticketId;
     await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
-      headers,
+      headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
 
@@ -210,7 +219,7 @@ describe("support ticket → correction → client notification lifecycle", () =
     const ticketId = body.ticketId;
     await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
-      headers,
+      headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
     const dispatch = await app.request("/api/projects/tasks", {
@@ -258,7 +267,7 @@ describe("support ticket → correction → client notification lifecycle", () =
     const ticketId = body.ticketId;
     await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
-      headers,
+      headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
     await app.request(`/api/tickets/${ticketId}/status`, {
@@ -323,7 +332,7 @@ describe("support ticket → correction → client notification lifecycle", () =
     const ticketId = body.ticketId;
     await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
-      headers,
+      headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
     const dispatch = await app.request("/api/projects/tasks", {
@@ -338,5 +347,246 @@ describe("support ticket → correction → client notification lifecycle", () =
     expect(res.status).toBe(200);
     const json = (await res.json()) as { tasks: Array<{ id: string }> };
     expect(json.tasks.map((t) => t.id)).toContain(taskJson.task.id);
+  });
+
+  it("recomputes slaDueAt when ticket severity changes", async () => {
+    const { body } = await createTicket("Lifecycle App sla-edit");
+    const [original] = await db.select().from(tickets).where(eq(tickets.id, body.ticketId));
+    const originalDue = new Date(original!.slaDueAt).getTime();
+
+    // Changing minor (24h) to critical (1h) recomputes slaDueAt closer to now.
+    await app.request(`/api/tickets/${body.ticketId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ severity: "critical" }),
+    });
+
+    const [updated] = await db.select().from(tickets).where(eq(tickets.id, body.ticketId));
+    const newDue = new Date(updated!.slaDueAt).getTime();
+    expect(newDue).toBeLessThan(originalDue);
+  });
+
+  it("rejects dispatch on closed tickets and on project mismatches", async () => {
+    const { body } = await createTicket("Lifecycle App closed-dispatch");
+    const ticketId = body.ticketId;
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "closed", reason: "Rejected" }),
+    });
+
+    const closedDispatch = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ projectId, ticketId, title: "On closed", spec: "spec", kind: "correction" }),
+    });
+    expect(closedDispatch.status).toBe(400);
+    expect(((await closedDispatch.json()) as { code: string }).code).toBe("ticket_closed");
+
+    // Project mismatch: create another project and try to bind this ticket to it
+    const [otherProj] = await db
+      .insert(projects)
+      .values({ organizationId: orgId, name: "TEST Other Proj", status: "active" })
+      .returning();
+
+    const { body: t2 } = await createTicket("Lifecycle App mismatch");
+    await app.request(`/api/tickets/${t2.ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+
+    const mismatchDispatch = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        projectId: otherProj!.id,
+        ticketId: t2.ticketId,
+        title: "Wrong project",
+        spec: "spec",
+        kind: "correction",
+      }),
+    });
+    expect(mismatchDispatch.status).toBe(400);
+    expect(((await mismatchDispatch.json()) as { code: string }).code).toBe("ticket_project_mismatch");
+
+    await db.delete(projects).where(eq(projects.id, otherProj!.id));
+  });
+
+  it("rework supersedes previous pending notification draft with latest fix", async () => {
+    const { body } = await createTicket("Lifecycle App supersede");
+    const ticketId = body.ticketId;
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+
+    // Run 1: task 1 -> done creates draft 1
+    const d1 = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ projectId, ticketId, title: "Fix run 1", spec: "spec", kind: "correction" }),
+    });
+    const t1Id = ((await d1.json()) as { task: { id: string } }).task.id;
+    taskIds.push(t1Id);
+    await app.request(`/api/projects/tasks/${t1Id}/approve`, { method: "POST", headers: ownerHeaders });
+    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
+      await app.request(`/api/projects/tasks/${t1Id}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status, resultSummary: "Run 1 fix" }),
+      });
+    }
+
+    const [firstDraft] = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
+    expect(firstDraft!.body).toContain("Run 1 fix");
+
+    // Client says "still broken": reopen -> re-dispatch task 2
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "open", reason: "Still broken" }),
+    });
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+
+    const d2 = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ projectId, ticketId, title: "Fix run 2", spec: "spec", kind: "correction" }),
+    });
+    const t2Id = ((await d2.json()) as { task: { id: string } }).task.id;
+    taskIds.push(t2Id);
+    await app.request(`/api/projects/tasks/${t2Id}/approve`, { method: "POST", headers: ownerHeaders });
+    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
+      await app.request(`/api/projects/tasks/${t2Id}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status, resultSummary: "Run 2 real fix" }),
+      });
+    }
+
+    // Still only ONE pending draft, updated with Run 2 fix instead of stale Run 1!
+    const drafts = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
+    expect(drafts.length).toBe(1);
+    expect(drafts[0]!.body).toContain("Run 2 real fix");
+    await db.delete(outbox).where(eq(outbox.id, drafts[0]!.id));
+  });
+
+  it("audits failure when markDraftSent cannot sync an already closed ticket", async () => {
+    const { body } = await createTicket("Lifecycle App audit-sync");
+    const ticketId = body.ticketId;
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+    const d = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ projectId, ticketId, title: "Fix sync", spec: "spec", kind: "correction" }),
+    });
+    const tId = ((await d.json()) as { task: { id: string } }).task.id;
+    taskIds.push(tId);
+    await app.request(`/api/projects/tasks/${tId}/approve`, { method: "POST", headers: ownerHeaders });
+    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
+      await app.request(`/api/projects/tasks/${tId}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status }),
+      });
+    }
+
+    const [draft] = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
+    await app.request(`/api/outbox/${draft!.id}/review`, {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({ decision: "approved" }),
+    });
+
+    // Manually force-close the ticket before sending
+    await app.request(`/api/tickets/${ticketId}/status`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ status: "closed", reason: "Premature close" }),
+    });
+
+    // markDraftSent succeeds for the draft, but audits the sync failure (closed -> waiting_client is invalid)
+    const sent = await app.request(`/api/outbox/${draft!.id}/sent`, {
+      method: "POST",
+      headers: ownerHeaders,
+    });
+    expect(sent.status).toBe(200);
+
+    const [audit] = await db
+      .select()
+      .from(events)
+      .where(sql`${events.action} = 'draft_sent_ticket_sync_failed' AND ${events.entityId} = ${draft!.id}`);
+    expect(audit).not.toBeUndefined();
+    await db.delete(outbox).where(eq(outbox.id, draft!.id));
+  });
+
+  it("auto-resolves first-time reporter with auto-created org", async () => {
+    const freshEmail = "fresh-reporter@test.example";
+    const res = await app.request("/api/tickets", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        clientName: "Fresh Reporter",
+        companyName: "Brand New Client Corp",
+        contact: freshEmail,
+        system: "Fresh System",
+        severity: "minor",
+        kind: "support",
+        description: "Brand new client bug",
+        projectId,
+      }),
+    });
+    const body = (await res.json()) as { ticketId: string };
+    ticketIds.push(body.ticketId);
+
+    // Verify contact and org were linked
+    const [freshTicket] = await db.select().from(tickets).where(eq(tickets.id, body.ticketId));
+    expect(freshTicket!.organizationId).not.toBeNull();
+
+    await app.request(`/api/tickets/${body.ticketId}/status`, {
+      method: "PATCH",
+      headers: ownerHeaders,
+      body: JSON.stringify({ status: "in_progress" }),
+    });
+
+    const d = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ projectId, ticketId: body.ticketId, title: "Fresh fix", spec: "spec", kind: "correction" }),
+    });
+    const tId = ((await d.json()) as { task: { id: string } }).task.id;
+    taskIds.push(tId);
+    await app.request(`/api/projects/tasks/${tId}/approve`, { method: "POST", headers: ownerHeaders });
+    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
+      await app.request(`/api/projects/tasks/${tId}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status, resultSummary: "Fresh fix verified" }),
+      });
+    }
+
+    const [freshDraft] = await db.select().from(outbox).where(eq(outbox.ticketId, body.ticketId));
+    expect(freshDraft).not.toBeUndefined();
+    expect(freshDraft!.status).toBe("pending_approval");
+
+    // Clean up fresh contact and org
+    await db.delete(outbox).where(eq(outbox.id, freshDraft!.id));
+    await db.delete(contacts).where(eq(contacts.email, freshEmail));
+    await db.delete(organizations).where(eq(organizations.name, "Brand New Client Corp"));
   });
 });

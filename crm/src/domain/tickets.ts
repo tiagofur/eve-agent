@@ -4,6 +4,7 @@ import {
   tickets,
   contacts,
   organizations,
+  outbox,
   projects,
   type ticketSeverityEnum,
   type ticketStatusEnum,
@@ -118,6 +119,28 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
         .returning();
       if (newContact) {
         contactId = newContact.id;
+      }
+    }
+
+    // A first-time reporter has no org on their contact, which would make
+    // the resolution notification unaddressable. companyName (or the client
+    // name as company) resolves to an existing org or creates one — the same
+    // way lead intake does — so the auto-notification can always draft.
+    if (contactId && !organizationId) {
+      const orgName = input.companyName?.trim() || input.clientName.trim();
+      if (orgName) {
+        const [existingOrg] = await db
+          .select()
+          .from(organizations)
+          .where(sql`LOWER(${organizations.name}) = LOWER(${orgName})`)
+          .limit(1);
+        const org =
+          existingOrg ??
+          (await db.insert(organizations).values({ name: orgName }).returning())[0];
+        if (org) {
+          organizationId = org.id;
+          await db.update(contacts).set({ organizationId: org.id }).where(eq(contacts.id, contactId));
+        }
       }
     }
   }
@@ -252,6 +275,14 @@ export async function updateTicketContent(
     }
   }
 
+  // Severity/kind edits re-arm the SLA clock: a minor corrected to critical
+  // must not keep parading a 24h deadline the desk treats as truth.
+  const nextSeverity = input.severity ?? current.severity;
+  const nextKind = input.kind ?? current.kind;
+  const slaChanged =
+    (input.severity !== undefined && input.severity !== current.severity) ||
+    (input.kind !== undefined && input.kind !== current.kind);
+
   const [updated] = await db
     .update(tickets)
     .set({
@@ -260,10 +291,15 @@ export async function updateTicketContent(
       ...(input.severity !== undefined ? { severity: input.severity } : {}),
       ...(input.kind !== undefined ? { kind: input.kind } : {}),
       ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+      ...(slaChanged ? { slaDueAt: computeSlaDueAt(nextSeverity, nextKind) } : {}),
       updatedAt: new Date(),
     })
     .where(eq(tickets.id, input.ticketId))
     .returning();
+
+  if (!updated) {
+    return { success: false, code: "ticket_not_found", message: `Ticket ${input.ticketId} not found` };
+  }
 
   await logEvent({
     entity: "ticket",
@@ -278,16 +314,16 @@ export async function updateTicketContent(
       projectId: current.projectId,
     },
     after: {
-      description: updated!.description,
-      system: updated!.system,
-      severity: updated!.severity,
-      kind: updated!.kind,
-      projectId: updated!.projectId,
+      description: updated.description,
+      system: updated.system,
+      severity: updated.severity,
+      kind: updated.kind,
+      projectId: updated.projectId,
     },
     reason: input.reason || "Ticket content corrected",
   });
 
-  return { success: true, ticket: updated! };
+  return { success: true, ticket: updated };
 }
 
 /**
@@ -336,14 +372,14 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput) {
   }
 
   const isResolving = input.status === "resolved";
-  // Reopening clears the previous resolution timestamp: the ticket is back
-  // in the active queue and the old resolvedAt would be misleading.
-  const isReopening = input.status === "open";
+  // Any exit from `resolved` clears the stale resolution timestamp: a ticket
+  // back in rework must not parade a resolvedAt it no longer has.
+  const leavingResolved = from === "resolved" && !isResolving;
   const [updated] = await db
     .update(tickets)
     .set({
       status: input.status,
-      resolvedAt: isResolving ? new Date() : isReopening ? null : current.resolvedAt,
+      resolvedAt: isResolving ? new Date() : leavingResolved ? null : current.resolvedAt,
       updatedAt: new Date(),
     })
     .where(eq(tickets.id, input.ticketId))
@@ -398,49 +434,98 @@ export async function autoResolveTicketFromTask(input: {
 
   // Queue the client notification as an owner-approved draft. Requires a
   // contact AND an organization (outbox targets orgs/leads, not bare
-  // contacts); skip loudly otherwise.
-  if (!ticket.contactId || !ticket.organizationId) {
-    await logEvent({
-      entity: "ticket",
-      entityId: input.ticketId,
-      action: "client_notification_skipped",
-      actor: "system:task-done",
-      after: { reason: "ticket has no contact or no organization to address the draft" },
-    });
-    return;
-  }
+  // contacts); skip loudly otherwise. The whole phase is guarded: it runs
+  // after the task is already done, so a throw here must degrade to an
+  // audit event, never bubble into a 500 the owner cannot recover from
+  // (retrying `done` no-ops and would never re-enter this hook).
+  try {
+    if (!ticket.contactId || !ticket.organizationId) {
+      await logEvent({
+        entity: "ticket",
+        entityId: input.ticketId,
+        action: "client_notification_skipped",
+        actor: "system:task-done",
+        after: { reason: "ticket has no contact or no organization to address the draft" },
+      });
+      return;
+    }
 
-  const [contact] = await db
-    .select()
-    .from(contacts)
-    .where(eq(contacts.id, ticket.contactId))
-    .limit(1);
+    const [contact] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.id, ticket.contactId))
+      .limit(1);
 
-  const channel = contact?.email ? ("email" as const) : ("whatsapp" as const);
-  const evidence = input.prUrl ? `\n\nReferencia técnica: ${input.prUrl}` : "";
-
-  const draft = await createOutreachDraft({
-    organizationId: ticket.organizationId,
-    contactId: ticket.contactId,
-    ticketId: input.ticketId,
-    channel,
-    subject: `Resuelto: ${ticket.system}`,
-    body:
+    const channel = contact?.email ? ("email" as const) : ("whatsapp" as const);
+    const evidence = input.prUrl ? `\n\nReferencia técnica: ${input.prUrl}` : "";
+    const subject = `Resuelto: ${ticket.system}`;
+    const body =
       `Hola${contact?.name ? ` ${contact.name}` : ""},\n\n` +
       `Tu reporte sobre "${ticket.system}" fue atendido y resuelto. ` +
       `Resumen de la solución:\n${(input.resultSummary ?? input.taskTitle).slice(0, 600)}${evidence}\n\n` +
-      `Si el problema persiste, responde a este mensaje y reabrimos el caso de inmediato.`,
-    rationale: `Auto-draft: ticket ${input.ticketId} resolved by correction task "${input.taskTitle}".`,
-    actor: "system:task-done",
-  });
+      `Si el problema persiste, responde a este mensaje y reabrimos el caso de inmediato.`;
+    const rationale = `Auto-draft: ticket ${input.ticketId} resolved by correction task "${input.taskTitle}".`;
 
-  if (!draft.success) {
+    // Rework supersede: if a pending draft for this recipient still cites the
+    // PREVIOUS (failed) fix, refresh it with the latest resolution instead of
+    // skipping — the owner must review the current truth, not stale content.
+    const [pending] = await db
+      .select()
+      .from(outbox)
+      .where(
+        and(
+          eq(outbox.organizationId, ticket.organizationId),
+          eq(outbox.contactId, ticket.contactId),
+          eq(outbox.status, "pending_approval")
+        )
+      )
+      .limit(1);
+
+    if (pending) {
+      await db
+        .update(outbox)
+        .set({ ticketId: input.ticketId, subject, body, rationale, updatedAt: new Date() })
+        .where(eq(outbox.id, pending.id));
+      await logEvent({
+        entity: "outbox",
+        entityId: pending.id,
+        action: "draft_refreshed",
+        actor: "system:task-done",
+        after: { reason: `Superseded by newer resolution of ticket ${input.ticketId}` },
+      });
+      return;
+    }
+
+    const draft = await createOutreachDraft({
+      organizationId: ticket.organizationId,
+      contactId: ticket.contactId,
+      ticketId: input.ticketId,
+      channel,
+      subject,
+      body,
+      rationale,
+      actor: "system:task-done",
+    });
+
+    if (!draft.success) {
+      await logEvent({
+        entity: "ticket",
+        entityId: input.ticketId,
+        action: "client_notification_skipped",
+        actor: "system:task-done",
+        after: { reason: draft.message, code: draft.code },
+      });
+    }
+  } catch (err) {
     await logEvent({
       entity: "ticket",
       entityId: input.ticketId,
-      action: "client_notification_skipped",
+      action: "client_notification_failed",
       actor: "system:task-done",
-      after: { reason: draft.message, code: draft.code },
-    });
+      after: {
+        linkedTask: input.taskTitle,
+        error: err instanceof Error ? err.message : "unknown error",
+      },
+    }).catch(() => {});
   }
 }

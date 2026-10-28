@@ -56,7 +56,7 @@ const STATUS_LABELS: Record<string, { label: string; badge: string }> = {
   },
   closed: {
     label: "Rejected / Closed",
-    badge: "bg-zinc-850 text-zinc-400 border border-zinc-700",
+    badge: "bg-zinc-900 text-zinc-400 border border-zinc-700",
   },
 };
 
@@ -101,6 +101,8 @@ export const TicketsView: React.FC = () => {
 
   useEffect(() => {
     fetchTickets();
+    const timer = setInterval(fetchTickets, 15000);
+    return () => clearInterval(timer);
   }, []);
 
   const openTicketDrawer = async (ticketId: string) => {
@@ -839,7 +841,7 @@ export const TicketsView: React.FC = () => {
                   disabled={submittingAction}
                   className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition disabled:opacity-50"
                 >
-                  {submittingAction ? "Guardando..." : "Confirmar Rechazo y Notificar"}
+                  {submittingAction ? "Guardando..." : "Confirmar Rechazo"}
                 </button>
               </div>
             </form>

@@ -313,7 +313,7 @@ export const outbox = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("outbox_status_idx").on(t.status)],
+  (t) => [index("outbox_status_idx").on(t.status), index("outbox_ticket_idx").on(t.ticketId)],
 );
 
 /* ------------------------------------------------------------------ */
