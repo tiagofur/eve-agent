@@ -203,13 +203,20 @@ publicChatRouter.post(
         .from(chatThreads)
         .where(eq(chatThreads.id, threadId))
         .limit(1);
-      if (!existing) return c.json({ error: "Conversación no encontrada" }, 404);
-      // This route only serves its own public threads: a staff thread id
-      // (telegram/desktop) must never be continued by an anonymous visitor.
-      if (!existing.externalKey?.startsWith(PUBLIC_KEY_PREFIX)) {
-        return c.json({ error: "Conversación no encontrada" }, 404);
+      if (existing) {
+        // This route only serves its own public threads: a staff thread id
+        // (telegram/desktop) must never be continued by an anonymous visitor.
+        if (!existing.externalKey?.startsWith(PUBLIC_KEY_PREFIX)) {
+          return c.json({ error: "Conversación no encontrada" }, 404);
+        }
+      } else {
+        // Stale or expired thread in visitor's sessionStorage (e.g. past DB reset).
+        // Fall back to creating a new thread so the visitor recovers seamlessly.
+        threadId = undefined;
       }
-    } else {
+    }
+
+    if (!threadId) {
       const [created] = await db
         .insert(chatThreads)
         .values({
