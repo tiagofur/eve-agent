@@ -75,6 +75,34 @@ outboxRouter.get("/pending", requireScope(["ops"]), async (c) => {
   return c.json({ drafts: pending });
 });
 
+// List approved drafts awaiting manual send (the copy-paste queue): includes
+// the originating ticket so the owner knows what each notification closes.
+outboxRouter.get("/approved", requireScope(["ops"]), async (c) => {
+  const approved = await db
+    .select({
+      id: outbox.id,
+      ticketId: outbox.ticketId,
+      contactId: outbox.contactId,
+      channel: outbox.channel,
+      subject: outbox.subject,
+      body: outbox.body,
+      status: outbox.status,
+      approvedAt: outbox.approvedAt,
+      createdBy: outbox.createdBy,
+      contactName: contacts.name,
+      contactEmail: contacts.email,
+      contactPhone: contacts.phone,
+      organizationName: organizations.name,
+    })
+    .from(outbox)
+    .leftJoin(contacts, eq(outbox.contactId, contacts.id))
+    .leftJoin(organizations, eq(outbox.organizationId, organizations.id))
+    .where(eq(outbox.status, "approved"))
+    .orderBy(desc(outbox.approvedAt));
+
+  return c.json({ drafts: approved });
+});
+
 // Review draft: APPROVE or REJECT (owner scope required!)
 outboxRouter.post(
   "/:id/review",

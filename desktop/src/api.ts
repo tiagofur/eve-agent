@@ -101,8 +101,25 @@ export interface TicketItem {
   createdAt: string;
   contactName: string | null;
   contactEmail: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
   nextFollowUpAt?: string | null;
   followUpNote?: string | null;
+}
+
+/** Task row from GET /api/projects/:id/tasks — every status, for project history. */
+export interface ProjectTaskHistoryItem {
+  id: string;
+  milestoneId: string | null;
+  ticketId: string | null;
+  title: string;
+  spec: string | null;
+  status: string;
+  assignee: string | null;
+  prUrl: string | null;
+  resultSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface FolderCheckData {
@@ -266,6 +283,8 @@ export interface TicketDetailsResponse {
     contactPhone: string | null;
   };
   timeline: TimelineEvent[];
+  /** Correction tasks linked to this ticket (newest first). */
+  tasks?: ProjectTaskHistoryItem[];
 }
 
 export const crmApi = {
@@ -307,9 +326,47 @@ export const crmApi = {
       method: "POST",
       body: JSON.stringify({ decision, rejectedReason }),
     }),
-  getTickets: () => request<{ tickets: TicketItem[] }>("/api/tickets"),
+  getTickets: (status?: string) =>
+    request<{ tickets: TicketItem[] }>(
+      `/api/tickets${status ? `?status=${encodeURIComponent(status)}` : ""}`
+    ),
   getTicketDetails: (ticketId: string) =>
     request<TicketDetailsResponse>(`/api/tickets/${ticketId}/details`),
+  updateTicketContent: (
+    ticketId: string,
+    data: {
+      description?: string;
+      system?: string;
+      severity?: "critical" | "major" | "minor";
+      kind?: "support" | "info";
+      reason?: string;
+    }
+  ) =>
+    request<{ success: boolean }>(`/api/tickets/${ticketId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  markOutboxSent: (draftId: string) =>
+    request<{ success: boolean }>(`/api/outbox/${draftId}/sent`, {
+      method: "POST",
+    }),
+  getApprovedDrafts: () =>
+    request<{
+      drafts: Array<{
+        id: string;
+        ticketId: string | null;
+        contactId: string | null;
+        channel: string;
+        subject: string | null;
+        body: string;
+        approvedAt: string | null;
+        createdBy: string;
+        contactName: string | null;
+        contactEmail: string | null;
+        contactPhone: string | null;
+        organizationName: string | null;
+      }>;
+    }>("/api/outbox/approved"),
   setLeadFollowUp: (leadId: string, nextFollowUpAt: string | null, followUpNote?: string) =>
     request<{ success: boolean }>(`/api/leads/${leadId}/followup`, {
       method: "PATCH",
@@ -364,6 +421,8 @@ export const crmApi = {
   getReadyTasks: () => request<{ tasks: TaskItem[] }>("/api/projects/tasks/ready"),
   getPipelineTasks: () =>
     request<{ tasks: PipelineTaskItem[] }>("/api/projects/tasks/pipeline"),
+  getProjectTasks: (projectId: string) =>
+    request<{ tasks: ProjectTaskHistoryItem[] }>(`/api/projects/${projectId}/tasks`),
   createCorrectionTask: (data: {
     projectId: string;
     title: string;

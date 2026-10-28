@@ -16,6 +16,7 @@ import {
   Ban,
   History,
   FileText,
+  Terminal,
 } from "lucide-react";
 
 const SEVERITY_CONFIG: Record<
@@ -78,6 +79,11 @@ export const TicketsView: React.FC = () => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [clientExplanation, setClientExplanation] = useState("");
+
+  // Resolve modal state (internal note + client-facing explanation)
+  const [showResolveModal, setShowResolveModal] = useState(false);
+  const [resolveNote, setResolveNote] = useState("");
+  const [resolveClientMsg, setResolveClientMsg] = useState("");
   const [submittingAction, setSubmittingAction] = useState(false);
 
   const fetchTickets = async () => {
@@ -115,6 +121,7 @@ export const TicketsView: React.FC = () => {
     setActiveTicketId(null);
     setTicketDetails(null);
     setShowRejectModal(false);
+    setShowResolveModal(false);
   };
 
   const handleApproveTicket = async (ticketId: string) => {
@@ -162,20 +169,80 @@ export const TicketsView: React.FC = () => {
     }
   };
 
-  const handleResolveTicket = async (ticketId: string) => {
+  const handleResolveTicket = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTicketId) return;
+
     try {
       setSubmittingAction(true);
       await crmApi.updateTicketStatus(
-        ticketId,
+        activeTicketId,
         "resolved",
-        "Incidente resuelto satisfactoriamente por el equipo"
+        resolveNote || "Incidente resuelto satisfactoriamente por el equipo",
+        resolveClientMsg || undefined
       );
       setActionSuccess("Ticket marcado como Resuelto con éxito.");
-      openTicketDrawer(ticketId);
+      setShowResolveModal(false);
+      setResolveNote("");
+      setResolveClientMsg("");
+      openTicketDrawer(activeTicketId);
       fetchTickets();
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
       alert(`Error resolving ticket: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleEditDescription = async (ticketId: string, current: string) => {
+    const next = window.prompt(
+      "Corrige la descripción del problema (qué pasa, esperado, impacto, pasos):",
+      current
+    );
+    if (next === null || next.trim() === current.trim()) return;
+    try {
+      setSubmittingAction(true);
+      await crmApi.updateTicketContent(ticketId, {
+        description: next.trim(),
+        reason: "Descripción corregida desde el drawer del ticket",
+      });
+      setActionSuccess("Descripción del ticket corregida.");
+      openTicketDrawer(ticketId);
+      fetchTickets();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      alert(`Error editando el ticket: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleReopenTicket = async (ticketId: string) => {
+    try {
+      setSubmittingAction(true);
+      await crmApi.updateTicketStatus(ticketId, "open", "Reabierto por el owner");
+      setActionSuccess("Ticket reabierto (pendiente de triage).");
+      openTicketDrawer(ticketId);
+      fetchTickets();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      alert(`Error reabriendo el ticket: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleCloseConfirmed = async (ticketId: string) => {
+    try {
+      setSubmittingAction(true);
+      await crmApi.updateTicketStatus(ticketId, "closed", "Cliente confirmó la solución");
+      setActionSuccess("Ticket cerrado tras confirmación del cliente.");
+      openTicketDrawer(ticketId);
+      fetchTickets();
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err: any) {
+      alert(`Error cerrando el ticket: ${err.message}`);
     } finally {
       setSubmittingAction(false);
     }
@@ -308,6 +375,7 @@ export const TicketsView: React.FC = () => {
             <option value="all">All Statuses</option>
             <option value="open">Pending Review</option>
             <option value="in_progress">In Progress</option>
+            <option value="waiting_client">Waiting Client</option>
             <option value="resolved">Resolved</option>
             <option value="closed">Closed / Rejected</option>
           </select>
@@ -547,11 +615,67 @@ export const TicketsView: React.FC = () => {
                   <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-2">
                     <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-indigo-400" /> Issue Description
+                      <button
+                        onClick={() =>
+                          handleEditDescription(
+                            ticketDetails.ticket.id,
+                            ticketDetails.ticket.description
+                          )
+                        }
+                        disabled={submittingAction}
+                        className="ml-auto text-[11px] font-medium text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+                      >
+                        Editar
+                      </button>
                     </h4>
                     <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800/80 text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed">
                       {ticketDetails.ticket.description}
                     </div>
                   </div>
+
+                  {/* Linked correction tasks */}
+                  {ticketDetails.tasks && ticketDetails.tasks.length > 0 && (
+                    <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-2">
+                      <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                        <Terminal className="w-3.5 h-3.5 text-indigo-400" /> Correcciones vinculadas
+                      </h4>
+                      {ticketDetails.tasks.map((t) => (
+                        <div
+                          key={t.id}
+                          className="bg-zinc-950 border border-zinc-800/80 rounded-lg p-3 space-y-1"
+                        >
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-950 text-indigo-300 border border-indigo-800">
+                              {t.status}
+                            </span>
+                            <span className="text-xs text-zinc-200 font-medium flex-1 min-w-0 truncate">
+                              {t.title}
+                            </span>
+                            {t.prUrl && (
+                              <a
+                                href={t.prUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] text-cyan-400 hover:underline"
+                              >
+                                PR
+                              </a>
+                            )}
+                          </div>
+                          {t.resultSummary && (
+                            <details>
+                              <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">
+                                Reporte del agente
+                              </summary>
+                              <pre className="mt-1 text-[10px] text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">
+                                {t.resultSummary}
+                              </pre>
+                            </details>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Audit Timeline */}
                   <div className="space-y-3">
@@ -613,7 +737,7 @@ export const TicketsView: React.FC = () => {
 
                   {ticketDetails.ticket.status === "in_progress" && (
                     <button
-                      onClick={() => handleResolveTicket(ticketDetails.ticket.id)}
+                      onClick={() => setShowResolveModal(true)}
                       disabled={submittingAction}
                       className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-lg transition shadow-md disabled:opacity-50"
                     >
@@ -621,10 +745,38 @@ export const TicketsView: React.FC = () => {
                     </button>
                   )}
 
+                  {ticketDetails.ticket.status === "waiting_client" && (
+                    <>
+                      <button
+                        onClick={() => handleCloseConfirmed(ticketDetails.ticket.id)}
+                        disabled={submittingAction}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-lg transition shadow-md disabled:opacity-50"
+                      >
+                        <Check className="w-4 h-4" /> Cliente confirmó: Cerrar
+                      </button>
+                      <button
+                        onClick={() => handleReopenTicket(ticketDetails.ticket.id)}
+                        disabled={submittingAction}
+                        className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+                      >
+                        <RefreshCw className="w-4 h-4" /> Persiste: Reabrir atención
+                      </button>
+                    </>
+                  )}
+
                   {(ticketDetails.ticket.status === "resolved" ||
                     ticketDetails.ticket.status === "closed") && (
-                    <div className="w-full text-center text-xs text-zinc-500 py-1">
-                      Este ticket está finalizado ({ticketDetails.ticket.status}).
+                    <div className="w-full flex items-center gap-2">
+                      <span className="flex-1 text-center text-xs text-zinc-500 py-1">
+                        Finalizado ({ticketDetails.ticket.status}).
+                      </span>
+                      <button
+                        onClick={() => handleReopenTicket(ticketDetails.ticket.id)}
+                        disabled={submittingAction}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Reabrir
+                      </button>
                     </div>
                   )}
                 </div>
@@ -688,6 +840,65 @@ export const TicketsView: React.FC = () => {
                   className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition disabled:opacity-50"
                 >
                   {submittingAction ? "Guardando..." : "Confirmar Rechazo y Notificar"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Resolve Ticket Modal: internal note + client-facing explanation */}
+      {showResolveModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-lg w-full shadow-2xl">
+            <h3 className="text-lg font-semibold text-white mb-1">Marcar como Resuelto</h3>
+            <p className="text-xs text-zinc-400 mb-4">
+              Nota interna para el historial y explicación que verá el cliente. Si este ticket tiene
+              una corrección vinculada, al marcarla «done» el CRM ya genera el borrador de
+              notificación (Outbox) — este modal es para resoluciones manuales.
+            </p>
+
+            <form onSubmit={handleResolveTicket} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Nota interna de resolución
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sesión expirada no invalidaba el token: parche aplicado y verificado"
+                  value={resolveNote}
+                  onChange={(e) => setResolveNote(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1">
+                  Explicación para el cliente (opcional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Se corrigió el fallo de login al expirar la sesión. Ya puedes volver a ingresar con normalidad."
+                  value={resolveClientMsg}
+                  onChange={(e) => setResolveClientMsg(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowResolveModal(false)}
+                  disabled={submittingAction}
+                  className="flex-1 px-4 py-2 text-xs font-semibold text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAction}
+                  className="flex-1 px-4 py-2 text-xs font-semibold text-black bg-emerald-500 hover:bg-emerald-400 rounded-lg transition disabled:opacity-50"
+                >
+                  {submittingAction ? "Guardando..." : "Confirmar Resolución"}
                 </button>
               </div>
             </form>
