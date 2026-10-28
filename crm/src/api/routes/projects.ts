@@ -162,6 +162,7 @@ projectsRouter.post(
     z.object({
       projectId: z.string().uuid(),
       milestoneId: z.string().uuid().optional(),
+      ticketId: z.string().uuid().optional(),
       title: z.string().min(1),
       spec: z.string().min(1).describe("Detailed acceptance criteria, affected files, tests"),
       assignee: z.string().default("gentle-shell"),
@@ -178,7 +179,12 @@ projectsRouter.post(
     });
 
     if (!task.success) {
-      const status = task.code === "project_not_found" ? 404 : 400;
+      const status =
+        task.code === "project_not_found" ||
+        task.code === "ticket_not_found" ||
+        task.code === "milestone_not_found"
+          ? 404
+          : 400;
       return c.json({ error: task.message, code: task.code }, status as 400);
     }
 
@@ -203,6 +209,7 @@ projectsRouter.get(
       .select({
         id: tasks.id,
         milestoneId: tasks.milestoneId,
+        ticketId: tasks.ticketId,
         title: tasks.title,
         spec: tasks.spec,
         status: tasks.status,

@@ -296,6 +296,9 @@ export const outbox = pgTable(
     // contact is verified; approval is blocked until a contact is resolved.
     contactId: uuid("contact_id")
       .references(() => contacts.id, { onDelete: "cascade" }),
+    // When the draft notifies a client about a support ticket (e.g. the
+    // automatic resolution notice), marks which ticket it belongs to.
+    ticketId: uuid("ticket_id").references(() => tickets.id, { onDelete: "set null" }),
     channel: channelEnum("channel").notNull(),
     subject: text("subject"),
     body: text("body").notNull(),
@@ -378,10 +381,14 @@ export const tasks = pgTable(
     // Correction = fix requested on an existing app (HITL approval flow);
     // feature = regular delivery task (backlog/ready pipeline).
     kind: taskKindEnum("kind").notNull().default("feature"),
+    // Originating support ticket for corrections: ties the fix back to the
+    // client incident so the ticket auto-resolves when the task completes
+    // and the client notification references this work.
+    ticketId: uuid("ticket_id").references(() => tickets.id, { onDelete: "set null" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("tasks_status_idx").on(t.status)],
+  (t) => [index("tasks_status_idx").on(t.status), index("tasks_ticket_idx").on(t.ticketId)],
 );
 
 /**

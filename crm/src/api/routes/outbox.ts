@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import { db } from "../../db/client";
 import { outbox, contacts, leads, organizations } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
-import { createOutreachDraft, reviewOutreachDraft } from "../../domain/outbox";
+import { createOutreachDraft, reviewOutreachDraft, markDraftSent } from "../../domain/outbox";
 
 export const outboxRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -19,6 +19,7 @@ outboxRouter.post(
       leadId: z.string().uuid().optional(),
       organizationId: z.string().uuid().optional(),
       contactId: z.string().uuid().optional(),
+      ticketId: z.string().uuid().optional(),
       channel: z.enum(["email", "linkedin", "whatsapp", "phone", "telegram", "web", "other"]),
       subject: z.string().optional(),
       body: z.string().min(1),
@@ -104,3 +105,20 @@ outboxRouter.post(
     return c.json({ success: true, draft: result.draft });
   }
 );
+
+// Confirm an approved draft was physically sent (owner). Logs the outbound
+// interaction automatically; ticket-linked drafts move their ticket to
+// waiting_client (resolution notified, awaiting client confirmation).
+outboxRouter.post("/:id/sent", requireScope(["owner"]), async (c) => {
+  const draftId = c.req.param("id")!;
+  const actor = c.get("actor")!;
+
+  const result = await markDraftSent({ draftId, actor });
+
+  if (!result.success) {
+    const status = result.code === "draft_not_found" ? 404 : 400;
+    return c.json({ error: result.message, code: result.code }, status as 400);
+  }
+
+  return c.json({ success: true, draft: result.draft });
+});
