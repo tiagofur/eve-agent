@@ -1,8 +1,18 @@
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { tickets, contacts, organizations, type ticketSeverityEnum, type ticketStatusEnum, type ticketKindEnum } from "../db/schema";
+import {
+  tickets,
+  contacts,
+  organizations,
+  outbox,
+  projects,
+  type ticketSeverityEnum,
+  type ticketStatusEnum,
+  type ticketKindEnum,
+} from "../db/schema";
 import { logEvent } from "./events";
-import { notifyCriticalTicketCreated } from "../services/telegram";
+import { notifySupportTicketCreated } from "../services/telegram";
+import { createOutreachDraft } from "./outbox";
 
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
@@ -21,6 +31,8 @@ export interface CreateTicketInput {
   severity?: TicketSeverity;
   kind?: TicketKind;
   description: string;
+  /** Affected client project, when known. Validated to exist when provided. */
+  projectId?: string;
   actor: string;
 }
 
@@ -62,9 +74,29 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
 
   const slaDueAt = computeSlaDueAt(severity, kind);
 
+  // 0. Optional project link: reject ghost projects loudly (S1) instead of
+  // silently dropping the linkage or failing on the FK at insert time.
+  let linkedProjectId: string | undefined;
+  if (input.projectId) {
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, input.projectId))
+      .limit(1);
+    if (!project) {
+      return {
+        success: false,
+        code: "project_not_found",
+        message: `Project ${input.projectId} not found`,
+      };
+    }
+    linkedProjectId = input.projectId;
+  }
+
   // 1. Resolve contact/org if possible
   const isEmail = !!rawContact && rawContact.includes("@");
   let contactId: string | undefined = undefined;
+  let organizationId: string | undefined = undefined;
 
   if (rawContact) {
     const [existingContact] = await db
@@ -75,6 +107,7 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
 
     if (existingContact) {
       contactId = existingContact.id;
+      organizationId = existingContact.organizationId ?? undefined;
     } else {
       const [newContact] = await db
         .insert(contacts)
@@ -86,6 +119,28 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
         .returning();
       if (newContact) {
         contactId = newContact.id;
+      }
+    }
+
+    // A first-time reporter has no org on their contact, which would make
+    // the resolution notification unaddressable. companyName (or the client
+    // name as company) resolves to an existing org or creates one — the same
+    // way lead intake does — so the auto-notification can always draft.
+    if (contactId && !organizationId) {
+      const orgName = input.companyName?.trim() || input.clientName.trim();
+      if (orgName) {
+        const [existingOrg] = await db
+          .select()
+          .from(organizations)
+          .where(sql`LOWER(${organizations.name}) = LOWER(${orgName})`)
+          .limit(1);
+        const org =
+          existingOrg ??
+          (await db.insert(organizations).values({ name: orgName }).returning())[0];
+        if (org) {
+          organizationId = org.id;
+          await db.update(contacts).set({ organizationId: org.id }).where(eq(contacts.id, contactId));
+        }
       }
     }
   }
@@ -131,6 +186,8 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
     .insert(tickets)
     .values({
       contactId,
+      organizationId,
+      projectId: linkedProjectId,
       kind,
       system: input.system,
       severity,
@@ -158,9 +215,11 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
     reason: input.description,
   });
 
-  // Only support incidents page the owner; info requests wait in the queue.
-  if (kind === "support" && (severity === "critical" || severity === "major")) {
-    notifyCriticalTicketCreated(ticket.id).catch((err) =>
+  // Every support incident pages the owner for triage (approve/reject);
+  // critical and major carry SLA urgency in the message. Info requests
+  // wait in the queue without paging.
+  if (kind === "support") {
+    notifySupportTicketCreated(ticket.id).catch((err) =>
       console.error("Failed to dispatch telegram ticket alert:", err)
     );
   }
@@ -171,6 +230,115 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
     slaHours: kind === "info" ? 24 : severity === "critical" ? 1 : severity === "major" ? 4 : 24,
   };
 }
+
+export interface UpdateTicketContentInput {
+  ticketId: string;
+  /** Corrected/expanded problem statement. The audit event keeps before/after. */
+  description?: string;
+  system?: string;
+  severity?: TicketSeverity;
+  kind?: TicketKind;
+  projectId?: string | null;
+  actor: string;
+  reason?: string;
+}
+
+export type UpdateTicketContentResult =
+  | { success: true; ticket: typeof tickets.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/**
+ * Edit a ticket's content (description, system, severity, kind, project).
+ * This is the correction path for tickets logged with vague or wrong data:
+ * fixing the record beats superseding it with a new ticket.
+ */
+export async function updateTicketContent(
+  input: UpdateTicketContentInput
+): Promise<UpdateTicketContentResult> {
+  const [current] = await db.select().from(tickets).where(eq(tickets.id, input.ticketId)).limit(1);
+  if (!current) {
+    return { success: false, code: "ticket_not_found", message: `Ticket ${input.ticketId} not found` };
+  }
+
+  if (input.projectId) {
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.id, input.projectId))
+      .limit(1);
+    if (!project) {
+      return {
+        success: false,
+        code: "project_not_found",
+        message: `Project ${input.projectId} not found`,
+      };
+    }
+  }
+
+  // Severity/kind edits re-arm the SLA clock: a minor corrected to critical
+  // must not keep parading a 24h deadline the desk treats as truth.
+  const nextSeverity = input.severity ?? current.severity;
+  const nextKind = input.kind ?? current.kind;
+  const slaChanged =
+    (input.severity !== undefined && input.severity !== current.severity) ||
+    (input.kind !== undefined && input.kind !== current.kind);
+
+  const [updated] = await db
+    .update(tickets)
+    .set({
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.system !== undefined ? { system: input.system } : {}),
+      ...(input.severity !== undefined ? { severity: input.severity } : {}),
+      ...(input.kind !== undefined ? { kind: input.kind } : {}),
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
+      ...(slaChanged ? { slaDueAt: computeSlaDueAt(nextSeverity, nextKind) } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(tickets.id, input.ticketId))
+    .returning();
+
+  if (!updated) {
+    return { success: false, code: "ticket_not_found", message: `Ticket ${input.ticketId} not found` };
+  }
+
+  await logEvent({
+    entity: "ticket",
+    entityId: input.ticketId,
+    action: "ticket_updated",
+    actor: input.actor,
+    before: {
+      description: current.description,
+      system: current.system,
+      severity: current.severity,
+      kind: current.kind,
+      projectId: current.projectId,
+    },
+    after: {
+      description: updated.description,
+      system: updated.system,
+      severity: updated.severity,
+      kind: updated.kind,
+      projectId: updated.projectId,
+    },
+    reason: input.reason || "Ticket content corrected",
+  });
+
+  return { success: true, ticket: updated };
+}
+
+/**
+ * Ticket lifecycle machine. `open` is triage: it can only start work
+ * (in_progress) or be rejected (closed). Reopening goes through `open`.
+ * resolved → waiting_client happens when the resolution notification
+ * reaches the client; resolved → in_progress covers rework dispatches.
+ */
+const TICKET_MACHINE: Record<TicketStatus, TicketStatus[]> = {
+  open: ["in_progress", "closed"],
+  in_progress: ["waiting_client", "resolved", "closed", "open"],
+  waiting_client: ["resolved", "in_progress", "closed", "open"],
+  resolved: ["closed", "open", "in_progress", "waiting_client"],
+  closed: ["open"],
+};
 
 export interface UpdateTicketStatusInput {
   ticketId: string;
@@ -191,12 +359,27 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput) {
     return { success: false, message: "Ticket not found", code: "NOT_FOUND" as const };
   }
 
+  const from = current.status;
+  if (from === input.status) {
+    return { success: true, ticket: current };
+  }
+  if (!TICKET_MACHINE[from].includes(input.status)) {
+    return {
+      success: false,
+      code: "invalid_transition",
+      message: `Invalid ticket transition: ${from} → ${input.status}`,
+    };
+  }
+
   const isResolving = input.status === "resolved";
+  // Any exit from `resolved` clears the stale resolution timestamp: a ticket
+  // back in rework must not parade a resolvedAt it no longer has.
+  const leavingResolved = from === "resolved" && !isResolving;
   const [updated] = await db
     .update(tickets)
     .set({
       status: input.status,
-      resolvedAt: isResolving ? new Date() : current.resolvedAt,
+      resolvedAt: isResolving ? new Date() : leavingResolved ? null : current.resolvedAt,
       updatedAt: new Date(),
     })
     .where(eq(tickets.id, input.ticketId))
@@ -213,4 +396,136 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput) {
   });
 
   return { success: true, ticket: updated };
+}
+
+/**
+ * System hook called when a correction task linked to a ticket moves to
+ * `done`: resolves the ticket (ITIL: fix applied) and queues a
+ * pending_approval outbox draft so the owner can notify the client through
+ * their channel. Draft failures never block the resolution — they are
+ * audited and surfaced to the owner instead.
+ */
+export async function autoResolveTicketFromTask(input: {
+  ticketId: string;
+  taskTitle: string;
+  resultSummary: string | null;
+  prUrl: string | null;
+}): Promise<void> {
+  const [ticket] = await db.select().from(tickets).where(eq(tickets.id, input.ticketId)).limit(1);
+  if (!ticket || ticket.status === "resolved" || ticket.status === "closed") return;
+
+  const resolution = await updateTicketStatus({
+    ticketId: input.ticketId,
+    status: "resolved",
+    actor: "system:task-done",
+    reason: `Correction task completed: ${input.taskTitle}`,
+  });
+
+  if (!resolution.success) {
+    await logEvent({
+      entity: "ticket",
+      entityId: input.ticketId,
+      action: "ticket_auto_resolve_failed",
+      actor: "system:task-done",
+      after: { linkedTask: input.taskTitle, error: resolution.message },
+    });
+    return;
+  }
+
+  // Queue the client notification as an owner-approved draft. Requires a
+  // contact AND an organization (outbox targets orgs/leads, not bare
+  // contacts); skip loudly otherwise. The whole phase is guarded: it runs
+  // after the task is already done, so a throw here must degrade to an
+  // audit event, never bubble into a 500 the owner cannot recover from
+  // (retrying `done` no-ops and would never re-enter this hook).
+  try {
+    if (!ticket.contactId || !ticket.organizationId) {
+      await logEvent({
+        entity: "ticket",
+        entityId: input.ticketId,
+        action: "client_notification_skipped",
+        actor: "system:task-done",
+        after: { reason: "ticket has no contact or no organization to address the draft" },
+      });
+      return;
+    }
+
+    const [contact] = await db
+      .select()
+      .from(contacts)
+      .where(eq(contacts.id, ticket.contactId))
+      .limit(1);
+
+    const channel = contact?.email ? ("email" as const) : ("whatsapp" as const);
+    const evidence = input.prUrl ? `\n\nReferencia técnica: ${input.prUrl}` : "";
+    const subject = `Resuelto: ${ticket.system}`;
+    const body =
+      `Hola${contact?.name ? ` ${contact.name}` : ""},\n\n` +
+      `Tu reporte sobre "${ticket.system}" fue atendido y resuelto. ` +
+      `Resumen de la solución:\n${(input.resultSummary ?? input.taskTitle).slice(0, 600)}${evidence}\n\n` +
+      `Si el problema persiste, responde a este mensaje y reabrimos el caso de inmediato.`;
+    const rationale = `Auto-draft: ticket ${input.ticketId} resolved by correction task "${input.taskTitle}".`;
+
+    // Rework supersede: if a pending draft for this recipient still cites the
+    // PREVIOUS (failed) fix, refresh it with the latest resolution instead of
+    // skipping — the owner must review the current truth, not stale content.
+    const [pending] = await db
+      .select()
+      .from(outbox)
+      .where(
+        and(
+          eq(outbox.organizationId, ticket.organizationId),
+          eq(outbox.contactId, ticket.contactId),
+          eq(outbox.status, "pending_approval")
+        )
+      )
+      .limit(1);
+
+    if (pending) {
+      await db
+        .update(outbox)
+        .set({ ticketId: input.ticketId, subject, body, rationale, updatedAt: new Date() })
+        .where(eq(outbox.id, pending.id));
+      await logEvent({
+        entity: "outbox",
+        entityId: pending.id,
+        action: "draft_refreshed",
+        actor: "system:task-done",
+        after: { reason: `Superseded by newer resolution of ticket ${input.ticketId}` },
+      });
+      return;
+    }
+
+    const draft = await createOutreachDraft({
+      organizationId: ticket.organizationId,
+      contactId: ticket.contactId,
+      ticketId: input.ticketId,
+      channel,
+      subject,
+      body,
+      rationale,
+      actor: "system:task-done",
+    });
+
+    if (!draft.success) {
+      await logEvent({
+        entity: "ticket",
+        entityId: input.ticketId,
+        action: "client_notification_skipped",
+        actor: "system:task-done",
+        after: { reason: draft.message, code: draft.code },
+      });
+    }
+  } catch (err) {
+    await logEvent({
+      entity: "ticket",
+      entityId: input.ticketId,
+      action: "client_notification_failed",
+      actor: "system:task-done",
+      after: {
+        linkedTask: input.taskTitle,
+        error: err instanceof Error ? err.message : "unknown error",
+      },
+    }).catch(() => {});
+  }
 }

@@ -238,14 +238,39 @@ export async function notifyOutboxDraftCreated(draftId: string) {
   return await sendTelegramMessage(text, keyboard, "HTML");
 }
 
-export async function notifyCriticalTicketCreated(ticketId: string) {
+// Ticket-page throttle: ticket creation is front-scoped (reachable through
+// the public chat), so a flooding reporter must not be able to page the
+// owner's Telegram at will. Window-bounded per contact; overflow is dropped
+// (the ticket still exists — only the page is suppressed).
+const TICKET_PAGE_WINDOW_MS = 10 * 60 * 1000;
+const TICKET_PAGE_MAX = 3;
+const ticketPagesByContact = new Map<string, number[]>();
+
+function shouldPageTicket(contactId: string | null): boolean {
+  const key = contactId ?? "anonymous";
+  const now = Date.now();
+  const recent = (ticketPagesByContact.get(key) ?? []).filter(
+    (t) => now - t < TICKET_PAGE_WINDOW_MS
+  );
+  if (recent.length >= TICKET_PAGE_MAX) {
+    ticketPagesByContact.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  ticketPagesByContact.set(key, recent);
+  return true;
+}
+
+export async function notifySupportTicketCreated(ticketId: string) {
   const [ticket] = await db
     .select({
       id: tickets.id,
+      kind: tickets.kind,
       severity: tickets.severity,
       system: tickets.system,
       description: tickets.description,
       slaDueAt: tickets.slaDueAt,
+      contactId: tickets.contactId,
       contactName: contacts.name,
       contactEmail: contacts.email,
     })
@@ -256,8 +281,17 @@ export async function notifyCriticalTicketCreated(ticketId: string) {
 
   if (!ticket) return;
 
-  const text = `🚨 <b>INCIDENTE DE SOPORTE (${ticket.severity.toUpperCase()})</b>
-<i>Contrato SLA Activo</i>
+  // Critical incidents always page; everything else respects the throttle.
+  const urgent = ticket.severity === "critical" || ticket.severity === "major";
+  if (!urgent && !shouldPageTicket(ticket.contactId)) {
+    console.log(`[telegram] ticket ${ticketId} page suppressed (contact throttle)`);
+    return;
+  }
+  const header = urgent
+    ? `🚨 <b>INCIDENTE DE SOPORTE (${ticket.severity.toUpperCase()})</b>\n<i>Contrato SLA Activo — acción inmediata requerida</i>`
+    : `🎫 <b>Ticket de soporte (${ticket.severity.toUpperCase()})</b>\n<i>Requiere tu aprobación para iniciar atención</i>`;
+
+  const text = `${header}
 
 <b>Cliente:</b> ${escapeHtml(ticket.contactName || "Cliente")} (${escapeHtml(ticket.contactEmail || "N/A")})
 <b>Sistema Afectado:</b> <code>${escapeHtml(ticket.system)}</code>
@@ -265,13 +299,14 @@ export async function notifyCriticalTicketCreated(ticketId: string) {
 <b>Detalle:</b>
 <pre>${escapeHtml(ticket.description)}</pre>
 
-Acción inmediata requerida:`;
+Aprobar inicia la atención; el agente solo podrá despachar la corrección una vez aprobado:`;
 
   const keyboard = [
     [
-      { text: "⚡ En Progreso", callback_data: `progress_ticket:${ticket.id}` },
+      { text: "⚡ Aprobar (En Progreso)", callback_data: `progress_ticket:${ticket.id}` },
       { text: "✅ Resolver", callback_data: `resolve_ticket:${ticket.id}` },
     ],
+    [{ text: "🚫 Rechazar (Fuera de alcance)", callback_data: `reject_ticket:${ticket.id}` }],
   ];
 
   return await sendTelegramMessage(text, keyboard, "HTML");
@@ -503,6 +538,24 @@ export async function startTelegramPolling() {
                     msg.message_id,
                     msg.chat.id,
                     `${msg.text}\n\n✅ *Resuelto vía Telegram a las ${new Date().toLocaleTimeString()}*`
+                  );
+                }
+              } else if (cqData.startsWith("reject_ticket:")) {
+                const ticketId = cqData.replace("reject_ticket:", "");
+                const result = await updateTicketStatus({
+                  ticketId,
+                  status: "closed",
+                  reason: "Rechazado desde Telegram (fuera de alcance)",
+                  actor: "telegram_admin",
+                });
+
+                if (result.success) {
+                  await answerCallbackQuery(cq.id, "🚫 Ticket rechazado y cerrado.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  await editTelegramMessage(
+                    msg.message_id,
+                    msg.chat.id,
+                    `${msg.text}\n\n🚫 *Rechazado por Administrador a las ${new Date().toLocaleTimeString()}*`
                   );
                 }
               } else if (cqData.startsWith("approve_post:")) {

@@ -1,6 +1,7 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { crmCreateTicket } from "../lib/crm";
+import { crmCreateTicket, crmListProjects } from "../lib/crm";
+import { resolveProjectLoose } from "../lib/project-match";
 
 export default defineTool({
   description:
@@ -23,9 +24,38 @@ export default defineTool({
       .enum(["support", "info"])
       .default("support")
       .describe("support = bug/outage with severity SLA; info = service question with 24h commercial SLA"),
-    description: z.string().describe("Detailed description of the bug, symptoms, error messages, or service question"),
+    description: z
+      .string()
+      .describe(
+        "The client's REAL problem, in their words plus structure: what happens, what was expected, impact, steps to reproduce. Never a placeholder or 'test' text."
+      ),
+    projectName: z
+      .string()
+      .optional()
+      .describe(
+        "Affected Creapolis project name as the client said it (e.g. 'eve-agent'). Linked automatically when it matches one project unambiguously."
+      ),
   }),
   async execute(input) {
+    // Best-effort project link: a mismatch never blocks logging the incident.
+    let projectId: string | undefined;
+    let projectNote: string | undefined;
+    if (input.projectName) {
+      try {
+        const { projects } = await crmListProjects();
+        const match = resolveProjectLoose(projects, input.projectName);
+        if (match && !match.ambiguous) {
+          projectId = match.project.id;
+        } else if (match?.ambiguous) {
+          projectNote = `projectName '${input.projectName}' matched multiple projects — ticket left unlinked`;
+        } else {
+          projectNote = `projectName '${input.projectName}' matched no project — ticket left unlinked`;
+        }
+      } catch {
+        projectNote = "project lookup unavailable — ticket left unlinked";
+      }
+    }
+
     try {
       const crmResult = await crmCreateTicket({
         clientName: input.clientName,
@@ -35,6 +65,7 @@ export default defineTool({
         severity: input.severity,
         kind: input.kind,
         description: input.description,
+        projectId,
       });
 
       if (crmResult.duplicate) {
@@ -45,6 +76,7 @@ export default defineTool({
           severity: crmResult.severity,
           slaDueAt: crmResult.slaDueAt,
           systemAffected: input.systemAffected,
+          linkedProjectId: projectId ?? null,
           message: `This incident is already open as ticket ${crmResult.ticketId} — no duplicate created, owner not re-paged.`,
         };
       }
@@ -57,7 +89,9 @@ export default defineTool({
         slaDueAt: crmResult.slaDueAt,
         slaHours: crmResult.slaHours,
         systemAffected: input.systemAffected,
-        message: `Support ticket ${crmResult.ticketId} opened (${crmResult.kind}). Target SLA: ${crmResult.slaHours} hour(s).`,
+        linkedProjectId: projectId ?? null,
+        ...(projectNote ? { projectNote } : {}),
+        message: `Support ticket ${crmResult.ticketId} opened (${crmResult.kind}). Target SLA: ${crmResult.slaHours} hour(s). The owner was paged for triage (support kind). Next step: the OWNER must approve the ticket before any correction is dispatched.`,
       };
     } catch (err) {
       return {

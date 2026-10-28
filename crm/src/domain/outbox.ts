@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../db/client";
-import { outbox, contacts, leads, type ChannelType } from "../db/schema";
+import { outbox, contacts, leads, interactions, type ChannelType } from "../db/schema";
 import { logEvent } from "./events";
 import { notifyOutboxDraftCreated } from "../services/telegram";
 
@@ -14,6 +14,8 @@ export interface CreateDraftInput {
    * is blocked until a contact exists.
    */
   contactId?: string;
+  /** Support-ticket notification (e.g. automatic resolution notice). */
+  ticketId?: string;
   channel: ChannelType;
   subject?: string;
   body: string;
@@ -177,6 +179,7 @@ export async function createOutreachDraft(
       leadId: input.leadId,
       organizationId: input.organizationId,
       contactId: resolved.contactId,
+      ticketId: input.ticketId,
       channel: input.channel,
       subject: input.subject,
       body: input.body,
@@ -300,4 +303,91 @@ export async function reviewOutreachDraft(input: ReviewDraftInput) {
     success: true,
     draft: updated,
   };
+}
+
+export interface MarkDraftSentInput {
+  draftId: string;
+  /** Owner confirms the message physically left through the channel. */
+  actor: string;
+}
+
+export type MarkDraftSentResult =
+  | { success: true; draft: typeof outbox.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/**
+ * Owner confirms an approved draft was actually sent (sending itself stays
+ * manual copy-paste for now). Side effects: the outbound interaction is
+ * logged automatically, and a ticket-linked draft moves its ticket to
+ * `waiting_client` — the ITIL state between resolution and confirmation.
+ */
+export async function markDraftSent(input: MarkDraftSentInput): Promise<MarkDraftSentResult> {
+  const [draft] = await db.select().from(outbox).where(eq(outbox.id, input.draftId)).limit(1);
+  if (!draft) {
+    return { success: false, code: "draft_not_found", message: `Draft ${input.draftId} not found` };
+  }
+  if (draft.status === "sent") {
+    return { success: true, draft };
+  }
+  if (draft.status !== "approved") {
+    return {
+      success: false,
+      code: "invalid_status",
+      message: `Draft is in status "${draft.status}"; only approved drafts can be marked as sent.`,
+    };
+  }
+
+  const [updated] = await db
+    .update(outbox)
+    .set({ status: "sent", sentAt: new Date(), updatedAt: new Date() })
+    .where(eq(outbox.id, input.draftId))
+    .returning();
+
+  await logEvent({
+    entity: "outbox",
+    entityId: input.draftId,
+    action: "draft_sent",
+    actor: input.actor,
+    before: { status: draft.status },
+    after: { status: "sent", channel: draft.channel },
+    reason: "Owner confirmed manual send",
+  });
+
+  // The client-facing record of what was communicated, on the unified thread.
+  await db.insert(interactions).values({
+    organizationId: draft.organizationId,
+    contactId: draft.contactId,
+    leadId: draft.leadId,
+    ticketId: draft.ticketId,
+    channel: draft.channel,
+    direction: "outbound",
+    content: draft.body,
+    metadata: { outboxDraftId: draft.id, subject: draft.subject ?? null },
+  });
+
+  // Ticket-linked notification: the client now has the answer in flight. A
+  // failed transition (ticket reopened/closed meanwhile, or deleted) must be
+  // audited — never silently swallowed while the draft claims success.
+  if (draft.ticketId) {
+    const { updateTicketStatus } = await import("./tickets");
+    const transition = await updateTicketStatus({
+      ticketId: draft.ticketId,
+      status: "waiting_client",
+      actor: input.actor,
+      reason: "Resolution notification sent to the client",
+    });
+
+    if (!transition.success) {
+      await logEvent({
+        entity: "outbox",
+        entityId: input.draftId,
+        action: "draft_sent_ticket_sync_failed",
+        actor: input.actor,
+        after: { ticketId: draft.ticketId, code: transition.code, error: transition.message },
+        reason: "Draft marked sent but the ticket could not move to waiting_client",
+      });
+    }
+  }
+
+  return { success: true, draft: updated! };
 }

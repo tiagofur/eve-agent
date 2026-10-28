@@ -1,11 +1,27 @@
 import { useState, useEffect } from "react";
 import { crmApi, type OutboxDraft, type OrganizationItem, type OrganizationSummary } from "../api";
-import { Check, X, Send, Clock, User, Plus, Building2 } from "lucide-react";
+import { Check, X, Send, Clock, User, Plus, Building2, Copy, CheckCheck } from "lucide-react";
+
+interface ApprovedDraft {
+  id: string;
+  ticketId: string | null;
+  channel: string;
+  subject: string | null;
+  body: string;
+  approvedAt: string | null;
+  createdBy: string;
+  contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  organizationName: string | null;
+}
 
 export function OutboxView() {
   const [drafts, setDrafts] = useState<OutboxDraft[]>([]);
+  const [approved, setApproved] = useState<ApprovedDraft[]>([]);
   const [loading, setLoading] = useState(true);
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [orgs, setOrgs] = useState<OrganizationItem[]>([]);
   const [formOrgId, setFormOrgId] = useState("");
@@ -20,8 +36,12 @@ export function OutboxView() {
   const loadDrafts = async () => {
     try {
       setLoading(true);
-      const res = await crmApi.getPendingDrafts();
-      setDrafts(res.drafts);
+      const [pendingRes, approvedRes] = await Promise.all([
+        crmApi.getPendingDrafts(),
+        crmApi.getApprovedDrafts(),
+      ]);
+      setDrafts(pendingRes.drafts);
+      setApproved(approvedRes.drafts);
     } catch (err) {
       console.error(err);
     } finally {
@@ -93,8 +113,33 @@ export function OutboxView() {
       await crmApi.reviewDraft(draftId, decision);
       // Remove reviewed draft from pending list
       setDrafts((prev) => prev.filter((d) => d.id !== draftId));
+      // Approved drafts move to the to-send queue instead of vanishing.
+      await loadDrafts();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error al revisar borrador");
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  const handleCopy = async (draft: ApprovedDraft) => {
+    const text = draft.subject ? `${draft.subject}\n\n${draft.body}` : draft.body;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(draft.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      alert("No se pudo copiar: selecciona el texto manualmente.");
+    }
+  };
+
+  const handleMarkSent = async (draftId: string) => {
+    try {
+      setActioningId(draftId);
+      await crmApi.markOutboxSent(draftId);
+      setApproved((prev) => prev.filter((d) => d.id !== draftId));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al marcar como enviado");
     } finally {
       setActioningId(null);
     }
@@ -274,8 +319,62 @@ export function OutboxView() {
                   className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow transition hover:bg-emerald-500 disabled:opacity-50"
                 >
                   <Check className="h-3.5 w-3.5" />
-                  Aprobar y Enviar
+                  Aprobar
                 </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Approved — manual send queue: copy the message, send it through the
+          channel, then mark it sent (logs the interaction; ticket-linked
+          drafts move their ticket to waiting_client). */}
+      {approved.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+            <Send className="h-4 w-4" /> Aprobados · por enviar ({approved.length})
+          </h3>
+          {approved.map((draft) => (
+            <div
+              key={draft.id}
+              className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm">
+                  <span className="font-semibold text-white">
+                    {draft.contactName ?? "Contacto"}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    {" "}· {draft.contactEmail || draft.contactPhone || "sin contacto"} · {draft.channel}
+                  </span>
+                  {draft.ticketId && (
+                    <span className="ml-2 rounded bg-indigo-950 px-1.5 py-0.5 font-mono text-[10px] text-indigo-300">
+                      ticket {draft.ticketId.slice(0, 8)}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => void handleCopy(draft)}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-slate-700"
+                  >
+                    {copiedId === draft.id ? <CheckCheck className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedId === draft.id ? "Copiado" : "Copiar"}
+                  </button>
+                  <button
+                    onClick={() => void handleMarkSent(draft.id)}
+                    disabled={actioningId === draft.id}
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Marcar enviado
+                  </button>
+                </div>
+              </div>
+              <div className="mt-2 rounded-lg bg-slate-950/70 p-3 text-xs leading-relaxed text-slate-200">
+                {draft.subject && <div className="mb-1 font-semibold">{draft.subject}</div>}
+                <pre className="whitespace-pre-wrap font-sans">{draft.body}</pre>
               </div>
             </div>
           ))}

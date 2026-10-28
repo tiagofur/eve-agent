@@ -5,11 +5,13 @@ import {
   milestones,
   tasks,
   leads,
+  tickets,
   type ProjectStatus,
   type TaskStatus,
 } from "../db/schema";
 import { changeLeadStage } from "./leads";
 import { logEvent } from "./events";
+import { autoResolveTicketFromTask } from "./tickets";
 
 export interface CreateProjectInput {
   organizationId: string;
@@ -83,6 +85,8 @@ export interface CreateTaskInput {
   kind?: "feature" | "correction";
   /** Corrections default to pending_approval (owner HITL gate); backlog keeps the manual pipeline. */
   initialStatus?: "pending_approval" | "backlog";
+  /** Originating support ticket. Gate: the ticket must be approved (not `open`). */
+  ticketId?: string;
   actor: string;
 }
 
@@ -116,6 +120,47 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     }
   }
 
+  // Ticket gate (mechanical): a correction linked to a ticket may only be
+  // dispatched once the owner has triaged the ticket. `open` means nobody
+  // approved the work yet — the agent must ask the owner first, not retry.
+  let linkedTicket: typeof tickets.$inferSelect | null = null;
+  if (input.ticketId) {
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, input.ticketId)).limit(1);
+    if (!ticket) {
+      return {
+        success: false,
+        code: "ticket_not_found",
+        message: `Ticket ${input.ticketId} not found`,
+      };
+    }
+    if (ticket.status === "open") {
+      return {
+        success: false,
+        code: "ticket_not_approved",
+        message:
+          `Ticket ${input.ticketId} is still open (awaiting owner triage). ` +
+          "The owner must approve it (Tickets view or Telegram) before a correction can be dispatched.",
+      };
+    }
+    if (ticket.status === "closed") {
+      return {
+        success: false,
+        code: "ticket_closed",
+        message: `Ticket ${input.ticketId} is closed and cannot receive new corrections.`,
+      };
+    }
+    // Never a silently wrong link: a ticket already bound to a project may
+    // only spawn corrections in THAT project.
+    if (ticket.projectId && ticket.projectId !== input.projectId) {
+      return {
+        success: false,
+        code: "ticket_project_mismatch",
+        message: `Ticket ${input.ticketId} belongs to a different project; dispatch to its own project.`,
+      };
+    }
+    linkedTicket = ticket;
+  }
+
   const initialStatus = input.initialStatus ?? "pending_approval";
 
   const [task] = await db
@@ -123,6 +168,7 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     .values({
       projectId: input.projectId,
       milestoneId: input.milestoneId,
+      ticketId: input.ticketId,
       title: input.title,
       spec: input.spec,
       status: initialStatus,
@@ -142,6 +188,7 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     actor: input.actor,
     after: {
       projectId: input.projectId,
+      ticketId: input.ticketId ?? null,
       title: input.title,
       status: initialStatus,
       assignee: task.assignee,
@@ -149,6 +196,24 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     },
     reason: input.title,
   });
+
+  // A dispatched correction means work on the ticket is active again: pull
+  // waiting_client/resolved tickets back into in_progress (audited).
+  if (linkedTicket && linkedTicket.status !== "in_progress") {
+    await db
+      .update(tickets)
+      .set({ status: "in_progress", resolvedAt: null, updatedAt: new Date() })
+      .where(eq(tickets.id, linkedTicket.id));
+    await logEvent({
+      entity: "ticket",
+      entityId: linkedTicket.id,
+      action: "ticket_in_progress",
+      actor: "system:task-link",
+      before: { status: linkedTicket.status },
+      after: { status: "in_progress" },
+      reason: `Correction task "${input.title}" dispatched for this ticket`,
+    });
+  }
 
   return { success: true as const, task };
 }
@@ -232,6 +297,18 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<Up
     before: { status: currentTask.status },
     after: { status: input.status, prUrl: input.prUrl, resultSummary: input.resultSummary ?? null },
   });
+
+  // Ticket-linked correction completed: resolve the originating ticket and
+  // queue the client notification draft. Failures are audited inside the
+  // helper — they must never roll back the task's own completion.
+  if (input.status === "done" && currentTask.ticketId) {
+    await autoResolveTicketFromTask({
+      ticketId: currentTask.ticketId,
+      taskTitle: currentTask.title,
+      resultSummary: updated!.resultSummary,
+      prUrl: updated!.prUrl,
+    });
+  }
 
   return { success: true, task: updated! };
 }

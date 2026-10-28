@@ -5,7 +5,7 @@ import { eq, desc } from "drizzle-orm";
 import { db } from "../../db/client";
 import { outbox, contacts, leads, organizations } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
-import { createOutreachDraft, reviewOutreachDraft } from "../../domain/outbox";
+import { createOutreachDraft, reviewOutreachDraft, markDraftSent } from "../../domain/outbox";
 
 export const outboxRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -19,6 +19,7 @@ outboxRouter.post(
       leadId: z.string().uuid().optional(),
       organizationId: z.string().uuid().optional(),
       contactId: z.string().uuid().optional(),
+      ticketId: z.string().uuid().optional(),
       channel: z.enum(["email", "linkedin", "whatsapp", "phone", "telegram", "web", "other"]),
       subject: z.string().optional(),
       body: z.string().min(1),
@@ -74,6 +75,34 @@ outboxRouter.get("/pending", requireScope(["ops"]), async (c) => {
   return c.json({ drafts: pending });
 });
 
+// List approved drafts awaiting manual send (the copy-paste queue): includes
+// the originating ticket so the owner knows what each notification closes.
+outboxRouter.get("/approved", requireScope(["ops"]), async (c) => {
+  const approved = await db
+    .select({
+      id: outbox.id,
+      ticketId: outbox.ticketId,
+      contactId: outbox.contactId,
+      channel: outbox.channel,
+      subject: outbox.subject,
+      body: outbox.body,
+      status: outbox.status,
+      approvedAt: outbox.approvedAt,
+      createdBy: outbox.createdBy,
+      contactName: contacts.name,
+      contactEmail: contacts.email,
+      contactPhone: contacts.phone,
+      organizationName: organizations.name,
+    })
+    .from(outbox)
+    .leftJoin(contacts, eq(outbox.contactId, contacts.id))
+    .leftJoin(organizations, eq(outbox.organizationId, organizations.id))
+    .where(eq(outbox.status, "approved"))
+    .orderBy(desc(outbox.approvedAt));
+
+  return c.json({ drafts: approved });
+});
+
 // Review draft: APPROVE or REJECT (owner scope required!)
 outboxRouter.post(
   "/:id/review",
@@ -104,3 +133,20 @@ outboxRouter.post(
     return c.json({ success: true, draft: result.draft });
   }
 );
+
+// Confirm an approved draft was physically sent (owner). Logs the outbound
+// interaction automatically; ticket-linked drafts move their ticket to
+// waiting_client (resolution notified, awaiting client confirmation).
+outboxRouter.post("/:id/sent", requireScope(["owner"]), async (c) => {
+  const draftId = c.req.param("id")!;
+  const actor = c.get("actor")!;
+
+  const result = await markDraftSent({ draftId, actor });
+
+  if (!result.success) {
+    const status = result.code === "draft_not_found" ? 404 : 400;
+    return c.json({ error: result.message, code: result.code }, status as 400);
+  }
+
+  return c.json({ success: true, draft: result.draft });
+});

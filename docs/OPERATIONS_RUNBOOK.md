@@ -225,14 +225,34 @@ cd crm
 npx tsx src/scripts/clean-test-data.ts
 ```
 
-### D. Correction Pipeline & Gentle Shell Launcher
+### D. Support → Correction Pipeline & Gentle Shell Launcher
 
-The primary path is the Desktop app (Proyectos & Correcciones):
+The full support lifecycle (ITIL-inspired: resolution ≠ closure — the client confirms before closing):
 
-1. **Configure once per project** (Desktop → Proyectos y carpetas): set `localPath` (absolute folder on this Mac), `defaultBranch`, optional `testCommand`, then **Verificar carpeta** — the app checks the folder exists, is a git repo, and its `origin` matches the project's `repoUrl`. Launches are blocked until the folder is verified.
-2. **Request a correction**: ask Eve (chat) — the pm subagent drafts the issue and it lands as `pending_approval` — or use **Nueva corrección** in the desktop form.
-3. **Approve**: pending corrections show project + folder + full issue; **Aprobar y lanzar** (owner key) marks it `approved` and immediately launches gentle-shell in the verified folder (toggle "Lanzar al aprobar" can disable auto-launch). Runs are audited in `task_runs` (log, issue file, branch, exit code, agent report).
-4. **Review**: finished runs land in `in_review` with the agent's report; mark resolved or send back to rework.
+```
+Cliente reporta (chat/WhatsApp/manual)
+  → 1. Ticket creado (create_support_ticket) con projectId + problema REAL   [agente]
+  → 2. GATE 1: owner aprueba el ticket (Tickets view / Telegram) → in_progress
+  → 3. pm despacha corrección con ticketId (CRM rechaza si el ticket está `open`)
+  → 4. GATE 2: owner aprueba la tarea (pending_approval) → gentle-shell corre
+  → 5. Owner revisa el reporte (in_review) → done
+       AUTO: ticket → resolved + borrador de notificación al cliente (outbox)
+  → 6. GATE 3: owner aprueba el borrador → copia y envía → "Marcar enviado"
+       AUTO: interacción registrada + ticket → waiting_client
+  → 7. Cliente confirma → owner cierra (closed). "Reabrir" disponible.
+```
+
+Mechanical gates (CRM-enforced, not prompt-enforced): a `POST /api/projects/tasks` with a `ticketId` whose ticket is still `open` fails with `ticket_not_approved` — the agent must ask the owner, never retry. Task `done` auto-resolves the linked ticket (`system:task-done` actor) and queues the notification draft; skips (no contact/org, dedup) are audited as `client_notification_skipped` events.
+
+Desktop surfaces:
+
+1. **Configure once per project** (Desktop → Proyectos y carpetas): set `localPath`, `defaultBranch`, optional `testCommand`, then **Verificar carpeta**. Launches are blocked until verified. Each project card also carries the collapsible **Historial de tareas** (Todas · Finalizadas · Rechazadas) with PR links and agent reports.
+2. **Tickets de soporte**: every support ticket pages the owner on Telegram (Aprobar / Resolver / Rechazar). The drawer shows SLA, timeline, linked corrections (status/PR/report), edits the description (vague-intake fix), resolves with internal note + client message, handles `waiting_client` (close on confirmation / reopen attention) and reopens resolved/closed tickets.
+3. **Approve the correction**: pending corrections show project + folder + full issue; **Aprobar y lanzar** (owner key) marks it `approved` and launches gentle-shell in the verified folder. Runs audited in `task_runs`.
+4. **Review**: finished runs land in `in_review` with the agent's report; **Marcar resuelta** completes the task (`done`) — which auto-resolves the ticket and queues the client draft.
+5. **Outbox**: pending drafts → Aprobar → the **Aprobados · por enviar** queue → Copiar → send manually through the channel → **Marcar enviado** (logs the interaction; ticket-linked drafts move the ticket to `waiting_client`).
+
+Agent side: `create_support_ticket` (auto-links `projectName`), `get_support_tickets` (dedup check), `update_support_ticket` (correct content / advance status), `dispatch_coding_task(ticketId)`. A correction without a ticket, a dispatch from an unapproved ticket, or an unnotified client are pipeline violations the agent must report, not paper over.
 
 Prerequisites on the launcher machine: `gentle-shell` installed (default lookup: `~/.local/bin/gentle-shell`, override with `GENTLE_SHELL_BIN`), and project repos cloned locally.
 

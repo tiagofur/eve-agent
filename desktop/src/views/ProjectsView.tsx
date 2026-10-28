@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
-import { crmApi, PipelineTaskItem, ProjectItem, FolderCheckData, TaskRunItem } from "../api";
+import { crmApi, PipelineTaskItem, ProjectItem, ProjectTaskHistoryItem, FolderCheckData, TaskRunItem } from "../api";
 import {
   FolderKanban,
   Terminal,
@@ -21,6 +21,8 @@ import {
   Send,
   FolderOpen,
   CheckCheck,
+  History,
+  ChevronDown,
 } from "lucide-react";
 
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -971,6 +973,34 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Per-project task history (every status incl. done/rejected) — lazy: only
+  // fetched when the owner expands the section.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyErr, setHistoryErr] = useState<string | null>(null);
+  const [historyTasks, setHistoryTasks] = useState<ProjectTaskHistoryItem[]>([]);
+  const [historyFilter, setHistoryFilter] = useState<"all" | "done" | "rejected">("all");
+
+  const toggleHistory = async () => {
+    const next = !historyOpen;
+    setHistoryOpen(next);
+    if (!next) return;
+    setHistoryLoading(true);
+    setHistoryErr(null);
+    try {
+      const res = await crmApi.getProjectTasks(project.id);
+      setHistoryTasks(res.tasks);
+    } catch (e: any) {
+      setHistoryErr(e?.message ?? String(e));
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const filteredHistory = historyTasks.filter((t) =>
+    historyFilter === "all" ? true : historyFilter === "done" ? t.status === "done" : t.status === "rejected"
+  );
+
   useEffect(() => {
     setLocalPath(project.localPath ?? "");
     setDefaultBranch(project.defaultBranch);
@@ -1138,6 +1168,92 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
           <span className="text-[10px] text-zinc-500">
             verificada {new Date(project.folderVerifiedAt).toLocaleString()}
           </span>
+        )}
+      </div>
+
+      {/* Historial de tareas del proyecto (todas · finalizadas · rechazadas) */}
+      <div className="pt-2 border-t border-zinc-800/60">
+        <button
+          onClick={toggleHistory}
+          className="flex items-center gap-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition"
+        >
+          <History className="w-3.5 h-3.5" />
+          Historial de tareas ({historyTasks.length || "…"})
+          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+        </button>
+
+        {historyOpen && (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-center gap-1.5">
+              {(
+                [
+                  ["all", "Todas"],
+                  ["done", "Finalizadas"],
+                  ["rejected", "Rechazadas"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setHistoryFilter(value)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition border ${
+                    historyFilter === value
+                      ? "bg-cyan-900/60 text-cyan-300 border-cyan-700"
+                      : "bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-zinc-200"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {historyLoading ? (
+              <div className="text-xs text-zinc-500 py-2">Consultando historial…</div>
+            ) : historyErr ? (
+              <p className="text-xs text-rose-400">{historyErr}</p>
+            ) : filteredHistory.length === 0 ? (
+              <p className="text-xs text-zinc-500 py-1">
+                {historyFilter === "all"
+                  ? "Este proyecto todavía no tiene tareas."
+                  : historyFilter === "done"
+                    ? "Sin tareas finalizadas todavía."
+                    : "Sin tareas rechazadas."}
+              </p>
+            ) : (
+              filteredHistory.map((t) => (
+                <div key={t.id} className="bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <StatusPill status={t.status} />
+                    <span className="text-xs text-zinc-200 font-medium flex-1 min-w-0 truncate">{t.title}</span>
+                    <span className="text-[10px] text-zinc-500">{new Date(t.createdAt).toLocaleDateString()}</span>
+                  </div>
+                  {(t.prUrl || t.resultSummary) && (
+                    <div className="space-y-1">
+                      {t.prUrl && (
+                        <a
+                          href={t.prUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] text-cyan-400 hover:underline"
+                        >
+                          <GitBranch className="w-3 h-3" /> PR
+                        </a>
+                      )}
+                      {t.resultSummary && (
+                        <details>
+                          <summary className="text-[11px] text-zinc-500 cursor-pointer hover:text-zinc-300">
+                            Reporte del agente
+                          </summary>
+                          <pre className="mt-1 text-[10px] text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">
+                            {t.resultSummary}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         )}
       </div>
     </div>

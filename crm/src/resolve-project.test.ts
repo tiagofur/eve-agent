@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { norm, scoreProject } from "../../agent/tools/resolve_project";
+import { norm, scoreProject, resolveProjectLoose } from "../../agent/lib/project-match";
 import type { CrmProjectItem } from "../../agent/lib/crm";
 
 describe("resolve_project scoring and normalization", () => {
@@ -43,5 +43,55 @@ describe("resolve_project scoring and normalization", () => {
 
   it("returns 0 for completely unrelated queries", () => {
     expect(scoreProject(dummyProject, "unrelated-crypto-bot")).toBe(0);
+  });
+});
+
+describe("resolveProjectLoose (ticket intake auto-link)", () => {
+  const projects: CrmProjectItem[] = [
+    {
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "Portal Web Pagos",
+      status: "active",
+      repoUrl: null,
+      localPath: null,
+      defaultBranch: "main",
+      testCommand: null,
+      organizationName: "Cliente A",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "Portal Web Clientes",
+      status: "active",
+      repoUrl: null,
+      localPath: null,
+      defaultBranch: "main",
+      testCommand: null,
+      organizationName: "Cliente B",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "33333333-3333-3333-3333-333333333333",
+      name: "eve-agent",
+      status: "onboarding",
+      repoUrl: null,
+      localPath: null,
+      defaultBranch: "main",
+      testCommand: null,
+      organizationName: "Creapolis.Dev — Interno",
+      createdAt: new Date().toISOString(),
+    },
+  ];
+
+  it("resolves a unique match and never blocks on mismatch", () => {
+    expect(resolveProjectLoose(projects, "eve agent")?.project.id).toBe(
+      "33333333-3333-3333-3333-333333333333"
+    );
+    expect(resolveProjectLoose(projects, "noexiste")).toBeNull();
+  });
+
+  it("flags ambiguity instead of silently picking a tie", () => {
+    const result = resolveProjectLoose(projects, "Portal Web");
+    expect(result?.ambiguous).toBe(true);
   });
 });
