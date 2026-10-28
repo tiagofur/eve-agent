@@ -76,11 +76,17 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
                                         |
                                         v
 +-------------------------------------------------------------------------------+
-|                    Autonomous Terminal Worker (Gentle Shell)                  |
+|              Correction Pipeline: Issue → Owner Approval → gentle-shell       |
 |-------------------------------------------------------------------------------|
-|  • crm/src/scripts/gentle-worker.ts                                           |
-|  • Reads tasks in 'ready' status -> executes local coding tasks via CLI       |
-|  • Updates task status to 'in_progress', 'in_review', or 'done'               |
+|  • Eve pm drafts the spec (dispatch_coding_task) -> task 'pending_approval'   |
+|  • Owner approves in the Desktop app (owner scope) -> 'approved'              |
+|  • Desktop launcher (Tauri Rust commands in desktop/src-tauri) verifies the   |
+|    project's local folder (git repo + remote match), composes the ISSUE.md,   |
+|    spawns `gentle-shell -p` inside the folder and streams the live log.       |
+|  • task_runs rows audit every launch (log, issue, branch, exit, report).      |
+|  • States: pending_approval -> approved -> dispatched -> in_progress ->       |
+|    in_review -> done (rejected/blocked/rework along the way).                 |
+|  • crm/src/scripts/gentle-worker.ts remains as the manual CLI fallback.       |
 +-------------------------------------------------------------------------------+
 ```
 
@@ -141,7 +147,7 @@ Tools are thin wrappers over the CRM REST API (see `agent/lib/crm.ts`); two run 
 | `save_prospect_dossier` | ops | Persists research dossier via `POST /api/dossiers`; tags the lead `researched` |
 | `create_support_ticket` | front | Logs incident with SLA due date via `POST /api/tickets` |
 | `create_project` | ops | Creates project (+ milestones) via `POST /api/projects` |
-| `dispatch_coding_task` | ops | Queues a `ready` task via `POST /api/projects/tasks` |
+| `dispatch_coding_task` | ops | Queues a `pending_approval` issue (owner HITL gate) via `POST /api/projects/tasks` |
 | `generate_marketing_post` | ops | Copy + Muse Image campaign via `POST /api/marketing/generate` |
 | `get_crm_metrics` | ops | Funnel counts & conversions via `GET /api/reports/funnel` |
 | `generate_service_estimate` | local | Timeline/deliverable estimate matrix (no CRM call) |

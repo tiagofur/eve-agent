@@ -1,6 +1,13 @@
-export const API_BASE = import.meta.env.VITE_CRM_API_URL || "http://localhost:8787";
-// Configure via desktop/.env (VITE_CRM_OWNER_KEY) or localStorage override.
-// Never hardcode keys in source.
+// Connection resolution order: localStorage override (set from the in-app
+// Connection panel) > build-time Vite env (desktop/.env) > local dev default.
+// This lets an installed app switch between local and the online deployment
+// without a rebuild.
+export const API_BASE =
+  localStorage.getItem("CREAPOLIS_API_URL") ||
+  import.meta.env.VITE_CRM_API_URL ||
+  "http://localhost:8787";
+// Never hardcode keys in source: configure via desktop/.env
+// (VITE_CRM_OWNER_KEY) or the localStorage overrides.
 export const OWNER_KEY =
   localStorage.getItem("CREAPOLIS_OWNER_KEY") ||
   import.meta.env.VITE_CRM_OWNER_KEY ||
@@ -98,11 +105,27 @@ export interface TicketItem {
   followUpNote?: string | null;
 }
 
+export interface FolderCheckData {
+  exists: boolean;
+  isGit: boolean;
+  remoteUrl: string | null;
+  remoteMatches: boolean | null;
+  branch: string | null;
+  clean: boolean | null;
+  checkedAt: string;
+  error?: string;
+}
+
 export interface ProjectItem {
   id: string;
   name: string;
   status: string;
   repoUrl: string | null;
+  localPath: string | null;
+  defaultBranch: string;
+  testCommand: string | null;
+  folderCheck: FolderCheckData | null;
+  folderVerifiedAt: string | null;
   organizationName: string | null;
   createdAt: string;
 }
@@ -117,6 +140,46 @@ export interface TaskItem {
   status: string;
   assignee: string;
   createdAt: string;
+}
+
+export interface TaskRunItem {
+  id: string;
+  taskId: string;
+  status: "running" | "succeeded" | "failed";
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  logPath: string | null;
+  issuePath: string | null;
+  branch: string | null;
+  resultSummary: string | null;
+  prUrl: string | null;
+}
+
+export interface PipelineTaskItem {
+  id: string;
+  projectId: string;
+  milestoneId: string | null;
+  title: string;
+  spec: string;
+  status: string;
+  assignee: string;
+  kind: "feature" | "correction";
+  prUrl: string | null;
+  resultSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+  project: {
+    name: string | null;
+    organizationName: string | null;
+    repoUrl: string | null;
+    localPath: string | null;
+    defaultBranch: string;
+    testCommand: string | null;
+    folderCheck: FolderCheckData | null;
+    folderVerifiedAt: string | null;
+  };
+  latestRun: TaskRunItem | null;
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -299,6 +362,60 @@ export const crmApi = {
     }),
   getProjects: () => request<{ projects: ProjectItem[] }>("/api/projects"),
   getReadyTasks: () => request<{ tasks: TaskItem[] }>("/api/projects/tasks/ready"),
+  getPipelineTasks: () =>
+    request<{ tasks: PipelineTaskItem[] }>("/api/projects/tasks/pipeline"),
+  createCorrectionTask: (data: {
+    projectId: string;
+    title: string;
+    spec: string;
+    kind?: "feature" | "correction";
+    milestoneId?: string;
+  }) =>
+    request<{ success: boolean; task: { id: string; status: string } }>("/api/projects/tasks", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  approveTask: (taskId: string) =>
+    request<{ success: boolean }>(`/api/projects/tasks/${taskId}/approve`, {
+      method: "POST",
+    }),
+  rejectTask: (taskId: string, reason?: string) =>
+    request<{ success: boolean }>(`/api/projects/tasks/${taskId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  updateTaskStatus: (taskId: string, status: string, extra?: { resultSummary?: string; prUrl?: string }) =>
+    request<{ success: boolean }>(`/api/projects/tasks/${taskId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, ...extra }),
+    }),
+  openTaskRun: (taskId: string, data: { logPath?: string; issuePath?: string; branch?: string }) =>
+    request<{ success: boolean; run: TaskRunItem }>(`/api/projects/tasks/${taskId}/runs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  closeTaskRun: (
+    taskId: string,
+    runId: string,
+    data: { exitCode: number; resultSummary?: string; prUrl?: string }
+  ) =>
+    request<{ success: boolean }>(`/api/projects/tasks/${taskId}/runs/${runId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  updateProjectFolder: (
+    projectId: string,
+    data: { localPath?: string | null; defaultBranch?: string; testCommand?: string | null }
+  ) =>
+    request<{ success: boolean; project: ProjectItem }>(`/api/projects/${projectId}/folder`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  reportFolderCheck: (projectId: string, check: FolderCheckData) =>
+    request<{ success: boolean; verified: boolean }>(`/api/projects/${projectId}/folder/verify`, {
+      method: "POST",
+      body: JSON.stringify({ check }),
+    }),
   sendChatMessage: (messages: ChatMessage[], threadId?: string | null) =>
     request<ChatResponse>("/api/chat", {
       method: "POST",

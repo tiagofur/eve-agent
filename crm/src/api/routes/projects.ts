@@ -5,7 +5,27 @@ import { eq, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { projects, tasks, organizations, milestones, contracts } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
-import { createProject, createTask, updateTaskStatus } from "../../domain/projects";
+import {
+  createProject,
+  createTask,
+  updateTaskStatus,
+  approveTask,
+  rejectTask,
+  updateProjectFolder,
+  recordFolderCheck,
+} from "../../domain/projects";
+import { openTaskRun, closeTaskRun, latestRunsForTasks } from "../../domain/task-runs";
+
+const folderCheckSchema = z.object({
+  exists: z.boolean(),
+  isGit: z.boolean(),
+  remoteUrl: z.string().nullable(),
+  remoteMatches: z.boolean().nullable(),
+  branch: z.string().nullable(),
+  clean: z.boolean().nullable(),
+  checkedAt: z.string().min(1),
+  error: z.string().optional(),
+});
 
 export const projectsRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -117,6 +137,11 @@ projectsRouter.get("/", requireScope(["ops"]), async (c) => {
       name: projects.name,
       status: projects.status,
       repoUrl: projects.repoUrl,
+      localPath: projects.localPath,
+      defaultBranch: projects.defaultBranch,
+      testCommand: projects.testCommand,
+      folderCheck: projects.folderCheck,
+      folderVerifiedAt: projects.folderVerifiedAt,
       organizationName: organizations.name,
       createdAt: projects.createdAt,
     })
@@ -139,6 +164,7 @@ projectsRouter.post(
       title: z.string().min(1),
       spec: z.string().min(1).describe("Detailed acceptance criteria, affected files, tests"),
       assignee: z.string().default("gentle-shell"),
+      kind: z.enum(["feature", "correction"]).optional(),
     })
   ),
   async (c) => {
@@ -223,7 +249,7 @@ projectsRouter.patch(
   zValidator(
     "json",
     z.object({
-      status: z.enum(["ready", "dispatched", "in_progress", "in_review", "done", "blocked"]),
+      status: z.enum(["pending_approval", "ready", "dispatched", "in_progress", "in_review", "done", "blocked"]),
       prUrl: z.string().url().optional(),
       resultSummary: z.string().max(2000).optional(),
     })
@@ -247,5 +273,201 @@ projectsRouter.patch(
     }
 
     return c.json({ success: true, task: updated.task });
+  }
+);
+
+// ---------------------------------------------------------------------
+// Correction pipeline (CRM → issue → owner approval → gentle-shell)
+// ---------------------------------------------------------------------
+
+// Full correction pipeline for the desktop launcher: every active task with
+// its project folder config + latest run. This is the approval & launch surface.
+projectsRouter.get("/tasks/pipeline", requireScope(["ops"]), async (c) => {
+  const rows = await db
+    .select({
+      id: tasks.id,
+      projectId: tasks.projectId,
+      milestoneId: tasks.milestoneId,
+      title: tasks.title,
+      spec: tasks.spec,
+      status: tasks.status,
+      assignee: tasks.assignee,
+      kind: tasks.kind,
+      prUrl: tasks.prUrl,
+      resultSummary: tasks.resultSummary,
+      createdAt: tasks.createdAt,
+      updatedAt: tasks.updatedAt,
+      projectName: projects.name,
+      repoUrl: projects.repoUrl,
+      localPath: projects.localPath,
+      defaultBranch: projects.defaultBranch,
+      testCommand: projects.testCommand,
+      folderCheck: projects.folderCheck,
+      folderVerifiedAt: projects.folderVerifiedAt,
+      organizationName: organizations.name,
+    })
+    .from(tasks)
+    .leftJoin(projects, eq(tasks.projectId, projects.id))
+    .leftJoin(organizations, eq(projects.organizationId, organizations.id))
+    .where(
+      inArray(tasks.status, ["pending_approval", "approved", "dispatched", "in_progress", "in_review"]),
+    )
+    .orderBy(desc(tasks.createdAt));
+
+  const latestRuns = await latestRunsForTasks(rows.map((r) => r.id));
+
+  return c.json({
+    tasks: rows.map(
+      (
+        {
+          projectName,
+          repoUrl,
+          localPath,
+          defaultBranch,
+          testCommand,
+          folderCheck,
+          folderVerifiedAt,
+          organizationName,
+          ...task
+        },
+      ) => ({
+        ...task,
+        project: {
+          name: projectName,
+          organizationName,
+          repoUrl,
+          localPath,
+          defaultBranch,
+          testCommand,
+          folderCheck,
+          folderVerifiedAt,
+        },
+        latestRun: latestRuns.get(task.id) ?? null,
+      }),
+    ),
+  });
+});
+
+// Owner HITL gate: approve a pending correction (issue) for launch.
+projectsRouter.post("/tasks/:id/approve", requireScope(["owner"]), async (c) => {
+  const actor = c.get("actor");
+  const taskId = c.req.param("id")!;
+  const result = await approveTask({ taskId, actor });
+  if (!result.success) {
+    const status = result.code === "task_not_found" ? 404 : 400;
+    return c.json({ error: result.message, code: result.code }, status as 400);
+  }
+  return c.json({ success: true, task: result.task });
+});
+
+// Owner HITL gate: reject a pending correction with an audit reason.
+projectsRouter.post(
+  "/tasks/:id/reject",
+  requireScope(["owner"]),
+  zValidator("json", z.object({ reason: z.string().max(2000).optional() })),
+  async (c) => {
+    const actor = c.get("actor");
+    const { reason } = c.req.valid("json");
+    const result = await rejectTask({ taskId: c.req.param("id"), reason, actor });
+    if (!result.success) {
+      const status = result.code === "task_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, task: result.task });
+  }
+);
+
+// Open a launcher run (desktop gentle-shell): task → dispatched, run → running.
+projectsRouter.post(
+  "/tasks/:id/runs",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      logPath: z.string().optional(),
+      issuePath: z.string().optional(),
+      branch: z.string().optional(),
+    }),
+  ),
+  async (c) => {
+    const actor = c.get("actor");
+    const data = c.req.valid("json");
+    const result = await openTaskRun({ taskId: c.req.param("id"), ...data, actor });
+    if (!result.success) {
+      const status = result.code === "task_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, run: result.run, task: result.task }, 201);
+  }
+);
+
+// Close a launcher run: exit 0 → in_review with the agent report; failure → blocked.
+projectsRouter.patch(
+  "/tasks/:id/runs/:runId",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      exitCode: z.number().int(),
+      resultSummary: z.string().max(4000).optional(),
+      prUrl: z.string().url().optional(),
+    }),
+  ),
+  async (c) => {
+    const actor = c.get("actor");
+    const { exitCode, resultSummary, prUrl } = c.req.valid("json");
+    const result = await closeTaskRun({
+      runId: c.req.param("runId"),
+      exitCode,
+      resultSummary,
+      prUrl,
+      actor,
+    });
+    if (!result.success) {
+      const status = result.code === "run_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, run: result.run, task: result.task, ...(result.transitionSkipped ? { transitionSkipped: result.transitionSkipped } : {}) });
+  }
+);
+
+// Configure where a project repo lives on the launcher machine.
+projectsRouter.patch(
+  "/:id/folder",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      localPath: z.string().max(1024).nullable().optional(),
+      defaultBranch: z.string().max(200).optional(),
+      testCommand: z.string().max(500).nullable().optional(),
+    }),
+  ),
+  async (c) => {
+    const actor = c.get("actor");
+    const data = c.req.valid("json");
+    const result = await updateProjectFolder({ projectId: c.req.param("id"), ...data, actor });
+    if (!result.success) {
+      const status = result.code === "project_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, project: result.project });
+  }
+);
+
+// Persist the desktop launcher's mechanical folder verification.
+projectsRouter.post(
+  "/:id/folder/verify",
+  requireScope(["ops"]),
+  zValidator("json", z.object({ check: folderCheckSchema })),
+  async (c) => {
+    const actor = c.get("actor");
+    const { check } = c.req.valid("json");
+    const result = await recordFolderCheck({ projectId: c.req.param("id"), check, actor });
+    if (!result.success) {
+      const status = result.code === "project_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, project: result.project, verified: result.verified });
   }
 );

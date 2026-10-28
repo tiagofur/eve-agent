@@ -82,13 +82,20 @@ export const projectStatusEnum = pgEnum("project_status", [
 
 export const taskStatusEnum = pgEnum("task_status", [
   "backlog",
+  "pending_approval",
+  "approved",
   "ready",
   "dispatched",
   "in_progress",
   "in_review",
   "done",
   "blocked",
+  "rejected",
 ]);
+
+export const taskKindEnum = pgEnum("task_kind", ["feature", "correction"]);
+
+export const taskRunStatusEnum = pgEnum("task_run_status", ["running", "succeeded", "failed"]);
 
 export const contractStatusEnum = pgEnum("contract_status", [
   "draft",
@@ -125,6 +132,8 @@ export type TicketKind = (typeof ticketKindEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type TaskStatus = (typeof taskStatusEnum.enumValues)[number];
+export type TaskKind = (typeof taskKindEnum.enumValues)[number];
+export type TaskRunStatus = (typeof taskRunStatusEnum.enumValues)[number];
 export type ContractStatus = (typeof contractStatusEnum.enumValues)[number];
 export type ApiScope = (typeof apiScopeEnum.enumValues)[number];
 export type SocialPlatform = (typeof socialPlatformEnum.enumValues)[number];
@@ -317,6 +326,17 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   status: projectStatusEnum("status").notNull().default("onboarding"),
   repoUrl: text("repo_url"),
+  // Where this repo lives on the operator machine that runs the coding agent
+  // (the desktop launcher). Absolute path, e.g. /Users/x/workspace/client-app.
+  localPath: text("local_path"),
+  defaultBranch: text("default_branch").notNull().default("main"),
+  // Verification command the agent must run (tests, typecheck) — handed to
+  // the coding agent as part of the issue when set.
+  testCommand: text("test_command"),
+  // Last mechanical folder verification performed by the desktop launcher:
+  // { exists, isGit, remoteUrl, remoteMatches, branch, clean, checkedAt, error }.
+  folderCheck: jsonb("folder_check"),
+  folderVerifiedAt: timestamp("folder_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -355,10 +375,41 @@ export const tasks = pgTable(
     // what ran (tests, typecheck, build) and the outcome. The pm reviews
     // this — never blind sign-off — before client acceptance.
     resultSummary: text("result_summary"),
+    // Correction = fix requested on an existing app (HITL approval flow);
+    // feature = regular delivery task (backlog/ready pipeline).
+    kind: taskKindEnum("kind").notNull().default("feature"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [index("tasks_status_idx").on(t.status)],
+);
+
+/**
+ * One row per coding-agent launch (gentle-shell) executed by the desktop
+ * launcher: log trail, exit outcome and parsed report for audit + rework.
+ */
+export const taskRuns = pgTable(
+  "task_runs",
+  {
+    id: id(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    status: taskRunStatusEnum("status").notNull().default("running"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    exitCode: integer("exit_code"),
+    // Absolute path to the full process log on the launcher machine.
+    logPath: text("log_path"),
+    // Absolute path to the composed issue file handed to the agent.
+    issuePath: text("issue_path"),
+    branch: text("branch"),
+    resultSummary: text("result_summary"),
+    prUrl: text("pr_url"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("task_runs_task_idx").on(t.taskId)],
 );
 
 export const tickets = pgTable(

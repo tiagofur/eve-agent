@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Bot,
   Megaphone,
+  Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
 import { OutboxView } from "./views/OutboxView";
@@ -20,15 +21,25 @@ import { TicketsView } from "./views/TicketsView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
 import { MarketingView } from "./views/MarketingView";
-import { crmApi } from "./api";
+import { ConnectionSettings } from "./views/ConnectionSettings";
+import { API_BASE, crmApi } from "./api";
 
 type Tab = "dashboard" | "chat" | "marketing" | "outbox" | "leads" | "clientes" | "tickets" | "projects";
+
+const apiHost = (() => {
+  try {
+    return new URL(API_BASE).host;
+  } catch {
+    return API_BASE;
+  }
+})();
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
   const [chatPrompt, setChatPrompt] = useState<{ id: number; text: string } | null>(null);
+  const [showConnection, setShowConnection] = useState(false);
 
   const askOrchestrator = (text: string) => {
     setChatPrompt({ id: Date.now(), text });
@@ -183,10 +194,14 @@ export const App: React.FC = () => {
 
         {/* Footer / System Status */}
         <div className="p-4 border-t border-zinc-800/80 bg-zinc-900/40">
-          <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowConnection(true)}
+            title={`${API_BASE} — clic para configurar la conexión`}
+            className="w-full flex items-center justify-between text-xs group"
+          >
+            <div className="flex items-center gap-2 min-w-0">
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-2 h-2 rounded-full shrink-0 ${
                   backendOnline === true
                     ? "bg-emerald-400 shadow-sm shadow-emerald-400/80 animate-pulse"
                     : backendOnline === false
@@ -194,21 +209,24 @@ export const App: React.FC = () => {
                     : "bg-zinc-500"
                 }`}
               />
-              <span className="text-zinc-400 font-mono text-[11px]">
+              <span className="text-zinc-400 font-mono text-[11px] truncate">
                 {backendOnline === true
-                  ? "CRM Online (:8787)"
+                  ? `CRM Online · ${apiHost}`
                   : backendOnline === false
-                  ? "CRM Offline"
+                  ? `CRM Offline · ${apiHost}`
                   : "Connecting..."}
               </span>
             </div>
-            <ShieldCheck className="w-3.5 h-3.5 text-zinc-500" />
-          </div>
+            <Settings className="w-3.5 h-3.5 text-zinc-500 group-hover:text-zinc-300 transition shrink-0" />
+          </button>
 
-          <div className="mt-2 text-[10px] text-zinc-500 font-mono truncate">
-            Eve Agent + Gentle Shell
+          <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+            <span className="truncate">Eve Agent + Gentle Shell</span>
+            <ShieldCheck className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
           </div>
         </div>
+
+        <ConnectionSettings open={showConnection} onClose={() => setShowConnection(false)} />
       </aside>
 
       {/* Main Content Area */}
@@ -217,8 +235,9 @@ export const App: React.FC = () => {
           <div className="bg-rose-950/80 border-b border-rose-800 text-rose-300 px-6 py-2.5 text-xs flex items-center gap-2">
             <CircleAlert className="w-4 h-4 flex-shrink-0" />
             <span>
-              <strong>CRM Backend unreachable:</strong> Ensure the Hono API server is running on{" "}
-              <code>http://localhost:8787</code> and Docker Postgres is up.
+              <strong>CRM Backend unreachable:</strong> el API configurado es{" "}
+              <code className="font-mono">{API_BASE}</code>. Verifica que esté desplegado y reachable, o
+              ajusta la conexión en el panel inferior izquierdo.
             </span>
           </div>
         )}
@@ -233,7 +252,7 @@ export const App: React.FC = () => {
           {activeTab === "leads" && <LeadsView />}
           {activeTab === "clientes" && <ClientesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "tickets" && <TicketsView />}
-          {activeTab === "projects" && <ProjectsView />}
+          {activeTab === "projects" && <ProjectsView onAskOrchestrator={askOrchestrator} />}
         </div>
       </main>
     </div>

@@ -80,6 +80,9 @@ export interface CreateTaskInput {
   title: string;
   spec: string; // The complete engineering spec: files, acceptance criteria, test commands
   assignee?: string; // e.g. "gentle-shell", "pi-agent", "human-dev"
+  kind?: "feature" | "correction";
+  /** Corrections default to pending_approval (owner HITL gate); backlog keeps the manual pipeline. */
+  initialStatus?: "pending_approval" | "backlog";
   actor: string;
 }
 
@@ -113,6 +116,8 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     }
   }
 
+  const initialStatus = input.initialStatus ?? "pending_approval";
+
   const [task] = await db
     .insert(tasks)
     .values({
@@ -120,8 +125,9 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
       milestoneId: input.milestoneId,
       title: input.title,
       spec: input.spec,
-      status: "ready", // Ready to be dispatched to a coding agent
+      status: initialStatus,
       assignee: input.assignee ?? "gentle-shell",
+      kind: input.kind ?? "feature",
     })
     .returning();
 
@@ -137,8 +143,9 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
     after: {
       projectId: input.projectId,
       title: input.title,
-      status: "ready",
+      status: initialStatus,
       assignee: task.assignee,
+      kind: task.kind,
     },
     reason: input.title,
   });
@@ -160,19 +167,26 @@ export type UpdateTaskStatusResult =
   | { success: false; code: string; message: string };
 
 /**
- * Strict machine (S1): backlog → ready → dispatched → in_progress →
- * in_review → done, with blocked along the way, retry from blocked, and
- * rework from in_review. Done is terminal. Bad jumps are rejected.
+ * Strict machine (S1). Correction pipeline: pending_approval → approved →
+ * dispatched → in_progress → in_review → done, with rejected (terminal) at
+ * the approval gate. Legacy feature pipeline (backlog → ready → …) is kept
+ * so old tasks and the manual CLI worker keep working. Bad jumps are rejected.
  */
 const TASK_MACHINE: Record<TaskStatus, TaskStatus[]> = {
   backlog: ["ready"],
+  pending_approval: ["approved", "rejected", "blocked"],
+  approved: ["dispatched", "pending_approval", "blocked"],
   ready: ["dispatched", "blocked"],
   dispatched: ["in_progress", "blocked"],
   in_progress: ["in_review", "blocked"],
   in_review: ["done", "in_progress", "blocked"],
-  blocked: ["ready"],
+  blocked: ["ready", "pending_approval", "approved", "dispatched"],
+  rejected: [],
   done: [],
 };
+
+/** Only the owner-scoped approve/reject endpoints may move a task into these. */
+const OWNER_ONLY_TARGETS: ReadonlySet<TaskStatus> = new Set(["approved", "rejected"]);
 
 export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<UpdateTaskStatusResult> {
   const [currentTask] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
@@ -183,6 +197,13 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<Up
   const from = currentTask.status as TaskStatus;
   if (from === input.status) {
     return { success: true, task: currentTask };
+  }
+  if (OWNER_ONLY_TARGETS.has(input.status)) {
+    return {
+      success: false,
+      code: "owner_only_transition",
+      message: `Transition → ${input.status} is reserved to the owner approval endpoints.`,
+    };
   }
   if (!TASK_MACHINE[from].includes(input.status)) {
     return {
@@ -212,5 +233,204 @@ export async function updateTaskStatus(input: UpdateTaskStatusInput): Promise<Up
     after: { status: input.status, prUrl: input.prUrl, resultSummary: input.resultSummary ?? null },
   });
 
-  return { success: true as const, task: updated! };
+  return { success: true, task: updated! };
+}
+
+export interface ApproveTaskInput {
+  taskId: string;
+  actor: string;
+}
+
+export type ApproveTaskResult =
+  | { success: true; task: typeof tasks.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/** Owner HITL gate: pending_approval → approved. The launch itself still re-verifies the folder. */
+export async function approveTask(input: ApproveTaskInput): Promise<ApproveTaskResult> {
+  const [currentTask] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
+  if (!currentTask) {
+    return { success: false, code: "task_not_found", message: `Task ${input.taskId} not found` };
+  }
+  if (currentTask.status !== "pending_approval") {
+    return {
+      success: false,
+      code: "invalid_transition",
+      message: `Only pending_approval tasks can be approved (current: ${currentTask.status}).`,
+    };
+  }
+
+  const [updated] = await db
+    .update(tasks)
+    .set({ status: "approved", updatedAt: new Date() })
+    .where(eq(tasks.id, input.taskId))
+    .returning();
+
+  await logEvent({
+    entity: "task",
+    entityId: input.taskId,
+    action: "task_approved",
+    actor: input.actor,
+    before: { status: "pending_approval" },
+    after: { status: "approved" },
+  });
+
+  return { success: true, task: updated! };
+}
+
+export interface RejectTaskInput {
+  taskId: string;
+  reason?: string;
+  actor: string;
+}
+
+export type RejectTaskResult =
+  | { success: true; task: typeof tasks.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/** Owner HITL gate: pending_approval → rejected (terminal) with an audit reason. */
+export async function rejectTask(input: RejectTaskInput): Promise<RejectTaskResult> {
+  const [currentTask] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
+  if (!currentTask) {
+    return { success: false, code: "task_not_found", message: `Task ${input.taskId} not found` };
+  }
+  if (currentTask.status !== "pending_approval") {
+    return {
+      success: false,
+      code: "invalid_transition",
+      message: `Only pending_approval tasks can be rejected (current: ${currentTask.status}).`,
+    };
+  }
+
+  const [updated] = await db
+    .update(tasks)
+    .set({ status: "rejected", updatedAt: new Date() })
+    .where(eq(tasks.id, input.taskId))
+    .returning();
+
+  await logEvent({
+    entity: "task",
+    entityId: input.taskId,
+    action: "task_rejected",
+    actor: input.actor,
+    before: { status: "pending_approval" },
+    after: { status: "rejected" },
+    reason: input.reason ?? null,
+  });
+
+  return { success: true, task: updated! };
+}
+
+/* ------------------------------------------------------------------ */
+/* Project folder configuration (coding-agent launcher)                */
+/* ------------------------------------------------------------------ */
+
+/** Mechanical verification of a project's local folder, as run by the desktop launcher. */
+export interface FolderCheck {
+  exists: boolean;
+  isGit: boolean;
+  remoteUrl: string | null;
+  /** True when the folder's git remote matches the project repoUrl (null when repoUrl is unset). */
+  remoteMatches: boolean | null;
+  branch: string | null;
+  clean: boolean | null;
+  checkedAt: string;
+  error?: string;
+}
+
+export function isFolderCheckOk(check: FolderCheck, repoUrl?: string | null): boolean {
+  if (check.error || !check.exists || !check.isGit) return false;
+  if (repoUrl && check.remoteMatches !== true) return false;
+  return true;
+}
+
+export interface UpdateProjectFolderInput {
+  projectId: string;
+  localPath?: string | null;
+  defaultBranch?: string;
+  testCommand?: string | null;
+  actor: string;
+}
+
+export type UpdateProjectFolderResult =
+  | { success: true; project: typeof projects.$inferSelect }
+  | { success: false; code: string; message: string };
+
+/** Configure where the project repo lives on the launcher machine. Any previous verification is voided. */
+export async function updateProjectFolder(
+  input: UpdateProjectFolderInput,
+): Promise<UpdateProjectFolderResult> {
+  const [current] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+  if (!current) {
+    return { success: false, code: "project_not_found", message: `Project ${input.projectId} not found` };
+  }
+
+  const pathChanged = input.localPath !== undefined && input.localPath !== current.localPath;
+  const [updated] = await db
+    .update(projects)
+    .set({
+      ...(input.localPath !== undefined ? { localPath: input.localPath } : {}),
+      ...(input.defaultBranch !== undefined ? { defaultBranch: input.defaultBranch } : {}),
+      ...(input.testCommand !== undefined ? { testCommand: input.testCommand } : {}),
+      // A new path invalidates the previous verification.
+      ...(pathChanged ? { folderCheck: null, folderVerifiedAt: null } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(projects.id, input.projectId))
+    .returning();
+
+  await logEvent({
+    entity: "project",
+    entityId: input.projectId,
+    action: "project_folder_configured",
+    actor: input.actor,
+    before: { localPath: current.localPath, defaultBranch: current.defaultBranch },
+    after: {
+      localPath: updated!.localPath,
+      defaultBranch: updated!.defaultBranch,
+      testCommand: updated!.testCommand,
+    },
+  });
+
+  return { success: true, project: updated! };
+}
+
+export interface RecordFolderCheckInput {
+  projectId: string;
+  check: FolderCheck;
+  actor: string;
+}
+
+export type RecordFolderCheckResult =
+  | { success: true; project: typeof projects.$inferSelect; verified: boolean }
+  | { success: false; code: string; message: string };
+
+/** Persist the launcher's folder verification outcome; sets folderVerifiedAt only when the check passes. */
+export async function recordFolderCheck(
+  input: RecordFolderCheckInput,
+): Promise<RecordFolderCheckResult> {
+  const [current] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+  if (!current) {
+    return { success: false, code: "project_not_found", message: `Project ${input.projectId} not found` };
+  }
+
+  const verified = isFolderCheckOk(input.check, current.repoUrl);
+  const [updated] = await db
+    .update(projects)
+    .set({
+      folderCheck: input.check,
+      folderVerifiedAt: verified ? new Date() : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(projects.id, input.projectId))
+    .returning();
+
+  await logEvent({
+    entity: "project",
+    entityId: input.projectId,
+    action: verified ? "project_folder_verified" : "project_folder_check_failed",
+    actor: input.actor,
+    after: { localPath: current.localPath, check: input.check },
+  });
+
+  return { success: true, project: updated!, verified };
 }

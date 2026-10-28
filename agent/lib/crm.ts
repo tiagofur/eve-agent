@@ -332,6 +332,7 @@ export interface CreateTaskParams {
   title: string;
   spec: string;
   assignee?: string;
+  kind?: "feature" | "correction";
 }
 
 export async function crmCreateTask(data: CreateTaskParams) {
@@ -358,6 +359,7 @@ export async function crmCreateTask(data: CreateTaskParams) {
       spec: string;
       status: string;
       assignee: string;
+      kind: string;
       createdAt: string;
     };
   };

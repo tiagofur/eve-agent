@@ -43,6 +43,20 @@ EVE_AGENT_URL="http://127.0.0.1:3000"
 EVE_CHANNEL_USER="<eve-service-user>"
 # Generate once per environment, never commit: openssl rand -hex 32
 EVE_CHANNEL_PASSWORD="<eve-service-password>"
+# PUBLIC web-chat proxy credential — MUST be a different username from
+# EVE_CHANNEL_USER. Sessions authenticated with it are marked as public
+# visitors and staff-only agent tools reject them (agent/lib/guard.ts).
+# Without it the public chat answers 503 (fails closed).
+EVE_PUBLIC_USER="creapolis-public"
+EVE_PUBLIC_PASSWORD="<another-openssl-rand-hex-32>"
+
+# Public chat cost guardrails (CRM-side caps; unset = hardcoded defaults)
+PUBLIC_CHAT_MAX_TURNS_PER_THREAD=60
+PUBLIC_CHAT_DAILY_TURN_BUDGET=400
+
+# WhatsApp inbound throttle per sender (messages per window, window minutes)
+WHATSAPP_THROTTLE_MAX=20
+WHATSAPP_THROTTLE_WINDOW_MINUTES=10
 
 # Google Calendar (real `schedule_consultation`: freebusy + Meet events)
 GOOGLE_CLIENT_ID="<google-oauth-client-id>"
@@ -81,12 +95,24 @@ SEARCH_API_KEY=<your-search-api-key>
 ```
 
 ### Desktop App `desktop/.env` (Mission Control API Access)
-The desktop app reads its CRM connection at dev/build time from Vite environment variables (git-ignored):
+The desktop app talks to exactly one URL: the public CRM API. The eve agent (`eve-agent:3200`) and
+PostgreSQL (`creapolis-db:5432`) are resolved server-side inside the Docker network by
+`docker-compose.prod.yml` — the desktop never connects to them directly.
+
+At dev/build time the connection comes from Vite environment variables (git-ignored; see `desktop/.env.example`):
 ```bash
+# Local development
 VITE_CRM_API_URL=http://localhost:8787
 VITE_CRM_OWNER_KEY=<cp_owner_key>
+
+# Production: public URL fronted by nginx (proxies / -> 127.0.0.1:8787)
+VITE_CRM_API_URL=https://<tu-dominio>
+VITE_CRM_OWNER_KEY=<cp_owner_key-produccion>
 ```
-A runtime override is also honored: `localStorage.setItem("CREAPOLIS_OWNER_KEY", ...)`.
+Runtime overrides (no rebuild needed): the gear icon in the sidebar footer opens the Connection
+panel, which tests and stores the API URL + owner key in localStorage as `CREAPOLIS_API_URL` /
+`CREAPOLIS_OWNER_KEY`; these win over the build-time values, and "Valores compilados" restores them.
+Prefer an `https://` target: the macOS webview may block plain-HTTP API calls from the installed app.
 
 ### Google Calendar one-time consent (`schedule_consultation`)
 1. Google Cloud → project → enable **Google Calendar API**.
@@ -199,12 +225,23 @@ cd crm
 npx tsx src/scripts/clean-test-data.ts
 ```
 
-### D. Running Autonomous Terminal Coding Worker (Gentle Shell)
+### D. Correction Pipeline & Gentle Shell Launcher
+
+The primary path is the Desktop app (Proyectos & Correcciones):
+
+1. **Configure once per project** (Desktop → Proyectos y carpetas): set `localPath` (absolute folder on this Mac), `defaultBranch`, optional `testCommand`, then **Verificar carpeta** — the app checks the folder exists, is a git repo, and its `origin` matches the project's `repoUrl`. Launches are blocked until the folder is verified.
+2. **Request a correction**: ask Eve (chat) — the pm subagent drafts the issue and it lands as `pending_approval` — or use **Nueva corrección** in the desktop form.
+3. **Approve**: pending corrections show project + folder + full issue; **Aprobar y lanzar** (owner key) marks it `approved` and immediately launches gentle-shell in the verified folder (toggle "Lanzar al aprobar" can disable auto-launch). Runs are audited in `task_runs` (log, issue file, branch, exit code, agent report).
+4. **Review**: finished runs land in `in_review` with the agent's report; mark resolved or send back to rework.
+
+Prerequisites on the launcher machine: `gentle-shell` installed (default lookup: `~/.local/bin/gentle-shell`, override with `GENTLE_SHELL_BIN`), and project repos cloned locally.
+
+Manual CLI fallback (prints the task packet, no auto-launch):
+
 ```bash
 cd crm
 npm run gentle
 ```
-*Listens for tasks in `ready` status, creates feature branches, executes test suites, and marks tasks `in_review`.*
 
 ### E. Automated Tests, Type Checks & Agent Scripts
 ```bash
