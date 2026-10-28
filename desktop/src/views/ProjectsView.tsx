@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { crmApi, PipelineTaskItem, ProjectItem, FolderCheckData, TaskRunItem } from "../api";
 import {
   FolderKanban,
@@ -974,6 +975,28 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
             placeholder="/Users/tiagofur/workspace/mi-app"
             className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 font-mono"
           />
+          <button
+            onClick={async () => {
+              if (!isTauri()) {
+                setErr("El selector de carpeta requiere la app de escritorio (Tauri).");
+                return;
+              }
+              try {
+                const picked = await openFolderDialog({
+                  directory: true,
+                  multiple: false,
+                  title: "Elige la carpeta del proyecto",
+                });
+                if (typeof picked === "string" && picked) setLocalPath(picked);
+              } catch (e: any) {
+                setErr(e?.message ?? String(e));
+              }
+            }}
+            title="Seleccionar carpeta…"
+            className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-medium transition shrink-0"
+          >
+            Elegir…
+          </button>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <input
