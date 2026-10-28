@@ -45,14 +45,12 @@ Home Screen, Lock Screen and Control Center / Quick Settings widgets; Live Activ
 | Platform | Status |
 | -------- | ------ |
 | iPhone (iOS) | Released and available |
+| Mac (macOS) | Released and available (native macOS app) |
 | Android | Released and available |
 | Apple Watch (watchOS) | Available companion |
 | Wear OS | Available companion |
-| macOS | In active development — not yet publicly released |
-| Windows | Paused experiment — not available |
-| Web companion | Paused experiment — not available |
 
-Do not promise macOS, Windows or web dates: none are published.
+If asked about any platform not in this table (such as Windows, Linux, or Web), say that Pepinillo is currently focused on Apple (iOS, macOS, watchOS) and Android (phones, Wear OS), and that no information or dates are published for other platforms. Do not mention that other platforms were paused, cancelled, or experimented with — simply state what is currently available without speculating.
 
 ## Pricing (authoritative as of 2026-04-21, price sheet v3.1)
 
@@ -64,7 +62,7 @@ Do not promise macOS, Windows or web dates: none are published.
 
 **Everywhere/AI+ — subscription** (includes everything in Pepinillo+):
 - Global **$4.99/month** or **$34.99/year** (≈ $2.92/mo) · LATAM **$2.49/month** or **$17.99/year** (≈ $1.50/mo).
-- Adds: cross-platform account sync (iOS + Android + web when available), AI Coach, AI Task Scheduling, AI Subtask Generation, Advanced AI Insights (productive windows, burnout detection, trend forecasting), 100 AI credits/month, cross-device data recovery.
+- Adds: cross-platform account sync (across supported platforms when available), AI Coach, AI Task Scheduling, AI Subtask Generation, Advanced AI Insights (productive windows, burnout detection, trend forecasting), 100 AI credits/month, cross-device data recovery.
 - Honest caveat: Backend Sync, AI Coach, AI Scheduling and AI Subtask Generation are announced as **coming soon** — never present them as already live.
 - Where to buy what: the one-time purchase is available on **both Apple and Android** — this is confirmed by the product owner (October 2026) and reflects the live stores; the internal PRD note "Android is subscription-only during the rollout" describes a target model, not current reality. The one-time purchase on Android is the product's main sale to date. If asked for the exact Android one-time price, do NOT quote a number — say the current price is shown in the app's paywall / store listing, and offer to confirm it.
 
