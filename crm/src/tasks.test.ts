@@ -421,6 +421,16 @@ describe("project folder configuration and pipeline", () => {
     expect(goodBody.verified).toBe(true);
     expect(goodBody.project.folderVerifiedAt).not.toBeNull();
 
+    // The desktop serializes an absent error as null (Rust Option::None).
+    const withNullError = await app.request(`/api/projects/${projectId}/folder/verify`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ check: okCheck({ error: null }) }),
+    });
+    expect(withNullError.status).toBe(200);
+    const nullBody = (await withNullError.json()) as { verified: boolean };
+    expect(nullBody.verified).toBe(true);
+
     // Changing the path voids the previous verification.
     const reset = await app.request(`/api/projects/${projectId}/folder`, {
       method: "PATCH",

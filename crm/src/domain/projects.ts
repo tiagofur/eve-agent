@@ -334,7 +334,7 @@ export interface FolderCheck {
   branch: string | null;
   clean: boolean | null;
   checkedAt: string;
-  error?: string;
+  error?: string | null;
 }
 
 export function isFolderCheckOk(check: FolderCheck, repoUrl?: string | null): boolean {

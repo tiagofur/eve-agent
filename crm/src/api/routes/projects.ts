@@ -24,7 +24,8 @@ const folderCheckSchema = z.object({
   branch: z.string().nullable(),
   clean: z.boolean().nullable(),
   checkedAt: z.string().min(1),
-  error: z.string().optional(),
+  // Rust serializes Option::None as null when the check succeeded.
+  error: z.string().nullish(),
 });
 
 export const projectsRouter = new Hono<{ Variables: AuthContextVariables }>();
