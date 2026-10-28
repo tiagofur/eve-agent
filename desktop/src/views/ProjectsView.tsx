@@ -802,8 +802,9 @@ const NewCorrectionForm: React.FC<{
         <Plus className="w-4 h-4 text-cyan-400" /> Nueva corrección (cae en pendiente de aprobación)
         <button
           onClick={onCancel}
+          disabled={busy}
           title="Cerrar sin crear"
-          className="ml-auto p-1 text-zinc-500 hover:text-zinc-200 rounded transition"
+          className="ml-auto p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-40 rounded transition"
         >
           <X className="w-4 h-4" />
         </button>

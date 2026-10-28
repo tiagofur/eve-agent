@@ -3,7 +3,7 @@ import { z } from "zod";
 import { crmListProjects, type CrmProjectItem } from "../lib/crm";
 import { requireStaff } from "../lib/guard";
 
-const norm = (s: string) =>
+export const norm = (s: string) =>
   s
     .toLowerCase()
     .normalize("NFD")
@@ -11,7 +11,8 @@ const norm = (s: string) =>
     .replace(/[^a-z0-9]+/g, "")
     .trim();
 
-function scoreProject(p: CrmProjectItem, query: string): number {
+export function scoreProject(p: CrmProjectItem, query: string): number {
+  if (p.id.toLowerCase() === query.trim().toLowerCase()) return 100;
   const q = norm(query);
   if (!q) return 0;
   const name = norm(p.name);
@@ -59,7 +60,9 @@ export default defineTool({
 
       const best = ranked[0]!;
       const ambiguous =
-        ranked.length > 1 && ranked[1]!.score >= 60 && best.score - ranked[1]!.score < 20;
+        ranked.length > 1 &&
+        (best.score === ranked[1]!.score ||
+          (ranked[1]!.score >= 30 && best.score - ranked[1]!.score < 20));
 
       if (ambiguous) {
         return {

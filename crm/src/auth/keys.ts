@@ -85,12 +85,29 @@ export async function ensureDefaultApiKeys(): Promise<{
 
   for (const scope of scopes) {
     const envRaw = envKeyForScope(scope);
-    // A scope is reachable when its env key (if any) has a live hash, or —
-    // when no env key is configured — when any live hash exists.
-    const hasKey = envRaw
-      ? existing.some((k) => k.scope === scope && !k.revokedAt && k.keyHash === hashApiKey(envRaw))
-      : existing.some((k) => k.scope === scope && !k.revokedAt);
-    if (!hasKey) {
+    if (envRaw && !envRaw.startsWith("cp_")) {
+      console.warn(
+        `[auth] Warning: ${scope.toUpperCase()}_API_KEY does not start with 'cp_'. verifyApiKey requires this prefix.`
+      );
+    }
+
+    const envHash = envRaw ? hashApiKey(envRaw) : null;
+    const existingForHash = envHash ? existing.find((k) => k.keyHash === envHash) : null;
+
+    if (existingForHash) {
+      // The key hash already exists in the DB. If it was revoked, re-activate it
+      // since the operator explicitly configured it in the active environment.
+      if (existingForHash.revokedAt) {
+        await db
+          .update(apiKeys)
+          .set({ revokedAt: null, scope, name: `Env ${scope} key` })
+          .where(eq(apiKeys.id, existingForHash.id));
+      }
+      continue;
+    }
+
+    const hasLiveScopeKey = existing.some((k) => k.scope === scope && !k.revokedAt);
+    if (!hasLiveScopeKey || envRaw) {
       // Prefer the operator-provided env key; only mint a random one when
       // none is configured (local dev), and print it once for capture.
       const raw = envRaw ?? generateRawApiKey(scope);
