@@ -688,6 +688,33 @@ export interface ProjectTaskItem {
   updatedAt: string;
 }
 
+export interface CrmProjectItem {
+  id: string;
+  name: string;
+  status: string;
+  repoUrl: string | null;
+  localPath: string | null;
+  defaultBranch: string;
+  testCommand: string | null;
+  organizationName: string | null;
+  createdAt: string;
+}
+
+export async function crmListProjects(): Promise<{ projects: CrmProjectItem[] }> {
+  const res = await fetch(`${getCrmUrl()}/api/projects`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM project list fetch failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as { projects: CrmProjectItem[] };
+}
+
 export async function crmGetProjectTasks(projectId: string): Promise<{ tasks: ProjectTaskItem[] }> {
   const res = await fetch(`${getCrmUrl()}/api/projects/${projectId}/tasks`, {
     headers: {

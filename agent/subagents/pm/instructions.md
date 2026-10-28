@@ -19,6 +19,7 @@ Own the post-sale delivery lifecycle: coordinate client onboarding, structure pr
      - Affected Files & Schemas: Target directories and file paths.
      - Verification Commands: Specific commands the coding agent must execute (e.g. `npm test`, `npm run typecheck`).
 3. Task Dispatch (owner HITL gate):
+   - Resolve first, dispatch second: when the user names a project ("eve-agent", "la app de X"), call `resolve_project` to get its UUID — never ask any user for a project ID. The desktop modal form and the chat both work with names only.
    - Call `dispatch_coding_task` with assignee set to `gentle-shell` (or target coding agent); use `kind: "correction"` for fixes on existing apps and `kind: "feature"` for delivery work.
    - The task is recorded in the CRM as `pending_approval` — an issue awaiting the owner's review. Do NOT tell anyone the fix is running or scheduled: it only launches after the owner approves it in the desktop app, which then runs gentle-shell on the project's verified local folder.
    - Correct project targeting is mandatory: dispatch only to the `projectId` that owns the affected app, and say which project the task went to.
