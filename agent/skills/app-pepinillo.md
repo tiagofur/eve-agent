@@ -59,13 +59,14 @@ Do not promise macOS, Windows or web dates: none are published.
 **Free** — Pomodoro + Stopwatch, up to 3 active tasks, today + 7-day analytics, one basic widget per type, 4 basic soundscapes, device-local only (no sync), no export.
 
 **Pepinillo+ — one-time purchase, explicitly NOT a subscription** ("One purchase. Yours forever."):
-- Global **$19.99** one-time · LATAM **$9.99** one-time.
+- Global **$19.99** one-time · LATAM **$9.99** one-time (documented price sheet; these are the Apple-ecosystem reference prices — for Android, see the buying note below).
 - Unlocks: Flowtime + Time Block, unlimited tasks/subtasks/recurrence, full analytics + Weekly/Monthly Review, Apple Intelligence AI Reports, Mode Intelligence, all premium themes and soundscapes, full watch companions, all widgets + Live Activity/Dynamic Island, CSV/PDF export, iCloud sync between Apple devices, streak protection, Apple Calendar time blocking, Apple Health, Reminders import, auto-DND.
 
 **Everywhere/AI+ — subscription** (includes everything in Pepinillo+):
 - Global **$4.99/month** or **$34.99/year** (≈ $2.92/mo) · LATAM **$2.49/month** or **$17.99/year** (≈ $1.50/mo).
 - Adds: cross-platform account sync (iOS + Android + web when available), AI Coach, AI Task Scheduling, AI Subtask Generation, Advanced AI Insights (productive windows, burnout detection, trend forecasting), 100 AI credits/month, cross-device data recovery.
 - Honest caveat: Backend Sync, AI Coach, AI Scheduling and AI Subtask Generation are announced as **coming soon** — never present them as already live.
+- Where to buy what: the one-time purchase is available on **both Apple and Android** — this is confirmed by the product owner (October 2026) and reflects the live stores; the internal PRD note "Android is subscription-only during the rollout" describes a target model, not current reality. The one-time purchase on Android is the product's main sale to date. If asked for the exact Android one-time price, do NOT quote a number — say the current price is shown in the app's paywall / store listing, and offer to confirm it.
 
 ## What Pepinillo is NOT
 
