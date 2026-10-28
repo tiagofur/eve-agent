@@ -50,6 +50,17 @@ export async function verifyApiKey(rawKey: string): Promise<{
   };
 }
 
+// Env-provided raw keys (compose passes them as FRONT_API_KEY etc.).
+// Read lazily: server.ts calls dotenv.config() after imports are evaluated,
+// so a module-level read would miss keys from local .env files.
+// The CRM can only verify hashes stored in api_keys, so a scope whose env
+// key has no stored hash is unreachable — seed it instead of minting a
+// random key the agent image can never present.
+function envKeyForScope(scope: ApiScope): string | undefined {
+  const name = `${scope.toUpperCase()}_API_KEY` as const;
+  return process.env[name]?.trim() || undefined;
+}
+
 export async function ensureDefaultApiKeys(): Promise<{
   frontKey: string | null;
   opsKey: string | null;
@@ -73,19 +84,45 @@ export async function ensureDefaultApiKeys(): Promise<{
   const scopes: ApiScope[] = ["front", "ops", "owner", "dev"];
 
   for (const scope of scopes) {
-    const hasKey = existing.some((k) => k.scope === scope && !k.revokedAt);
-    if (!hasKey) {
-      const raw = generateRawApiKey(scope);
+    const envRaw = envKeyForScope(scope);
+    if (envRaw && !envRaw.startsWith("cp_")) {
+      console.warn(
+        `[auth] Warning: ${scope.toUpperCase()}_API_KEY does not start with 'cp_'. verifyApiKey requires this prefix.`
+      );
+    }
+
+    const envHash = envRaw ? hashApiKey(envRaw) : null;
+    const existingForHash = envHash ? existing.find((k) => k.keyHash === envHash) : null;
+
+    if (existingForHash) {
+      // The key hash already exists in the DB. If it was revoked, re-activate it
+      // since the operator explicitly configured it in the active environment.
+      if (existingForHash.revokedAt) {
+        await db
+          .update(apiKeys)
+          .set({ revokedAt: null, scope, name: `Env ${scope} key` })
+          .where(eq(apiKeys.id, existingForHash.id));
+      }
+      continue;
+    }
+
+    const hasLiveScopeKey = existing.some((k) => k.scope === scope && !k.revokedAt);
+    if (!hasLiveScopeKey || envRaw) {
+      // Prefer the operator-provided env key; only mint a random one when
+      // none is configured (local dev), and print it once for capture.
+      const raw = envRaw ?? generateRawApiKey(scope);
       await db.insert(apiKeys).values({
-        name: `Default ${scope} key`,
+        name: envRaw ? `Env ${scope} key` : `Default ${scope} key`,
         scope,
         keyHash: hashApiKey(raw),
       });
 
-      if (scope === "front") result.frontKey = raw;
-      if (scope === "ops") result.opsKey = raw;
-      if (scope === "owner") result.ownerKey = raw;
-      if (scope === "dev") result.devKey = raw;
+      if (!envRaw) {
+        if (scope === "front") result.frontKey = raw;
+        if (scope === "ops") result.opsKey = raw;
+        if (scope === "owner") result.ownerKey = raw;
+        if (scope === "dev") result.devKey = raw;
+      }
     }
   }
 

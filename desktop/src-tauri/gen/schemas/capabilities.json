@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Baseline for the Mission Control window: core IPC (events for live run logs) plus the native folder picker used by the projects view.","local":true,"windows":["*"],"permissions":["core:default","dialog:default"]}}
