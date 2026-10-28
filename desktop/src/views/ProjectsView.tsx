@@ -17,6 +17,7 @@ import {
   ShieldAlert,
   Loader2,
   Plus,
+  X,
   Send,
   FolderOpen,
   CheckCheck,
@@ -494,6 +495,7 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
                 setShowForm(false);
                 fetchData();
               }}
+              onCancel={() => setShowForm(false)}
               onAskOrchestrator={onAskOrchestrator}
             />
           )}
@@ -766,8 +768,9 @@ const LogBox: React.FC<{ text: string }> = ({ text }) => (
 const NewCorrectionForm: React.FC<{
   projects: ProjectItem[];
   onCreated: () => void;
+  onCancel: () => void;
   onAskOrchestrator?: (text: string) => void;
-}> = ({ projects, onCreated, onAskOrchestrator }) => {
+}> = ({ projects, onCreated, onCancel, onAskOrchestrator }) => {
   const [projectId, setProjectId] = useState("");
   const [title, setTitle] = useState("");
   const [spec, setSpec] = useState("");
@@ -797,6 +800,13 @@ const NewCorrectionForm: React.FC<{
     <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5 space-y-3">
       <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
         <Plus className="w-4 h-4 text-cyan-400" /> Nueva corrección (cae en pendiente de aprobación)
+        <button
+          onClick={onCancel}
+          title="Cerrar sin crear"
+          className="ml-auto p-1 text-zinc-500 hover:text-zinc-200 rounded transition"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
@@ -865,6 +875,13 @@ const NewCorrectionForm: React.FC<{
             Redactar con Eve
           </button>
         )}
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          className="flex items-center gap-1.5 px-3 py-2 bg-transparent hover:bg-zinc-800 disabled:opacity-60 text-zinc-400 hover:text-zinc-200 rounded-lg text-sm font-medium transition"
+        >
+          Cancelar
+        </button>
       </div>
     </div>
   );
