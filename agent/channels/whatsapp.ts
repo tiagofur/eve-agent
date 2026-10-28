@@ -1,8 +1,19 @@
 import { createMemoryState } from "@chat-adapter/state-memory";
+import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import type { Message, Thread } from "chat";
 import { chatSdkChannel } from "eve/channels/chat-sdk";
 
-const token = process.env.WHATSAPP_ACCESS_TOKEN?.trim();
+// The adapter throws unless all credentials exist, and eve evaluates channel
+// modules at build time, where the WhatsApp env is absent. Inert placeholders
+// keep the compiled artifact env-independent: an unconfigured deployment
+// mounts a webhook that rejects every Meta signature, so it stays inactive.
+const UNCONFIGURED = "unconfigured";
+const credentials = {
+  accessToken: process.env.WHATSAPP_ACCESS_TOKEN?.trim() || UNCONFIGURED,
+  appSecret: process.env.WHATSAPP_APP_SECRET?.trim() || UNCONFIGURED,
+  phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID?.trim() || UNCONFIGURED,
+  verifyToken: process.env.WHATSAPP_VERIFY_TOKEN?.trim() || UNCONFIGURED,
+};
 
 // Per-sender throttle: bounds how many full agent turns one WhatsApp user
 // can start per window. In-memory like the CRM's IP limiter, so a restart
@@ -64,13 +75,9 @@ async function handleInbound(thread: Thread, message: Message) {
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "Creapolis.Dev",
-  adapters: token
-    ? {
-        whatsapp: (await import("@chat-adapter/whatsapp")).createWhatsAppAdapter({
-          accessToken: token,
-        }),
-      }
-    : {},
+  adapters: {
+    whatsapp: createWhatsAppAdapter(credentials),
+  },
   state: createMemoryState(),
   resolveInputAuth: (event) => ({
     authenticator: "whatsapp",
