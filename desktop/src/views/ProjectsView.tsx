@@ -919,6 +919,13 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
     setErr(null);
     setMsg(null);
     try {
+      // Save the folder config first: a verification only makes sense
+      // attached to a stored path (and saving voids any stale check).
+      await crmApi.updateProjectFolder(project.id, {
+        localPath: localPath.trim() || null,
+        defaultBranch: defaultBranch.trim() || "main",
+        testCommand: testCommand.trim() || null,
+      });
       const check = await invoke<FolderCheckData>("verify_project_folder", {
         path: localPath.trim(),
         expectedRemote: project.repoUrl ?? null,
