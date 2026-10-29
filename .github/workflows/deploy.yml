@@ -29,6 +29,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,10 +103,7 @@ jobs:
           REMOTE
 
       - name: Notify Telegram
-        if: ${{ always() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_ADMIN_CHAT_ID != '' }}
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+        if: ${{ always() && env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_ADMIN_CHAT_ID != '' }}
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             ICON="🚀"; VERB="Deploy OK"
