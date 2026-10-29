@@ -234,13 +234,32 @@ export interface OrganizationItem {
 
 export interface OrganizationSummary {
   organization: OrganizationItem;
-  contacts: Array<{ id: string; name: string; email: string | null; phone: string | null; role: string | null }>;
+  contacts: Array<{
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+    role: string | null;
+    preferredChannel: string | null;
+  }>;
   leads: LeadItem[];
   projects: ProjectItem[];
   tickets: TicketItem[];
   dossiers: DossierItem[];
   drafts: OutboxDraft[];
   timeline: TimelineEvent[];
+}
+
+export const CONTACT_CHANNELS = ["whatsapp", "email", "telegram", "linkedin", "phone", "web", "other"] as const;
+export type ContactChannel = (typeof CONTACT_CHANNELS)[number];
+
+/** Payload para crear o editar un contacto (los null limpian el campo). */
+export interface ContactPayload {
+  name: string;
+  role?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  preferredChannel?: ContactChannel | null;
 }
 
 export interface DossierItem {
@@ -270,6 +289,9 @@ export interface LeadDetailsResponse {
   lead: LeadItem & {
     organizationDomain: string | null;
     stageChangedAt: string | null;
+    contactId: string | null;
+    contactRole: string | null;
+    contactPreferredChannel: string | null;
   };
   dossiers: DossierItem[];
   drafts: OutboxDraft[];
@@ -296,6 +318,40 @@ export const crmApi = {
     request<{ organizations: OrganizationItem[] }>("/api/organizations"),
   getOrganizationSummary: (orgId: string) =>
     request<OrganizationSummary>(`/api/organizations/${orgId}/summary`),
+  /** Corrección manual de datos de la empresa desde la ficha 360. */
+  updateOrganization: (
+    orgId: string,
+    data: {
+      name?: string;
+      domain?: string | null;
+      website?: string | null;
+      industry?: string | null;
+      city?: string | null;
+      country?: string | null;
+    }
+  ) =>
+    request<{ success: boolean; organization: OrganizationItem }>(`/api/organizations/${orgId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  /** Añadir un contacto a una organización (ficha 360). */
+  createOrgContact: (orgId: string, data: ContactPayload) =>
+    request<{ success: boolean; contact: { id: string } }>(`/api/organizations/${orgId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** Editar un contacto (ficha 360 o carátula de lead: el lead une contra esta fila). */
+  updateContact: (contactId: string, data: Partial<ContactPayload>) =>
+    request<{ success: boolean; contact: { id: string } }>(`/api/contacts/${contactId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  /** Crear y vincular un contacto a un lead que llegó sin verificación. */
+  createLeadContact: (leadId: string, data: ContactPayload) =>
+    request<{ success: boolean; contact: { id: string } }>(`/api/leads/${leadId}/contact`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   convertLead: (leadId: string, projectName?: string) =>
     request<{ success: boolean; project: ProjectItem }>(`/api/leads/${leadId}/convert`, {
       method: "POST",

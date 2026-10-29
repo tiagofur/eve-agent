@@ -9,6 +9,7 @@ import { ingestLead, changeLeadStage } from "../../domain/leads";
 import { logEvent } from "../../domain/events";
 import { createProject } from "../../domain/projects";
 import { LEAD_STAGES } from "../../domain/lead-stages";
+import { channelEnum } from "../../db/schema";
 
 export const leadsRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -186,6 +187,74 @@ leadsRouter.patch(
   }
 );
 
+// Attach a contact to a lead that arrived without one (ops only). Leads only
+// get a contact row when research verified an email/phone; this closes the
+// "sin contacto verificado" gap that otherwise blocks outreach approval.
+leadsRouter.post(
+  "/:id/contact",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      name: z.string().min(1).max(200),
+      role: z.string().max(120).nullable().optional(),
+      email: z.string().email().max(200).nullable().optional(),
+      phone: z.string().max(40).nullable().optional(),
+      preferredChannel: z.enum(channelEnum.enumValues).nullable().optional(),
+    })
+  ),
+  async (c) => {
+    const leadId = c.req.param("id");
+    const { name, role, email, phone, preferredChannel } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [lead] = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+    if (!lead) {
+      return c.json({ error: "Lead not found" }, 404);
+    }
+    if (lead.contactId) {
+      return c.json({ error: "Lead already has a contact; edit it instead" }, 409);
+    }
+
+    const [created] = await db
+      .insert(contacts)
+      .values({
+        organizationId: lead.organizationId,
+        name: name.trim(),
+        role: role ?? null,
+        email: email ?? null,
+        phone: phone ?? null,
+        preferredChannel: preferredChannel ?? null,
+        // Manual entry does not attest WhatsApp consent; ingestLead only
+        // implies consent when the contact themselves provided the phone.
+        whatsappConsent: false,
+      })
+      .returning();
+
+    await db
+      .update(leads)
+      .set({ contactId: created!.id, updatedAt: new Date() })
+      .where(eq(leads.id, leadId));
+
+    await logEvent({
+      entity: "contact",
+      entityId: created!.id,
+      action: "created",
+      actor,
+      after: { name: created!.name, email: email ?? null, phone: phone ?? null, leadId },
+    });
+    await logEvent({
+      entity: "lead",
+      entityId: leadId,
+      action: "contact_linked",
+      actor,
+      after: { contactId: created!.id },
+    });
+
+    return c.json({ success: true, contact: created }, 201);
+  }
+);
+
 // List leads (ops or owner only)
 leadsRouter.get("/", requireScope(["ops"]), async (c) => {
   const result = await db
@@ -233,6 +302,8 @@ leadsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
       contactName: contacts.name,
       contactEmail: contacts.email,
       contactPhone: contacts.phone,
+      contactRole: contacts.role,
+      contactPreferredChannel: contacts.preferredChannel,
     })
     .from(leads)
     .leftJoin(organizations, eq(leads.organizationId, organizations.id))

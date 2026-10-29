@@ -15,8 +15,151 @@ import {
 } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
+import { channelEnum } from "../../db/schema";
 
 export const organizationsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+const contactPayloadSchema = z.object({
+  name: z.string().min(1).max(200),
+  role: z.string().max(120).nullable().optional(),
+  email: z.string().email().max(200).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
+  preferredChannel: z.enum(channelEnum.enumValues).nullable().optional(),
+});
+
+/**
+ * Manual ops corrections from the Client 360 sheet (agent-first: humans can
+ * fix or complete company data without going through the orchestrator).
+ */
+organizationsRouter.patch(
+  "/:id",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      name: z.string().min(1).max(200).optional(),
+      domain: z.string().min(1).max(200).nullable().optional(),
+      website: z.string().max(300).nullable().optional(),
+      industry: z.string().max(120).nullable().optional(),
+      city: z.string().max(120).nullable().optional(),
+      country: z.string().max(120).nullable().optional(),
+    })
+  ),
+  async (c) => {
+    const orgId = c.req.param("id");
+    const patch = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [org] = await db
+      .select()
+      .from(organizations)
+      .where(sql`${organizations.id} = ${orgId}`)
+      .limit(1);
+    if (!org) {
+      return c.json({ error: "Organization not found" }, 404);
+    }
+
+    if (patch.domain != null) {
+      const normalized = patch.domain
+        .trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/+$/, "")
+        .toLowerCase();
+      if (!normalized) {
+        return c.json({ error: "Domain cannot be empty" }, 400);
+      }
+      const [clash] = await db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(
+          sql`${organizations.domain} = ${normalized} AND ${organizations.id} <> ${orgId}`
+        )
+        .limit(1);
+      if (clash) {
+        return c.json({ error: "That domain already belongs to another organization" }, 409);
+      }
+      patch.domain = normalized;
+    }
+
+    const before: Record<string, unknown> = {};
+    const changed: Record<string, unknown> = {};
+    for (const key of ["name", "domain", "website", "industry", "city", "country"] as const) {
+      const next = patch[key];
+      if (next === undefined) continue;
+      const current = org[key];
+      if (current !== next) {
+        before[key] = current;
+        changed[key] = next;
+      }
+    }
+    if (Object.keys(changed).length === 0) {
+      return c.json({ error: "No fields to update" }, 400);
+    }
+
+    const [updated] = await db
+      .update(organizations)
+      .set({ ...changed, updatedAt: new Date() } as Partial<typeof organizations.$inferInsert>)
+      .where(sql`${organizations.id} = ${orgId}`)
+      .returning();
+
+    await logEvent({
+      entity: "organization",
+      entityId: orgId,
+      action: "updated",
+      actor,
+      before,
+      after: changed,
+    });
+
+    return c.json({ success: true, organization: updated });
+  }
+);
+
+// Add a contact manually from the Client 360 sheet (ops only). Manual rows do
+// not attest WhatsApp consent: ingestLead only implies consent when the contact
+// themselves provided the phone.
+organizationsRouter.post(
+  "/:id/contacts",
+  requireScope(["ops"]),
+  zValidator("json", contactPayloadSchema),
+  async (c) => {
+    const orgId = c.req.param("id");
+    const { name, role, email, phone, preferredChannel } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [org] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(sql`${organizations.id} = ${orgId}`)
+      .limit(1);
+    if (!org) {
+      return c.json({ error: "Organization not found" }, 404);
+    }
+
+    const [created] = await db
+      .insert(contacts)
+      .values({
+        organizationId: orgId,
+        name: name.trim(),
+        role: role ?? null,
+        email: email ?? null,
+        phone: phone ?? null,
+        preferredChannel: preferredChannel ?? null,
+        whatsappConsent: false,
+      })
+      .returning();
+
+    await logEvent({
+      entity: "contact",
+      entityId: created!.id,
+      action: "created",
+      actor,
+      after: { name: created!.name, role: role ?? null, email: email ?? null, phone: phone ?? null, organizationId: orgId },
+    });
+
+    return c.json({ success: true, contact: created }, 201);
+  }
+);
 
 // Set or clear a follow-up reminder on a client (ops only)
 organizationsRouter.patch(

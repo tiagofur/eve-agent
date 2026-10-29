@@ -3,8 +3,10 @@ import {
   crmApi,
   LeadItem,
   LeadDetailsResponse,
+  type ContactPayload,
 } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
+import { ContactModal, type ContactInitial } from "./Client360Modals";
 import {
   SlideOver,
   Modal,
@@ -33,6 +35,8 @@ import {
   Globe,
   FileText,
   Copy,
+  Pencil,
+  Plus,
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, { label: string; color: string }> = {
@@ -95,6 +99,10 @@ export const LeadsView: React.FC = () => {
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"intelligence" | "outreach" | "timeline">("intelligence");
+  // Contacto del lead: editar el vinculado o crear+vincular si llegó sin contacto
+  const [contactModal, setContactModal] = useState<
+    { mode: "create" } | { mode: "edit"; contactId: string } | null
+  >(null);
 
   // Advance Stage Modal State
   const [selectedLead, setSelectedLead] = useState<LeadItem | null>(null);
@@ -142,6 +150,38 @@ export const LeadsView: React.FC = () => {
     setLeadDetails(null);
     setDrawerError(null);
   };
+
+  const handleSaveLeadContact = async (payload: ContactPayload) => {
+    if (!leadDetails) return;
+    if (contactModal?.mode === "edit") {
+      await crmApi.updateContact(contactModal.contactId, payload);
+    } else {
+      await crmApi.createLeadContact(leadDetails.lead.id, payload);
+    }
+    await openLeadDrawer(leadDetails.lead.id);
+    fetchLeads();
+  };
+
+  const openContactModal = () => {
+    const lead = leadDetails?.lead;
+    if (!lead) return;
+    if (lead.contactId) {
+      setContactModal({ mode: "edit", contactId: lead.contactId });
+    } else {
+      setContactModal({ mode: "create" });
+    }
+  };
+
+  const leadContactInitial: ContactInitial | null =
+    leadDetails?.lead.contactId && leadDetails.lead.contactName
+      ? {
+          name: leadDetails.lead.contactName,
+          role: leadDetails.lead.contactRole ?? null,
+          email: leadDetails.lead.contactEmail,
+          phone: leadDetails.lead.contactPhone,
+          preferredChannel: leadDetails.lead.contactPreferredChannel,
+        }
+      : null;
 
   const openTransitionModal = (lead: LeadItem, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -566,6 +606,11 @@ export const LeadsView: React.FC = () => {
                       <div className="min-w-0">
                         <div className="text-sm font-semibold text-white">
                           {leadDetails.lead.contactName || "Contacto sin registrar"}
+                          {leadDetails.lead.contactRole && (
+                            <span className="ml-2 text-xs font-normal text-zinc-500">
+                              {leadDetails.lead.contactRole}
+                            </span>
+                          )}
                         </div>
                         {leadDetails.lead.organizationName && (
                           <div className="text-xs text-zinc-500 mt-0.5">
@@ -573,10 +618,27 @@ export const LeadsView: React.FC = () => {
                           </div>
                         )}
                       </div>
-                      <ContactActions
-                        email={leadDetails.lead.contactEmail}
-                        phone={leadDetails.lead.contactPhone}
-                      />
+                      <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                        <ContactActions
+                          email={leadDetails.lead.contactEmail}
+                          phone={leadDetails.lead.contactPhone}
+                        />
+                        <button
+                          onClick={openContactModal}
+                          title={
+                            leadDetails.lead.contactId
+                              ? "Editar el contacto de este lead"
+                              : "Añadir y vincular un contacto a este lead"
+                          }
+                          className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 border border-transparent hover:border-zinc-700 transition"
+                        >
+                          {leadDetails.lead.contactId ? (
+                            <Pencil className="w-3.5 h-3.5" />
+                          ) : (
+                            <Plus className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                     <div className="px-4 py-3">
                       <InfoGrid
@@ -631,10 +693,18 @@ export const LeadsView: React.FC = () => {
                       )}
                     </div>
                     {!leadDetails.lead.contactEmail && !leadDetails.lead.contactPhone && (
-                      <div className="px-4 py-2.5 bg-amber-950/20 text-xs text-amber-300 flex items-start gap-2">
-                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                        Sin email ni teléfono: completá el contacto del lead antes de aprobar y enviar
-                        outreach.
+                      <div className="px-4 py-2.5 bg-amber-950/20 text-xs text-amber-300 flex items-center justify-between gap-2">
+                        <span className="flex items-start gap-2">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          Sin email ni teléfono: completá el contacto del lead antes de aprobar y
+                          enviar outreach.
+                        </span>
+                        <button
+                          onClick={() => setContactModal({ mode: "create" })}
+                          className="shrink-0 px-2.5 py-1 font-semibold bg-amber-900/60 hover:bg-amber-900 text-amber-200 border border-amber-700 rounded-md transition"
+                        >
+                          Completar
+                        </button>
                       </div>
                     )}
                   </section>
@@ -904,6 +974,21 @@ export const LeadsView: React.FC = () => {
               </>
             ) : null}
         </SlideOver>
+      )}
+
+      {/* Añadir / editar el contacto del lead */}
+      {activeLeadId && contactModal && (
+        <ContactModal
+          title={contactModal.mode === "edit" ? "Editar contacto del lead" : "Añadir contacto al lead"}
+          description={
+            contactModal.mode === "edit"
+              ? undefined
+              : "Crea el contacto, lo vincula al lead y desbloquea la aprobación de outreach."
+          }
+          initial={contactModal.mode === "edit" ? leadContactInitial : null}
+          onSubmit={handleSaveLeadContact}
+          onClose={() => setContactModal(null)}
+        />
       )}
 
       {/* Advance Stage Modal */}
