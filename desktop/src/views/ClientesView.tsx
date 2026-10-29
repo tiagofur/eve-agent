@@ -1,9 +1,26 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, OrganizationItem, OrganizationSummary } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
-import { Building2, RefreshCw, Search, Users, FolderKanban, LifeBuoy, FileText, History } from "lucide-react";
+import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle } from "lucide-react";
 
 import { ThreadDrawer } from "./ThreadDrawer";
+import {
+  SlideOver,
+  Badge,
+  EmptyState,
+  SectionHeading,
+  SectionList,
+  InfoGrid,
+  ContactActions,
+  Skeleton,
+} from "../components/ui";
+
+const PROJECT_STATUS_TONES: Record<string, "emerald" | "teal" | "cyan" | "amber" | "zinc"> = {
+  active: "emerald",
+  onboarding: "teal",
+  support: "cyan",
+  paused: "amber",
+};
 
 export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => void }> = ({ onAskOrchestrator }) => {
   const [orgs, setOrgs] = useState<OrganizationItem[]>([]);
@@ -14,6 +31,7 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [summary, setSummary] = useState<OrganizationSummary | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [threadContact, setThreadContact] = useState<{ id: string; name: string } | null>(null);
 
   const fetchOrgs = async () => {
@@ -36,15 +54,22 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
   const openSummary = async (orgId: string) => {
     setActiveOrgId(orgId);
     setDrawerLoading(true);
+    setDrawerError(null);
+    setSummary(null);
     try {
       const res = await crmApi.getOrganizationSummary(orgId);
       setSummary(res);
     } catch (err: any) {
-      alert(`No se pudo cargar la ficha 360: ${err.message}`);
-      setActiveOrgId(null);
+      setDrawerError(err.message || "No se pudo cargar la ficha 360.");
     } finally {
       setDrawerLoading(false);
     }
+  };
+
+  const closeDrawer = () => {
+    setActiveOrgId(null);
+    setSummary(null);
+    setDrawerError(null);
   };
 
   const filtered = orgs.filter((o) => {
@@ -53,6 +78,10 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
     if (typeFilter === "prospect" && isClient) return false;
     return `${o.name} ${o.domain ?? ""} ${o.city ?? ""}`.toLowerCase().includes(search.toLowerCase());
   });
+
+  const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? null;
+  const activeIsClient = (activeOrg?.projectCount ?? 0) > 0;
+  const closeThread = () => setThreadContact(null);
 
   return (
     <div className="space-y-6">
@@ -126,22 +155,171 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
       </div>
 
       {activeOrgId && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={() => { setActiveOrgId(null); setSummary(null); }}>
-          <div
-            className="w-full max-w-2xl h-full overflow-y-auto bg-zinc-950 border-l border-zinc-800 p-6 space-y-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {drawerLoading || !summary ? (
-              <p className="text-sm text-zinc-500">Cargando ficha 360°...</p>
-            ) : (
+        <SlideOver
+          onClose={closeDrawer}
+          title={activeOrg?.name ?? "Ficha 360°"}
+          badge={
+            activeOrg && (
+              <Badge tone={activeIsClient ? "emerald" : "sky"}>
+                {activeIsClient
+                  ? `Cliente · ${activeOrg.projectCount} proy.`
+                  : `Prospecto · ${activeOrg.leadCount ?? 0} leads`}
+              </Badge>
+            )
+          }
+          meta={
+            <>
+              {(activeOrg?.domain || activeOrg?.website) && (
+                <a
+                  href={
+                    activeOrg.website
+                      ? activeOrg.website.startsWith("http")
+                        ? activeOrg.website
+                        : `https://${activeOrg.website}`
+                      : `https://${activeOrg.domain}`
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-1 text-cyan-400 hover:underline"
+                >
+                  <Globe className="w-3 h-3" />
+                  {activeOrg.domain || activeOrg.website}
+                </a>
+              )}
+              {(activeOrg?.city || activeOrg?.country) && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-zinc-500" />
+                  {[activeOrg.city, activeOrg.country].filter(Boolean).join(", ")}
+                </span>
+              )}
+              {activeOrg?.industry && <span>{activeOrg.industry}</span>}
+            </>
+          }
+        >
+          <div className="p-6 space-y-6">
+            {drawerLoading && (
+              <div className="space-y-4" aria-label="Cargando ficha 360°">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-5 w-28" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            )}
+
+            {drawerError && (
+              <div className="p-4 bg-rose-950/50 border border-rose-800 text-rose-300 rounded-xl flex items-center justify-between gap-3 text-sm">
+                <span className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  {drawerError}
+                </span>
+                <button
+                  onClick={() => openSummary(activeOrgId)}
+                  className="px-3 py-1.5 text-xs font-semibold bg-rose-900/60 hover:bg-rose-900 border border-rose-700 rounded-lg transition shrink-0"
+                >
+                  Reintentar
+                </button>
+              </div>
+            )}
+
+            {summary && (
               <>
-                <div>
-                  <h3 className="text-lg font-bold text-white">{summary.organization.name}</h3>
-                  <p className="text-xs text-zinc-500 font-mono">
-                    {summary.organization.domain || "Sin dominio"} · {summary.contacts.length} contactos ·{" "}
-                    {summary.leads.length} leads · {summary.projects.length} proyectos · {summary.tickets.length} tickets
-                  </p>
-                </div>
+                {/* Carátula: empresa + personas con datos para contactar a la vista */}
+                <section className="space-y-3">
+                  <SectionHeading icon={BookUser} title="Datos de contacto" />
+                  <SectionList>
+                    <div className="py-3.5">
+                      <InfoGrid
+                        items={[
+                          {
+                            label: "Sitio web",
+                            value:
+                              summary.organization.domain || summary.organization.website ? (
+                                <a
+                                  href={
+                                    summary.organization.website
+                                      ? summary.organization.website.startsWith("http")
+                                        ? summary.organization.website
+                                        : `https://${summary.organization.website}`
+                                      : `https://${summary.organization.domain}`
+                                  }
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-cyan-400 hover:underline inline-flex items-center gap-1"
+                                >
+                                  {summary.organization.domain || summary.organization.website}
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </a>
+                              ) : null,
+                          },
+                          {
+                            label: "Ubicación",
+                            value:
+                              [summary.organization.city, summary.organization.country]
+                                .filter(Boolean)
+                                .join(", ") || null,
+                          },
+                          { label: "Industria", value: summary.organization.industry },
+                          {
+                            label: activeIsClient ? "Cliente desde" : "Registrado",
+                            value: new Date(summary.organization.createdAt).toLocaleDateString(),
+                          },
+                        ]}
+                      />
+                    </div>
+                    {summary.contacts.map((c) => (
+                      <div key={c.id} className="py-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <div className="text-sm font-semibold text-white">
+                            {c.name}
+                            {c.role && (
+                              <span className="ml-2 text-xs font-normal text-zinc-500">{c.role}</span>
+                            )}
+                          </div>
+                          {c.email && (
+                            <a
+                              href={`mailto:${c.email}`}
+                              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-emerald-400 transition w-fit"
+                            >
+                              {c.email}
+                            </a>
+                          )}
+                          {c.phone && (
+                            <a
+                              href={`tel:${c.phone.replace(/[\s()-]/g, "")}`}
+                              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-emerald-400 transition w-fit"
+                            >
+                              {c.phone}
+                            </a>
+                          )}
+                          {!c.email && !c.phone && (
+                            <div className="text-xs text-zinc-600">Sin email ni teléfono registrados</div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                          <ContactActions email={c.email} phone={c.phone} />
+                          <button
+                            onClick={() => setThreadContact({ id: c.id, name: c.name })}
+                            title={`Ver hilo de conversación con ${c.name}`}
+                            className="px-2.5 py-1 text-xs font-medium bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md transition"
+                          >
+                            Hilo
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {summary.contacts.length === 0 && (
+                      <div className="py-3">
+                        <EmptyState
+                          icon={BookUser}
+                          title="Sin contactos registrados."
+                          hint="Cuando el agente o tú registréis el primer contacto, aparecerá aquí con email y teléfono."
+                        />
+                      </div>
+                    )}
+                  </SectionList>
+                </section>
 
                 <FollowUpForm
                   kind="organization"
@@ -151,53 +329,114 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                   onSaved={() => openSummary(summary.organization.id)}
                 />
 
-                <section>
-                  <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><Users className="w-4 h-4" /> Contactos</h4>
-                  {summary.contacts.length === 0 && <p className="text-xs text-zinc-600">Sin contactos.</p>}
-                  {summary.contacts.map((c) => (
-                    <div key={c.id} className="flex items-center justify-between gap-2 py-1">
-                      <div className="text-sm text-zinc-300">{c.name} <span className="text-zinc-500 font-mono text-xs">{c.email || c.phone || ""}</span></div>
-                      <button
-                        onClick={() => setThreadContact({ id: c.id, name: c.name })}
-                        className="px-2.5 py-1 text-xs font-medium bg-teal-950/80 hover:bg-teal-900 text-teal-300 border border-teal-700/60 rounded-md transition"
-                      >
-                        Hilo
-                      </button>
+                <section className="space-y-3">
+                  <SectionHeading icon={FolderKanban} title="Proyectos" count={summary.projects.length} />
+                  {summary.projects.length === 0 ? (
+                    <EmptyState
+                      icon={FolderKanban}
+                      title="Sin proyectos todavía."
+                      hint={
+                        activeIsClient
+                          ? "Cuando se convierta un lead o se cree un proyecto, aparecerá aquí."
+                          : "Aún es un prospecto: los proyectos aparecen al convertir un lead en cliente."
+                      }
+                    />
+                  ) : (
+                    <SectionList>
+                      {summary.projects.map((p) => (
+                        <div key={p.id} className="py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-white truncate">{p.name}</div>
+                            <div className="text-xs text-zinc-500 mt-0.5">
+                              Desde {new Date(p.createdAt).toLocaleDateString()}
+                              {p.repoUrl && (
+                                <a
+                                  href={p.repoUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="ml-2 text-cyan-400 hover:underline inline-flex items-center gap-0.5"
+                                >
+                                  repositorio <ArrowUpRight className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          <Badge tone={PROJECT_STATUS_TONES[p.status] ?? "zinc"}>{p.status}</Badge>
+                        </div>
+                      ))}
+                    </SectionList>
+                  )}
+                </section>
+
+                <section className="space-y-3">
+                  <SectionHeading icon={FileText} title="Leads" count={summary.leads.length} />
+                  {summary.leads.length === 0 ? (
+                    <EmptyState icon={FileText} title="Sin leads asociados." />
+                  ) : (
+                    <SectionList>
+                      {summary.leads.map((l) => (
+                        <div key={l.id} className="py-3 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm text-zinc-200 truncate">
+                              {l.summary || l.source || "Sin notas"}
+                            </div>
+                            <div className="text-xs text-zinc-500 mt-0.5">
+                              Creado {new Date(l.createdAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <Badge tone="sky">{l.stage}</Badge>
+                        </div>
+                      ))}
+                    </SectionList>
+                  )}
+                </section>
+
+                <section className="space-y-3">
+                  <SectionHeading icon={LifeBuoy} title="Tickets" count={summary.tickets.length} />
+                  {summary.tickets.length === 0 ? (
+                    <EmptyState icon={LifeBuoy} title="Sin tickets de soporte." />
+                  ) : (
+                    <SectionList>
+                      {summary.tickets.map((t) => (
+                        <div key={t.id} className="py-3 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm text-zinc-200">{t.description}</div>
+                            <div className="text-xs text-zinc-500 mt-0.5">
+                              {t.system} · {new Date(t.createdAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <Badge tone={t.severity === "critical" ? "rose" : t.severity === "major" ? "amber" : "zinc"}>
+                            {t.status}
+                          </Badge>
+                        </div>
+                      ))}
+                    </SectionList>
+                  )}
+                </section>
+
+                <section className="space-y-3">
+                  <SectionHeading icon={History} title="Historial" />
+                  {summary.timeline.length === 0 ? (
+                    <EmptyState icon={History} title="Sin eventos registrados." />
+                  ) : (
+                    <div className="rounded-xl border border-zinc-800 px-4 py-2 divide-y divide-zinc-800/50">
+                      {summary.timeline.slice(0, 20).map((e) => (
+                        <div key={e.id} className="py-2 text-xs font-mono flex items-center gap-2 min-w-0">
+                          <span className="text-zinc-500 shrink-0">
+                            {new Date(e.createdAt).toLocaleDateString()}
+                          </span>
+                          <span className="text-emerald-400 shrink-0">{e.action}</span>
+                          <span className="text-zinc-500 shrink-0">{e.entity}</span>
+                          <span className="text-zinc-600 truncate">{e.actor}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><FileText className="w-4 h-4" /> Leads</h4>
-                  {summary.leads.map((l) => (
-                    <div key={l.id} className="text-sm text-zinc-300">{l.stage} · {l.summary || l.source}</div>
-                  ))}
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><FolderKanban className="w-4 h-4" /> Proyectos</h4>
-                  {summary.projects.map((p) => (
-                    <div key={p.id} className="text-sm text-zinc-300">{p.name} <span className="text-zinc-500">({p.status})</span></div>
-                  ))}
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><LifeBuoy className="w-4 h-4" /> Tickets</h4>
-                  {summary.tickets.map((t) => (
-                    <div key={t.id} className="text-sm text-zinc-300">{t.status} · {t.system} · {t.description.slice(0, 80)}</div>
-                  ))}
-                </section>
-
-                <section>
-                  <h4 className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><History className="w-4 h-4" /> Historial</h4>
-                  {summary.timeline.slice(0, 20).map((e) => (
-                    <div key={e.id} className="text-xs text-zinc-500 font-mono">{e.createdAt} · {e.entity}/{e.action} · {e.actor}</div>
-                  ))}
+                  )}
                 </section>
               </>
             )}
           </div>
-        </div>
+        </SlideOver>
       )}
       {threadContact && summary && (
         <ThreadDrawer
@@ -205,9 +444,9 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
           contactName={threadContact.name}
           organizationId={summary.organization.id}
           organizationName={summary.organization.name}
-          onClose={() => setThreadContact(null)}
+          onClose={closeThread}
           onAskOrchestrator={(prompt) => {
-            setThreadContact(null);
+            closeThread();
             onAskOrchestrator(prompt);
           }}
         />

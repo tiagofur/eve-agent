@@ -6,6 +6,14 @@ import {
 } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
 import {
+  SlideOver,
+  Modal,
+  Badge,
+  InfoGrid,
+  ContactActions,
+  Skeleton,
+} from "../components/ui";
+import {
   Users,
   Search,
   RefreshCw,
@@ -42,6 +50,22 @@ const STAGE_LABELS: Record<string, { label: string; color: string }> = {
   support: { label: "Soporte", color: "bg-cyan-900/60 text-cyan-300 border border-cyan-700" },
 };
 
+// Tonos del Badge compartido por etapa (mismos matices que STAGE_LABELS).
+const STAGE_TONES: Record<string, "slate" | "sky" | "blue" | "indigo" | "purple" | "amber" | "orange" | "emerald" | "rose" | "teal" | "cyan"> = {
+  new: "slate",
+  researched: "sky",
+  contacted: "blue",
+  qualified: "indigo",
+  discovery: "purple",
+  proposal: "amber",
+  contract: "orange",
+  won: "emerald",
+  lost: "rose",
+  onboarding: "teal",
+  active: "emerald",
+  support: "cyan",
+};
+
 // Espejo exacto de crm/src/domain/lead-stages.ts (TRANSITIONS).
 const NEXT_STAGES: Record<string, string[]> = {
   new: ["researched", "contacted", "qualified", "lost"],
@@ -69,6 +93,7 @@ export const LeadsView: React.FC = () => {
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
   const [leadDetails, setLeadDetails] = useState<LeadDetailsResponse | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"intelligence" | "outreach" | "timeline">("intelligence");
 
   // Advance Stage Modal State
@@ -99,13 +124,14 @@ export const LeadsView: React.FC = () => {
   const openLeadDrawer = async (leadId: string) => {
     setActiveLeadId(leadId);
     setDrawerLoading(true);
+    setDrawerError(null);
+    setLeadDetails(null);
     try {
       const details = await crmApi.getLeadDetails(leadId);
       setLeadDetails(details);
       setDrawerTab("intelligence");
     } catch (err: any) {
-      alert(`Could not load intelligence for lead: ${err.message}`);
-      setActiveLeadId(null);
+      setDrawerError(err.message || "No se pudo cargar la ficha del lead.");
     } finally {
       setDrawerLoading(false);
     }
@@ -114,6 +140,7 @@ export const LeadsView: React.FC = () => {
   const closeDrawer = () => {
     setActiveLeadId(null);
     setLeadDetails(null);
+    setDrawerError(null);
   };
 
   const openTransitionModal = (lead: LeadItem, e?: React.MouseEvent) => {
@@ -393,55 +420,59 @@ export const LeadsView: React.FC = () => {
 
       {/* Slide-over Drawer for Lead / Prospect AI Details */}
       {activeLeadId && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-2xl bg-zinc-950 border-l border-zinc-800 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
-            {/* Drawer Header */}
-            <div className="p-6 border-b border-zinc-800/80 flex items-start justify-between bg-zinc-900/40">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-emerald-400 uppercase font-semibold">
-                    Prospect Intelligence
+        <SlideOver
+          onClose={closeDrawer}
+          title={leadDetails?.lead.contactName || leadDetails?.lead.organizationName || "Lead details"}
+          badge={
+            leadDetails && (
+              <Badge tone={STAGE_TONES[leadDetails.lead.stage] ?? "zinc"}>
+                {STAGE_LABELS[leadDetails.lead.stage]?.label || leadDetails.lead.stage}
+              </Badge>
+            )
+          }
+          meta={
+            leadDetails && (
+              <>
+                {leadDetails.lead.organizationName && (
+                  <span className="flex items-center gap-1">
+                    <Building2 className="w-3 h-3 text-zinc-500" />
+                    {leadDetails.lead.organizationName}
                   </span>
-                  {leadDetails && (
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        STAGE_LABELS[leadDetails.lead.stage]?.color || "bg-zinc-800"
-                      }`}
-                    >
-                      {STAGE_LABELS[leadDetails.lead.stage]?.label || leadDetails.lead.stage}
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-xl font-bold text-white mt-1">
-                  {leadDetails?.lead.contactName || leadDetails?.lead.organizationName || "Lead Details"}
-                </h3>
-                {leadDetails?.lead.organizationName && (
-                  <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
-                    <span className="flex items-center gap-1">
-                      <Building2 className="w-3 h-3 text-zinc-500" />
-                      {leadDetails.lead.organizationName}
-                    </span>
-                    {leadDetails.lead.organizationDomain && (
-                      <a
-                        href={`https://${leadDetails.lead.organizationDomain}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-1 text-cyan-400 hover:underline"
-                      >
-                        <Globe className="w-3 h-3" />
-                        {leadDetails.lead.organizationDomain}
-                      </a>
-                    )}
-                  </div>
                 )}
-              </div>
-              <button
-                onClick={closeDrawer}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+                {leadDetails.lead.organizationDomain && (
+                  <a
+                    href={`https://${leadDetails.lead.organizationDomain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 text-cyan-400 hover:underline"
+                  >
+                    <Globe className="w-3 h-3" />
+                    {leadDetails.lead.organizationDomain}
+                  </a>
+                )}
+                <span className="font-mono uppercase">{leadDetails.lead.source}</span>
+                <span>Desde {new Date(leadDetails.lead.createdAt).toLocaleDateString()}</span>
+              </>
+            )
+          }
+          footer={
+            leadDetails && !drawerLoading && !drawerError ? (
+              <>
+                <div className="text-xs text-zinc-400">
+                  Lead ID:{" "}
+                  <span className="font-mono text-zinc-300">{leadDetails.lead.id.slice(0, 8)}...</span>
+                </div>
+                <button
+                  onClick={() => openTransitionModal(leadDetails.lead)}
+                  className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-lg transition shadow-md"
+                >
+                  Advance Pipeline Stage <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </>
+            ) : undefined
+          }
+          footerClassName="flex items-center justify-between gap-3"
+        >
             {leadDetails?.lead.stage === "won" && (
               <div className="px-6 py-3 border-b border-zinc-800/80 bg-teal-950/30">
                 <button
@@ -456,7 +487,7 @@ export const LeadsView: React.FC = () => {
                       organizationName: leadDetails.lead.organizationName,
                       contactName: leadDetails.lead.contactName,
                       contactEmail: leadDetails.lead.contactEmail,
-                      contactPhone: (leadDetails.lead as LeadItem).contactPhone ?? null,
+                      contactPhone: leadDetails.lead.contactPhone ?? null,
                     })
                   }
                   disabled={convertingId === leadDetails.lead.id}
@@ -468,14 +499,30 @@ export const LeadsView: React.FC = () => {
             )}
 
             {drawerLoading ? (
-              <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
-                <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-                Loading AI dossier and timeline...
+              <div className="p-6 space-y-4" aria-label="Cargando ficha del lead">
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-5 w-48" />
+                <Skeleton className="h-32 w-full" />
+              </div>
+            ) : drawerError ? (
+              <div className="p-6">
+                <div className="p-4 bg-rose-950/50 border border-rose-800 text-rose-300 rounded-xl flex items-center justify-between gap-3 text-sm">
+                  <span className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    {drawerError}
+                  </span>
+                  <button
+                    onClick={() => openLeadDrawer(activeLeadId)}
+                    className="px-3 py-1.5 text-xs font-semibold bg-rose-900/60 hover:bg-rose-900 border border-rose-700 rounded-lg transition shrink-0"
+                  >
+                    Reintentar
+                  </button>
+                </div>
               </div>
             ) : leadDetails ? (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Drawer Nav Tabs */}
-                <div className="flex border-b border-zinc-800 px-6 gap-6 bg-zinc-900/20">
+              <>
+                {/* Drawer Nav Tabs (pegajosas bajo el header mientras se scrollea) */}
+                <div className="sticky top-0 z-10 bg-zinc-950/95 backdrop-blur border-b border-zinc-800 px-6 gap-6 flex">
                   <button
                     onClick={() => setDrawerTab("intelligence")}
                     className={`py-3 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition ${
@@ -512,16 +559,92 @@ export const LeadsView: React.FC = () => {
                 </div>
 
                 {/* Drawer Content */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-5">
-                  {leadDetails && (
-                    <FollowUpForm
+                <div className="p-6 space-y-5">
+                  {/* Carátula de contacto: quién es y cómo llegarle, siempre a la vista */}
+                  <section className="rounded-xl border border-zinc-800 divide-y divide-zinc-800/70">
+                    <div className="px-4 py-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white">
+                          {leadDetails.lead.contactName || "Contacto sin registrar"}
+                        </div>
+                        {leadDetails.lead.organizationName && (
+                          <div className="text-xs text-zinc-500 mt-0.5">
+                            {leadDetails.lead.organizationName}
+                          </div>
+                        )}
+                      </div>
+                      <ContactActions
+                        email={leadDetails.lead.contactEmail}
+                        phone={leadDetails.lead.contactPhone}
+                      />
+                    </div>
+                    <div className="px-4 py-3">
+                      <InfoGrid
+                        items={[
+                          {
+                            label: "Email",
+                            value: leadDetails.lead.contactEmail ? (
+                              <a
+                                href={`mailto:${leadDetails.lead.contactEmail}`}
+                                className="text-cyan-400 hover:underline"
+                              >
+                                {leadDetails.lead.contactEmail}
+                              </a>
+                            ) : null,
+                          },
+                          {
+                            label: "Teléfono",
+                            value: leadDetails.lead.contactPhone ? (
+                              <a
+                                href={`tel:${leadDetails.lead.contactPhone.replace(/[\s()-]/g, "")}`}
+                                className="text-cyan-400 hover:underline"
+                              >
+                                {leadDetails.lead.contactPhone}
+                              </a>
+                            ) : null,
+                          },
+                          {
+                            label: "Origen",
+                            value: (
+                              <span className="font-mono text-xs uppercase">
+                                {leadDetails.lead.source}
+                              </span>
+                            ),
+                          },
+                          { label: "Servicio", value: leadDetails.lead.serviceType },
+                          {
+                            label: "Registrado",
+                            value: new Date(leadDetails.lead.createdAt).toLocaleDateString(),
+                          },
+                          {
+                            label: "Etapa actual desde",
+                            value: leadDetails.lead.stageChangedAt
+                              ? new Date(leadDetails.lead.stageChangedAt).toLocaleDateString()
+                              : null,
+                          },
+                        ]}
+                      />
+                      {leadDetails.lead.summary && (
+                        <p className="text-sm text-zinc-300 leading-relaxed mt-3">
+                          {leadDetails.lead.summary}
+                        </p>
+                      )}
+                    </div>
+                    {!leadDetails.lead.contactEmail && !leadDetails.lead.contactPhone && (
+                      <div className="px-4 py-2.5 bg-amber-950/20 text-xs text-amber-300 flex items-start gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        Sin email ni teléfono: completá el contacto del lead antes de aprobar y enviar
+                        outreach.
+                      </div>
+                    )}
+                  </section>
+                  <FollowUpForm
                       kind="lead"
                       entityId={leadDetails.lead.id}
                       currentAt={leadDetails.lead.nextFollowUpAt}
                       currentNote={leadDetails.lead.followUpNote}
                       onSaved={() => openLeadDrawer(leadDetails.lead.id)}
-                    />
-                  )}
+                  />
                   {/* TAB 1: AI INTELLIGENCE & DOSSIER */}
                   {drawerTab === "intelligence" && (
                     <div className="space-y-4">
@@ -778,38 +901,26 @@ export const LeadsView: React.FC = () => {
                     </div>
                   )}
                 </div>
-
-                {/* Bottom Quick-Action Footer */}
-                <div className="p-4 border-t border-zinc-800 bg-zinc-900/60 flex items-center justify-between">
-                  <div className="text-xs text-zinc-400">
-                    Lead ID: <span className="font-mono text-zinc-300">{leadDetails.lead.id.slice(0, 8)}...</span>
-                  </div>
-                  <button
-                    onClick={() => openTransitionModal(leadDetails.lead)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-xs font-bold rounded-lg transition shadow-md"
-                  >
-                    Advance Pipeline Stage <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
+              </>
             ) : null}
-          </div>
-        </div>
+        </SlideOver>
       )}
 
       {/* Advance Stage Modal */}
       {selectedLead && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-md w-full shadow-2xl">
-            <h3 className="text-lg font-semibold text-white mb-1">Advance Lead Stage</h3>
-            <p className="text-xs text-zinc-400 mb-4">
+        <Modal
+          onClose={() => setSelectedLead(null)}
+          title="Advance Lead Stage"
+          description={
+            <>
               Moving lead for{" "}
               <span className="text-emerald-400 font-medium">
                 {selectedLead.contactName || selectedLead.organizationName || selectedLead.id}
               </span>{" "}
               (current: {selectedLead.stage})
-            </p>
-
+            </>
+          }
+        >
             <form onSubmit={handleStageSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1">
@@ -878,8 +989,7 @@ export const LeadsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
