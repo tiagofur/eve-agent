@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { crmApi, OrganizationItem, OrganizationSummary } from "../api";
+import { crmApi, OrganizationItem, OrganizationSummary, type ContactPayload } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
-import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle } from "lucide-react";
+import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle, Plus, Pencil } from "lucide-react";
 
 import { ThreadDrawer } from "./ThreadDrawer";
+import { ContactModal, OrgDataModal, type ContactInitial, type OrgDataInitial } from "./Client360Modals";
 import {
   SlideOver,
   Badge,
@@ -33,6 +34,11 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [threadContact, setThreadContact] = useState<{ id: string; name: string } | null>(null);
+  // Edición manual (agent-first también significa poder corregir a mano)
+  const [contactModal, setContactModal] = useState<
+    { mode: "create" } | { mode: "edit"; contact: ContactInitial & { id: string } } | null
+  >(null);
+  const [orgModalOpen, setOrgModalOpen] = useState(false);
 
   const fetchOrgs = async () => {
     try {
@@ -70,6 +76,23 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
     setActiveOrgId(null);
     setSummary(null);
     setDrawerError(null);
+  };
+
+  const handleSaveContact = async (payload: ContactPayload) => {
+    if (!activeOrgId) return;
+    if (contactModal?.mode === "edit") {
+      await crmApi.updateContact(contactModal.contact.id, payload);
+    } else {
+      await crmApi.createOrgContact(activeOrgId, payload);
+    }
+    await openSummary(activeOrgId);
+  };
+
+  const handleSaveOrg = async (patch: Partial<OrgDataInitial>) => {
+    if (!activeOrgId) return;
+    await crmApi.updateOrganization(activeOrgId, patch);
+    await openSummary(activeOrgId);
+    fetchOrgs();
   };
 
   const filtered = orgs.filter((o) => {
@@ -227,7 +250,19 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
               <>
                 {/* Carátula: empresa + personas con datos para contactar a la vista */}
                 <section className="space-y-3">
-                  <SectionHeading icon={BookUser} title="Datos de contacto" />
+                  <SectionHeading
+                    icon={Building2}
+                    title="Datos de la empresa"
+                    action={
+                      <button
+                        onClick={() => setOrgModalOpen(true)}
+                        title="Editar datos de la empresa"
+                        className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    }
+                  />
                   <SectionList>
                     <div className="py-3.5">
                       <InfoGrid
@@ -268,6 +303,24 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                         ]}
                       />
                     </div>
+                  </SectionList>
+                </section>
+
+                <section className="space-y-3">
+                  <SectionHeading
+                    icon={BookUser}
+                    title="Contactos"
+                    count={summary.contacts.length}
+                    action={
+                      <button
+                        onClick={() => setContactModal({ mode: "create" })}
+                        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-md transition"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Añadir
+                      </button>
+                    }
+                  />
+                  <SectionList>
                     {summary.contacts.map((c) => (
                       <div key={c.id} className="py-3 flex items-start justify-between gap-3">
                         <div className="min-w-0 space-y-1">
@@ -297,8 +350,27 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                             <div className="text-xs text-zinc-600">Sin email ni teléfono registrados</div>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                           <ContactActions email={c.email} phone={c.phone} />
+                          <button
+                            onClick={() =>
+                              setContactModal({
+                                mode: "edit",
+                                contact: {
+                                  id: c.id,
+                                  name: c.name,
+                                  role: c.role,
+                                  email: c.email,
+                                  phone: c.phone,
+                                  preferredChannel: c.preferredChannel,
+                                },
+                              })
+                            }
+                            title={`Editar contacto de ${c.name}`}
+                            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
                           <button
                             onClick={() => setThreadContact({ id: c.id, name: c.name })}
                             title={`Ver hilo de conversación con ${c.name}`}
@@ -314,7 +386,7 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                         <EmptyState
                           icon={BookUser}
                           title="Sin contactos registrados."
-                          hint="Cuando el agente o tú registréis el primer contacto, aparecerá aquí con email y teléfono."
+                          hint="Añade a quien implementa el sistema, contabilidad, dirección… con su email o teléfono."
                         />
                       </div>
                     )}
@@ -437,6 +509,31 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
             )}
           </div>
         </SlideOver>
+      )}
+      {contactModal && (
+        <ContactModal
+          title={contactModal.mode === "edit" ? "Editar contacto" : "Añadir contacto"}
+          description={
+            summary ? `Se guarda en la ficha de ${summary.organization.name}.` : undefined
+          }
+          initial={contactModal.mode === "edit" ? contactModal.contact : null}
+          onSubmit={handleSaveContact}
+          onClose={() => setContactModal(null)}
+        />
+      )}
+      {orgModalOpen && summary && (
+        <OrgDataModal
+          initial={{
+            name: summary.organization.name,
+            domain: summary.organization.domain,
+            website: summary.organization.website,
+            industry: summary.organization.industry,
+            city: summary.organization.city,
+            country: summary.organization.country,
+          }}
+          onSubmit={handleSaveOrg}
+          onClose={() => setOrgModalOpen(false)}
+        />
       )}
       {threadContact && summary && (
         <ThreadDrawer
