@@ -120,12 +120,15 @@ ticketsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
       followUpNote: tickets.followUpNote,
       createdAt: tickets.createdAt,
       updatedAt: tickets.updatedAt,
+      projectId: tickets.projectId,
+      projectName: projects.name,
       contactName: contacts.name,
       contactEmail: contacts.email,
       contactPhone: contacts.phone,
     })
     .from(tickets)
     .leftJoin(contacts, eq(tickets.contactId, contacts.id))
+    .leftJoin(projects, eq(tickets.projectId, projects.id))
     .where(sql`${tickets.id} = ${ticketId}`);
 
   if (!ticket) {
