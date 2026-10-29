@@ -74,7 +74,7 @@ jobs:
       - name: Build images
         run: |
           ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
-            "cd ${{ secrets.DEPLOY_PATH }} && docker compose -f docker-compose.prod.yml build eve-agent creapolis-crm"
+            "cd ${{ secrets.DEPLOY_PATH }} && docker compose -f docker-compose.prod.yml build eve-agent creapolis-crm creapolis-worker"
 
       - name: Apply database migrations
         # One-off container on the compose network. On failure the job stops
