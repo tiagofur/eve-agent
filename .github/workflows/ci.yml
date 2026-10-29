@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    name: Agent typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  crm:
+    name: CRM typecheck + tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: creapolis
+          POSTGRES_PASSWORD: creapolis
+          POSTGRES_DB: creapolis
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U creapolis -d creapolis"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crm/package-lock.json
+      - run: npm ci
+        working-directory: crm
+      - run: npm run db:migrate
+        working-directory: crm
+      - run: npm run typecheck
+        working-directory: crm
+      - run: npm run test
+        working-directory: crm
+
+  desktop:
+    name: Desktop typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci
+        working-directory: desktop
+      - run: npx tsc --noEmit
+        working-directory: desktop
