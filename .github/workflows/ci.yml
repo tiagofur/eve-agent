@@ -20,7 +20,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # Root and crm lockfiles drift from package.json; npm install (not ci)
+      # matches what Dockerfile.eve/Dockerfile.crm do at image build time.
+      - run: npm install --no-audit --no-fund
       - run: npm run typecheck
 
   crm:
@@ -47,7 +49,7 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: crm/package-lock.json
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
         working-directory: crm
       - run: npm run db:migrate
         working-directory: crm
