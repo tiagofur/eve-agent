@@ -80,12 +80,40 @@ services:
       - META_INSTAGRAM_ACCOUNT_ID=${META_INSTAGRAM_ACCOUNT_ID}
       - SEARCH_PROVIDER=${SEARCH_PROVIDER}
       - SEARCH_API_KEY=${SEARCH_API_KEY}
+      - WORKER_LOG_ROOT=/data/worker/runs
+    volumes:
+      - worker_data:/data:ro
     depends_on:
       creapolis-db:
         condition: service_healthy
       eve-agent:
         condition: service_started
 
+  # Worker VPS del pipeline de correcciones: reclama tareas aprobadas,
+  # clona/pullea el repo y ejecuta gentle-shell headless; reporta el
+  # resultado al CRM. Sobrevive al cierre de la app desktop.
+  creapolis-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: creapolis-worker
+    restart: unless-stopped
+    environment:
+      - CRM_API_URL=http://creapolis-crm:8787
+      - OPS_API_KEY=${CRM_OPS_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - WORKER_POLL_SECONDS=${WORKER_POLL_SECONDS:-30}
+      - WORKER_LEASE_HOURS=${WORKER_LEASE_HOURS:-4}
+      - WORKSPACE_ROOT=/data/workspaces
+      - WORKER_LOG_ROOT=/data/worker/runs
+    volumes:
+      - worker_data:/data
+      - gentle_shell_home:/root/.gentle-shell
+    depends_on:
+      - creapolis-crm
+
 volumes:
   creapolis_pgdata:
   eve_workflow_data:
+  worker_data:
+  gentle_shell_home:
