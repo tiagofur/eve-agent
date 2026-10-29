@@ -127,6 +127,13 @@
       "when": 1793206156699,
       "tag": "0017_open_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793287514679,
+      "tag": "0018_faithful_sebastian_shaw",
+      "breakpoints": true
     }
   ]
 }

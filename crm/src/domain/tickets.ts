@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import {
   tickets,
+  tasks,
   contacts,
   organizations,
   outbox,
@@ -13,6 +14,10 @@ import {
 import { logEvent } from "./events";
 import { notifySupportTicketCreated } from "../services/telegram";
 import { createOutreachDraft } from "./outbox";
+// Runtime-only cycle with ./projects (both modules only call each other's
+// exports inside function bodies): safe for ESM live bindings. Do not add a
+// module-scope call on either side.
+import { createTask, rejectTask } from "./projects";
 
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
 export type TicketStatus = (typeof ticketStatusEnum.enumValues)[number];
@@ -323,6 +328,33 @@ export async function updateTicketContent(
     reason: input.reason || "Ticket content corrected",
   });
 
+  // Any project change on an approved support ticket supersedes pending
+  // corrections aimed at the old link — unlinking included: a pending
+  // correction must never outlive the project it was dispatched from.
+  // Re-linking to a NEW project then re-dispatches to the right target;
+  // approved or in-flight work is never touched (rejectTask only accepts
+  // pending).
+  const projectChanged =
+    input.projectId !== undefined && input.projectId !== current.projectId;
+  if (projectChanged && updated.kind === "support" && updated.status === "in_progress") {
+    const pendingCorrections = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.ticketId, input.ticketId), eq(tasks.status, "pending_approval")));
+    for (const pending of pendingCorrections) {
+      await rejectTask({
+        taskId: pending.id,
+        reason: input.projectId
+          ? "Superseded: the ticket was re-linked to a different project"
+          : "Superseded: the ticket's project link was removed",
+        actor: input.actor,
+      });
+    }
+    if (input.projectId) {
+      await maybeDispatchCorrection(input.ticketId, input.actor);
+    }
+  }
+
   return { success: true, ticket: updated };
 }
 
@@ -395,7 +427,126 @@ export async function updateTicketStatus(input: UpdateTicketStatusInput) {
     reason: input.reason || `Status changed to ${input.status}`,
   });
 
+  // GATE 1 handoff is mechanical: owner approval IS the dispatch order. The
+  // correction task lands in the coding queue (pending_approval, GATE 2)
+  // without depending on the agent noticing the approval.
+  if (from === "open" && input.status === "in_progress") {
+    await maybeDispatchCorrection(input.ticketId, input.actor);
+  }
+
   return { success: true, ticket: updated };
+}
+
+/** Task statuses that count as an in-flight correction attempt. */
+const ACTIVE_CORRECTION_STATUSES = [
+  "pending_approval",
+  "approved",
+  "ready",
+  "dispatched",
+  "in_progress",
+  "in_review",
+  "blocked",
+] as const;
+
+/**
+ * Dispatch the ticket's correction to the coding queue when the pipeline
+ * expects one: an approved `support` ticket with a linked project and no
+ * active correction task. A rejected/done task never blocks a fresh attempt.
+ * The owner-blocking skip (no project linked) is audited on the timeline;
+ * an info ticket or an already-active attempt returns silently. This hook
+ * must never break the transition that triggered it.
+ *
+ * Race safety lives in the DB: the partial unique index
+ * `tasks_one_active_correction_per_ticket` rejects a second active attempt
+ * even when two approvals race the check-then-insert (a row lock here would
+ * deadlock against the task insert's FK check on this same row).
+ */
+export async function maybeDispatchCorrection(ticketId: string, actor: string): Promise<void> {
+  try {
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId)).limit(1);
+    if (!ticket || ticket.kind !== "support") return;
+
+    if (!ticket.projectId) {
+      await logEvent({
+        entity: "ticket",
+        entityId: ticketId,
+        action: "correction_dispatch_blocked",
+        actor,
+        after: { reason: "ticket has no project linked — link one to dispatch the correction" },
+      });
+      return;
+    }
+
+    const [active] = await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(
+        and(eq(tasks.ticketId, ticketId), inArray(tasks.status, [...ACTIVE_CORRECTION_STATUSES]))
+      )
+      .limit(1);
+    if (active) return;
+
+    const spec =
+      `Origen: ticket de soporte ${ticket.id} (severidad ${ticket.severity}, ` +
+      `SLA ${ticket.slaDueAt.toISOString()}).\n` +
+      `Sistema afectado: ${ticket.system}.\n\n` +
+      "Problema reportado (cliente):\n" +
+      `${ticket.description}\n\n` +
+      "Criterios de aceptación:\n" +
+      "- Reproducir el problema descrito y corregirlo en el repo del proyecto.\n" +
+      "- Demostrar la corrección con la verificación del proyecto (tests/typecheck/build) " +
+      "y resumir en resultSummary qué se ejecutó y el resultado.";
+
+    const result = await createTask({
+      projectId: ticket.projectId,
+      ticketId: ticket.id,
+      title: `Corrección: ${ticket.system}`.slice(0, 200),
+      spec,
+      assignee: "gentle-shell",
+      kind: "correction",
+      actor,
+    });
+
+    if (!result.success) {
+      if (result.code === "correction_already_active") {
+        // A concurrent dispatch won the race: one active attempt exists, which
+        // is the invariant — audit it and move on.
+        await logEvent({
+          entity: "ticket",
+          entityId: ticketId,
+          action: "correction_dispatch_duplicate",
+          actor,
+          after: { reason: "a concurrent dispatch already created the active correction" },
+        });
+        return;
+      }
+      await logEvent({
+        entity: "ticket",
+        entityId: ticketId,
+        action: "correction_auto_dispatch_failed",
+        actor,
+        after: { code: result.code, error: result.message },
+      });
+      return;
+    }
+
+    await logEvent({
+      entity: "ticket",
+      entityId: ticketId,
+      action: "correction_auto_dispatched",
+      actor,
+      after: { taskId: result.task.id, title: result.task.title },
+      reason: "Owner approval dispatched the correction to the coding queue (GATE 2 pending)",
+    });
+  } catch (err) {
+    await logEvent({
+      entity: "ticket",
+      entityId: ticketId,
+      action: "correction_auto_dispatch_failed",
+      actor,
+      after: { error: err instanceof Error ? err.message : "unknown error" },
+    }).catch(() => {});
+  }
 }
 
 /**

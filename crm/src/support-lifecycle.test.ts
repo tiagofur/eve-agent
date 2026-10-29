@@ -13,7 +13,7 @@ import {
   interactions,
   events,
 } from "./db/schema";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 
 /**
  * Support lifecycle (ITIL-inspired): ticket → owner triage → linked
@@ -36,6 +36,36 @@ describe("support ticket → correction → client notification lifecycle", () =
   const draftIds: string[] = [];
 
   beforeAll(async () => {
+    // Defensive sweep: a crashed previous run leaves its fixtures behind
+    // (failed afterAlls cascade), and the key hashes collide on re-insert.
+    await db
+      .delete(apiKeys)
+      .where(inArray(apiKeys.keyHash, [hashApiKey(opsKey), hashApiKey(ownerKey)]));
+    const [staleProject] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(eq(projects.name, "TEST-Lifecycle App"))
+      .limit(1);
+    if (staleProject) await db.delete(tasks).where(eq(tasks.projectId, staleProject.id));
+    await db.delete(projects).where(eq(projects.name, "TEST-Lifecycle App"));
+    const [staleOrg] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.name, "TEST-Lifecycle Org"))
+      .limit(1);
+    if (staleOrg) {
+      await db.delete(outbox).where(eq(outbox.organizationId, staleOrg.id));
+      await db.delete(tickets).where(eq(tickets.organizationId, staleOrg.id));
+      await db.delete(contacts).where(eq(contacts.organizationId, staleOrg.id));
+      await db.delete(organizations).where(eq(organizations.id, staleOrg.id));
+    }
+    // A stale reporter contact can outlive its org (set null on unlink).
+    await db
+      .delete(contacts)
+      .where(
+        inArray(contacts.email, ["lifecycle@test.example", "fresh-reporter@test.example"])
+      );
+
     await db.insert(apiKeys).values([
       { name: "Lifecycle Ops", scope: "ops", keyHash: hashApiKey(opsKey) },
       { name: "Lifecycle Owner", scope: "owner", keyHash: hashApiKey(ownerKey) },
@@ -62,17 +92,23 @@ describe("support ticket → correction → client notification lifecycle", () =
   });
 
   afterAll(async () => {
-    await db.delete(interactions).where(eq(interactions.contactId, contactId));
-    // Per-org sweep catches every draft of this run, linked or not.
-    await db.delete(outbox).where(eq(outbox.organizationId, orgId));
-    for (const id of taskIds) await db.delete(tasks).where(eq(tasks.id, id));
-    for (const id of ticketIds) await db.delete(tickets).where(eq(tickets.id, id));
-    await db.delete(contacts).where(eq(contacts.id, contactId));
-    await db.delete(projects).where(eq(projects.id, projectId));
-    await db.delete(organizations).where(eq(organizations.id, orgId));
-    await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(opsKey)));
-    await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(ownerKey)));
-    await pool.end();
+    try {
+      if (contactId) await db.delete(interactions).where(eq(interactions.contactId, contactId));
+      // Per-org sweep catches every draft of this run, linked or not.
+      if (orgId) await db.delete(outbox).where(eq(outbox.organizationId, orgId));
+      for (const id of taskIds) await db.delete(tasks).where(eq(tasks.id, id));
+      for (const id of ticketIds) await db.delete(tickets).where(eq(tickets.id, id));
+      if (contactId) await db.delete(contacts).where(eq(contacts.id, contactId));
+      if (projectId) await db.delete(projects).where(eq(projects.id, projectId));
+      if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
+    } finally {
+      // Keys are swept unconditionally: even a mid-run failure must not make
+      // the next run collide on the hash unique index.
+      await db
+        .delete(apiKeys)
+        .where(inArray(apiKeys.keyHash, [hashApiKey(opsKey), hashApiKey(ownerKey)]));
+      await pool.end();
+    }
   });
 
   const createTicket = async (system: string) => {
@@ -92,6 +128,30 @@ describe("support ticket → correction → client notification lifecycle", () =
     const body = (await res.json()) as { ticketId: string };
     ticketIds.push(body.ticketId);
     return { res, body };
+  };
+
+  // Since GATE 1 approval auto-dispatches the correction, tests walk the
+  // auto-created task instead of dispatching manually.
+  const newestTaskFor = async (ticketId: string) =>
+    (
+      await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.ticketId, ticketId))
+        .orderBy(desc(tasks.createdAt))
+        .limit(1)
+    )[0]!;
+
+  const walkToDone = async (taskId: string, resultSummary = "tests + typecheck OK") => {
+    await app.request(`/api/projects/tasks/${taskId}/approve`, { method: "POST", headers: ownerHeaders });
+    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
+      const res = await app.request(`/api/projects/tasks/${taskId}/status`, {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ status, resultSummary, prUrl: "https://github.com/x/y/pull/1" }),
+      });
+      expect(res.status).toBe(200);
+    }
   };
 
   it("creates a ticket linked to the project and organization", async () => {
@@ -124,7 +184,7 @@ describe("support ticket → correction → client notification lifecycle", () =
     expect(json.code).toBe("ticket_not_approved");
   });
 
-  it("allows dispatch after owner triage and keeps the ticket in_progress", async () => {
+  it("owner approval auto-dispatches the correction and keeps the ticket in_progress", async () => {
     const { body } = await createTicket("Lifecycle App flow");
     const ticketId = body.ticketId;
 
@@ -144,23 +204,13 @@ describe("support ticket → correction → client notification lifecycle", () =
     });
     expect(approve.status).toBe(200);
 
-    const dispatch = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        projectId,
-        ticketId,
-        title: "Fix the real problem",
-        spec: "Full engineering spec",
-        kind: "correction",
-      }),
-    });
-    expect(dispatch.status).toBe(201);
-    const taskJson = (await dispatch.json()) as { task: { id: string } };
-    taskIds.push(taskJson.task.id);
-
-    const [task] = await db.select().from(tasks).where(eq(tasks.id, taskJson.task.id));
-    expect(task!.ticketId).toBe(ticketId);
+    // Approval IS the dispatch order: the correction task exists, linked.
+    const task = await newestTaskFor(ticketId);
+    taskIds.push(task.id);
+    expect(task.status).toBe("pending_approval");
+    expect(task.kind).toBe("correction");
+    expect(task.projectId).toBe(projectId);
+    expect(task.spec).toContain(ticketId);
 
     const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     expect(ticket!.status).toBe("in_progress");
@@ -175,31 +225,9 @@ describe("support ticket → correction → client notification lifecycle", () =
       body: JSON.stringify({ status: "in_progress" }),
     });
 
-    const dispatch = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        projectId,
-        ticketId,
-        title: "Fix autoresolve",
-        spec: "spec",
-        kind: "correction",
-      }),
-    });
-    const taskJson = (await dispatch.json()) as { task: { id: string } };
-    const taskId = taskJson.task.id;
-    taskIds.push(taskId);
-
-    // Walk the machine to done: approve (owner) → dispatched → in_progress → in_review → done.
-    await app.request(`/api/projects/tasks/${taskId}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      const res = await app.request(`/api/projects/tasks/${taskId}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status, resultSummary: "tests + typecheck OK", prUrl: "https://github.com/x/y/pull/1" }),
-      });
-      expect(res.status).toBe(200);
-    }
+    const task = await newestTaskFor(ticketId);
+    taskIds.push(task.id);
+    await walkToDone(task.id);
 
     const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     expect(ticket!.status).toBe("resolved");
@@ -222,21 +250,9 @@ describe("support ticket → correction → client notification lifecycle", () =
       headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
-    const dispatch = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId, title: "Fix sent", spec: "spec", kind: "correction" }),
-    });
-    const taskJson = (await dispatch.json()) as { task: { id: string } };
-    taskIds.push(taskJson.task.id);
-    await app.request(`/api/projects/tasks/${taskJson.task.id}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      await app.request(`/api/projects/tasks/${taskJson.task.id}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status, resultSummary: "OK" }),
-      });
-    }
+    const task = await newestTaskFor(ticketId);
+    taskIds.push(task.id);
+    await walkToDone(task.id, "OK");
 
     const [draft] = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
     draftIds.push(draft!.id);
@@ -335,18 +351,14 @@ describe("support ticket → correction → client notification lifecycle", () =
       headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
-    const dispatch = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId, title: "Fix details", spec: "spec", kind: "correction" }),
-    });
-    const taskJson = (await dispatch.json()) as { task: { id: string } };
-    taskIds.push(taskJson.task.id);
+    const task = await newestTaskFor(ticketId);
+    taskIds.push(task.id);
 
     const res = await app.request(`/api/tickets/${ticketId}/details`, { headers });
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { tasks: Array<{ id: string }> };
-    expect(json.tasks.map((t) => t.id)).toContain(taskJson.task.id);
+    const json = (await res.json()) as { tasks: Array<{ id: string }>; ticket: { projectName: string | null } };
+    expect(json.tasks.map((t) => t.id)).toContain(task.id);
+    expect(json.ticket.projectName).toBe("TEST-Lifecycle App");
   });
 
   it("recomputes slaDueAt when ticket severity changes", async () => {
@@ -427,27 +439,15 @@ describe("support ticket → correction → client notification lifecycle", () =
       body: JSON.stringify({ status: "in_progress" }),
     });
 
-    // Run 1: task 1 -> done creates draft 1
-    const d1 = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId, title: "Fix run 1", spec: "spec", kind: "correction" }),
-    });
-    const t1Id = ((await d1.json()) as { task: { id: string } }).task.id;
-    taskIds.push(t1Id);
-    await app.request(`/api/projects/tasks/${t1Id}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      await app.request(`/api/projects/tasks/${t1Id}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status, resultSummary: "Run 1 fix" }),
-      });
-    }
+    // Run 1: the auto-dispatched correction -> done creates draft 1
+    const t1 = await newestTaskFor(ticketId);
+    taskIds.push(t1.id);
+    await walkToDone(t1.id, "Run 1 fix");
 
     const [firstDraft] = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
     expect(firstDraft!.body).toContain("Run 1 fix");
 
-    // Client says "still broken": reopen -> re-dispatch task 2
+    // Client says "still broken": reopen -> re-approval auto-dispatches task 2
     await app.request(`/api/tickets/${ticketId}/status`, {
       method: "PATCH",
       headers,
@@ -459,21 +459,10 @@ describe("support ticket → correction → client notification lifecycle", () =
       body: JSON.stringify({ status: "in_progress" }),
     });
 
-    const d2 = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId, title: "Fix run 2", spec: "spec", kind: "correction" }),
-    });
-    const t2Id = ((await d2.json()) as { task: { id: string } }).task.id;
-    taskIds.push(t2Id);
-    await app.request(`/api/projects/tasks/${t2Id}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      await app.request(`/api/projects/tasks/${t2Id}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status, resultSummary: "Run 2 real fix" }),
-      });
-    }
+    const t2 = await newestTaskFor(ticketId);
+    taskIds.push(t2.id);
+    expect(t2.id).not.toBe(t1.id);
+    await walkToDone(t2.id, "Run 2 real fix");
 
     // Still only ONE pending draft, updated with Run 2 fix instead of stale Run 1!
     const drafts = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
@@ -490,21 +479,9 @@ describe("support ticket → correction → client notification lifecycle", () =
       headers: ownerHeaders,
       body: JSON.stringify({ status: "in_progress" }),
     });
-    const d = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId, title: "Fix sync", spec: "spec", kind: "correction" }),
-    });
-    const tId = ((await d.json()) as { task: { id: string } }).task.id;
-    taskIds.push(tId);
-    await app.request(`/api/projects/tasks/${tId}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      await app.request(`/api/projects/tasks/${tId}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status }),
-      });
-    }
+    const task = await newestTaskFor(ticketId);
+    taskIds.push(task.id);
+    await walkToDone(task.id);
 
     const [draft] = await db.select().from(outbox).where(eq(outbox.ticketId, ticketId));
     await app.request(`/api/outbox/${draft!.id}/review`, {
@@ -564,21 +541,9 @@ describe("support ticket → correction → client notification lifecycle", () =
       body: JSON.stringify({ status: "in_progress" }),
     });
 
-    const d = await app.request("/api/projects/tasks", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ projectId, ticketId: body.ticketId, title: "Fresh fix", spec: "spec", kind: "correction" }),
-    });
-    const tId = ((await d.json()) as { task: { id: string } }).task.id;
-    taskIds.push(tId);
-    await app.request(`/api/projects/tasks/${tId}/approve`, { method: "POST", headers: ownerHeaders });
-    for (const status of ["dispatched", "in_progress", "in_review", "done"]) {
-      await app.request(`/api/projects/tasks/${tId}/status`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({ status, resultSummary: "Fresh fix verified" }),
-      });
-    }
+    const task = await newestTaskFor(body.ticketId);
+    taskIds.push(task.id);
+    await walkToDone(task.id, "Fresh fix verified");
 
     const [freshDraft] = await db.select().from(outbox).where(eq(outbox.ticketId, body.ticketId));
     expect(freshDraft).not.toBeUndefined();

@@ -388,7 +388,19 @@ export const tasks = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("tasks_status_idx").on(t.status), index("tasks_ticket_idx").on(t.ticketId)],
+  (t) => [
+    index("tasks_status_idx").on(t.status),
+    index("tasks_ticket_idx").on(t.ticketId),
+    // One in-flight correction per ticket (mechanical): the DB rejects a
+    // second active attempt regardless of which path created it (approval
+    // auto-dispatch, pm manual dispatch, desktop modal). Rejected/done
+    // tasks never block a retry.
+    uniqueIndex("tasks_one_active_correction_per_ticket")
+      .on(t.ticketId)
+      .where(
+        sql`${t.status} IN ('pending_approval', 'approved', 'ready', 'dispatched', 'in_progress', 'in_review', 'blocked')`
+      ),
+  ],
 );
 
 /**

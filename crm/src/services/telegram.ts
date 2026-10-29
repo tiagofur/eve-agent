@@ -4,7 +4,7 @@ dotenv.config({ path: "../.env.local" });
 dotenv.config({ path: ".env.local" });
 import { db } from "../db/client";
 import { count, eq, sql } from "drizzle-orm";
-import { leads, tickets, outbox, contacts, organizations, socialPosts } from "../db/schema";
+import { leads, tickets, outbox, contacts, organizations, socialPosts, projects } from "../db/schema";
 import { reviewOutreachDraft } from "../domain/outbox";
 import { updateTicketStatus } from "../domain/tickets";
 import { ensureExternalThread } from "../domain/threads";
@@ -273,9 +273,11 @@ export async function notifySupportTicketCreated(ticketId: string) {
       contactId: tickets.contactId,
       contactName: contacts.name,
       contactEmail: contacts.email,
+      projectName: projects.name,
     })
     .from(tickets)
     .leftJoin(contacts, eq(tickets.contactId, contacts.id))
+    .leftJoin(projects, eq(tickets.projectId, projects.id))
     .where(eq(tickets.id, ticketId))
     .limit(1);
 
@@ -294,12 +296,13 @@ export async function notifySupportTicketCreated(ticketId: string) {
   const text = `${header}
 
 <b>Cliente:</b> ${escapeHtml(ticket.contactName || "Cliente")} (${escapeHtml(ticket.contactEmail || "N/A")})
+<b>Proyecto vinculado:</b> ${escapeHtml(ticket.projectName || "⚠️ sin proyecto — vincúlalo antes de aprobar")}
 <b>Sistema Afectado:</b> <code>${escapeHtml(ticket.system)}</code>
 <b>Vencimiento SLA:</b> ${new Date(ticket.slaDueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
 <b>Detalle:</b>
 <pre>${escapeHtml(ticket.description)}</pre>
 
-Aprobar inicia la atención; el agente solo podrá despachar la corrección una vez aprobado:`;
+Aprobar inicia la atención y despacha automáticamente la corrección a la cola de coding (quedará pendiente de tu segunda aprobación):`;
 
   const keyboard = [
     [
