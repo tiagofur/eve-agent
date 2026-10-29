@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, TicketItem, TicketDetailsResponse, ProjectItem } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
+import { SlideOver, Modal, Badge, Skeleton } from "../components/ui";
 import {
   LifeBuoy,
   AlertTriangle,
@@ -11,7 +12,6 @@ import {
   Mail,
   Flame,
   ShieldAlert,
-  X,
   Check,
   Ban,
   History,
@@ -59,6 +59,14 @@ const STATUS_LABELS: Record<string, { label: string; badge: string }> = {
     label: "Rejected / Closed",
     badge: "bg-zinc-900 text-zinc-400 border border-zinc-700",
   },
+};
+
+const STATUS_TONES: Record<string, "amber" | "cyan" | "purple" | "emerald" | "zinc"> = {
+  open: "amber",
+  in_progress: "cyan",
+  waiting_client: "purple",
+  resolved: "emerald",
+  closed: "zinc",
 };
 
 export const TicketsView: React.FC = () => {
@@ -528,53 +536,34 @@ export const TicketsView: React.FC = () => {
 
       {/* Slide-over Drawer for Ticket Incident Review */}
       {activeTicketId && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end">
-          <div className="w-full max-w-2xl bg-zinc-950 border-l border-zinc-800 h-full flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
-            {/* Drawer Header */}
-            <div className="p-6 border-b border-zinc-800/80 flex items-start justify-between bg-zinc-900/40">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono text-indigo-400 uppercase font-semibold">
-                    Support Incident Desk
-                  </span>
-                  {ticketDetails && (
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                        STATUS_LABELS[ticketDetails.ticket.status]?.badge || "bg-zinc-800"
-                      }`}
-                    >
-                      {STATUS_LABELS[ticketDetails.ticket.status]?.label ||
-                        ticketDetails.ticket.status}
-                    </span>
-                  )}
-                </div>
-                <h3 className="text-xl font-bold text-white mt-1">
-                  System: {ticketDetails?.ticket.system || "Loading..."}
-                </h3>
-                {ticketDetails && (
-                  <div className="flex items-center gap-3 text-xs text-zinc-400 mt-1">
-                    <span>ID: {ticketDetails.ticket.id}</span>
-                    <span className="text-zinc-600">•</span>
-                    <span>Created: {new Date(ticketDetails.ticket.createdAt).toLocaleString()}</span>
-                  </div>
-                )}
-              </div>
-              <button
-                onClick={closeDrawer}
-                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
+        <SlideOver
+          onClose={closeDrawer}
+          title={<>System: {ticketDetails?.ticket.system || "..."}</>}
+          badge={
+            ticketDetails && (
+              <Badge tone={STATUS_TONES[ticketDetails.ticket.status] ?? "zinc"}>
+                {STATUS_LABELS[ticketDetails.ticket.status]?.label || ticketDetails.ticket.status}
+              </Badge>
+            )
+          }
+          meta={
+            ticketDetails && (
+              <>
+                <span className="font-mono">ID: {ticketDetails.ticket.id}</span>
+                <span>Created: {new Date(ticketDetails.ticket.createdAt).toLocaleString()}</span>
+              </>
+            )
+          }
+        >
             {drawerLoading ? (
-              <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm">
-                <RefreshCw className="w-5 h-5 animate-spin mr-2" />
-                Loading incident history and SLA status...
+              <div className="p-6 space-y-4" aria-label="Cargando incidente">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-32 w-full" />
               </div>
             ) : ticketDetails ? (
-              <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <>
+                <div className="p-6 space-y-6">
                   <FollowUpForm
                     kind="ticket"
                     entityId={ticketDetails.ticket.id}
@@ -875,23 +864,19 @@ export const TicketsView: React.FC = () => {
                     </div>
                   )}
                 </div>
-              </div>
+              </>
             ) : null}
-          </div>
-        </div>
+        </SlideOver>
       )}
 
       {/* Reject Ticket Modal with Client Response */}
       {showRejectModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-lg w-full shadow-2xl">
-            <h3 className="text-lg font-semibold text-white mb-1">
-              Rechazar / Desestimar Incidente
-            </h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              Indica el motivo técnico interno y la explicación que se enviará al cliente.
-            </p>
-
+        <Modal
+          onClose={() => setShowRejectModal(false)}
+          title="Rechazar / Desestimar Incidente"
+          description="Indica el motivo técnico interno y la explicación que se enviará al cliente."
+          width="max-w-lg"
+        >
             <form onSubmit={handleRejectTicket} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1">
@@ -938,21 +923,17 @@ export const TicketsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {/* Resolve Ticket Modal: internal note + client-facing explanation */}
       {showResolveModal && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 max-w-lg w-full shadow-2xl">
-            <h3 className="text-lg font-semibold text-white mb-1">Marcar como Resuelto</h3>
-            <p className="text-xs text-zinc-400 mb-4">
-              Nota interna para el historial y explicación que verá el cliente. Si este ticket tiene
-              una corrección vinculada, al marcarla «done» el CRM ya genera el borrador de
-              notificación (Outbox) — este modal es para resoluciones manuales.
-            </p>
-
+        <Modal
+          onClose={() => setShowResolveModal(false)}
+          title="Marcar como Resuelto"
+          description="Nota interna para el historial y explicación que verá el cliente. Si este ticket tiene una corrección vinculada, al marcarla «done» el CRM ya genera el borrador de notificación (Outbox) — este modal es para resoluciones manuales."
+          width="max-w-lg"
+        >
             <form onSubmit={handleResolveTicket} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1">
@@ -997,8 +978,7 @@ export const TicketsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );

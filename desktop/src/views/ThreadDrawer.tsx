@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, InteractionItem } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
-import { Bot, MessageSquareText, Send, X } from "lucide-react";
+import { SlideOver } from "../components/ui";
+import { Bot, MessageSquareText, Send } from "lucide-react";
 
 interface Props {
   contactId: string;
@@ -81,50 +82,14 @@ export const ThreadDrawer: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60" onClick={onClose}>
-      <div
-        className="w-full max-w-xl h-full flex flex-col bg-zinc-950 border-l border-zinc-800 shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="p-5 border-b border-zinc-800 flex items-start justify-between bg-zinc-900/40">
-          <div>
-            <div className="text-xs font-mono text-teal-400 uppercase font-semibold flex items-center gap-1.5">
-              <MessageSquareText className="w-3.5 h-3.5" /> Hilo unificado
-            </div>
-            <h3 className="text-lg font-bold text-white mt-0.5">{contactName}</h3>
-            {organizationName && <p className="text-xs text-zinc-500">{organizationName}</p>}
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          {loading ? (
-            <p className="text-sm text-zinc-500">Cargando hilo...</p>
-          ) : entries.length === 0 ? (
-            <p className="text-sm text-zinc-600">Sin mensajes registrados todavía.</p>
-          ) : (
-            entries.map((e) => (
-              <div
-                key={e.id}
-                className={`p-3 rounded-xl border text-sm max-w-[90%] ${
-                  e.direction === "inbound"
-                    ? "bg-zinc-900 border-zinc-800 text-zinc-200"
-                    : "bg-teal-950/40 border-teal-800/60 text-teal-100 ml-auto"
-                }`}
-              >
-                <div className="text-[10px] font-mono uppercase text-zinc-500 mb-1">
-                  {e.direction === "inbound" ? "Cliente" : "Nosotros"} · {e.channel} ·{" "}
-                  {new Date(e.createdAt).toLocaleString()}
-                </div>
-                <div className="whitespace-pre-wrap">{e.content}</div>
-              </div>
-            ))
-          )}
-        </div>
-
-        <div className="p-4 border-t border-zinc-800 space-y-2 bg-zinc-900/30">
+    <SlideOver
+      onClose={onClose}
+      title={contactName}
+      meta={organizationName ? <span className="flex items-center gap-1"><MessageSquareText className="w-3 h-3 text-zinc-500" /> Hilo unificado · {organizationName}</span> : <span className="flex items-center gap-1"><MessageSquareText className="w-3 h-3 text-zinc-500" /> Hilo unificado</span>}
+      width="max-w-xl"
+      footerClassName="space-y-2"
+      footer={
+        <>
           <FollowUpForm
             kind="contact"
             entityId={contactId}
@@ -170,8 +135,33 @@ export const ThreadDrawer: React.FC<Props> = ({
           >
             <Bot className="w-4 h-4" /> Pedir al orquestador que conteste
           </button>
-        </div>
+        </>
+      }
+    >
+      <div className="p-5 space-y-3">
+        {loading ? (
+          <p className="text-sm text-zinc-500">Cargando hilo...</p>
+        ) : entries.length === 0 ? (
+          <p className="text-sm text-zinc-600">Sin mensajes registrados todavía.</p>
+        ) : (
+          entries.map((e) => (
+            <div
+              key={e.id}
+              className={`p-3 rounded-xl border text-sm max-w-[90%] ${
+                e.direction === "inbound"
+                  ? "bg-zinc-900 border-zinc-800 text-zinc-200"
+                  : "bg-teal-950/40 border-teal-800/60 text-teal-100 ml-auto"
+              }`}
+            >
+              <div className="text-[10px] font-mono uppercase text-zinc-500 mb-1">
+                {e.direction === "inbound" ? "Cliente" : "Nosotros"} · {e.channel} ·{" "}
+                {new Date(e.createdAt).toLocaleString()}
+              </div>
+              <div className="whitespace-pre-wrap">{e.content}</div>
+            </div>
+          ))
+        )}
       </div>
-    </div>
+    </SlideOver>
   );
 };

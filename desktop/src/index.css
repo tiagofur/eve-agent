@@ -20,3 +20,68 @@ body {
   width: 100%;
   height: 100vh;
 }
+
+/* Focus visible en acento de marca, en lugar del anillo por defecto del navegador */
+:focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+}
+
+/* Scrollbars del tema (zinc) en vez de los del sistema */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* Animaciones de overlays (sin plugin: tailwindcss-animate no está instalado) */
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-slide-in {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes overlay-scale-in {
+  from {
+    transform: translateY(8px) scale(0.98);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+.anim-fade-in {
+  animation: overlay-fade-in 0.18s ease-out both;
+}
+.anim-slide-in {
+  animation: overlay-slide-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.anim-scale-in {
+  animation: overlay-scale-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}

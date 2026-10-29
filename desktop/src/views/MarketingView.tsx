@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
+import { Modal } from "../components/ui";
 import { crmApi, type SocialPostItem } from "../api";
 
 export const MarketingView: React.FC = () => {
@@ -332,25 +333,12 @@ export const MarketingView: React.FC = () => {
 
       {/* Generation Modal */}
       {showGenerateModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl max-w-lg w-full p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <h3 className="text-base font-bold text-white">
-                  Generar Campaña con Subagente de Marketing
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowGenerateModal(false)}
-                className="text-zinc-500 hover:text-white text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
+        <Modal onClose={() => setShowGenerateModal(false)} title={
+          <span className="flex items-center gap-2 text-base">
+            <Sparkles className="w-4 h-4 text-emerald-400" />
+            Generar Campaña con Subagente de Marketing
+          </span>
+        } width="max-w-lg">
             <form onSubmit={handleGenerate} className="space-y-4">
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
@@ -433,8 +421,7 @@ export const MarketingView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
