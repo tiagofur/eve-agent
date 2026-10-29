@@ -339,6 +339,7 @@ export const crmApi = {
       system?: string;
       severity?: "critical" | "major" | "minor";
       kind?: "support" | "info";
+      projectId?: string | null;
       reason?: string;
     }
   ) =>
