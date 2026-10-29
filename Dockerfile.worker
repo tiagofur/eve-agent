@@ -1,0 +1,19 @@
+# Imagen del worker VPS del pipeline de correcciones: reclama tareas
+# aprobadas del CRM, clona/pullea el repo del proyecto y ejecuta
+# gentle-shell (gentle-pi) headless; reporta el resultado al CRM.
+# Debian (no alpine) por compatibilidad glibc de las herramientas del shell.
+FROM node:24-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY crm/package.json crm/package-lock.json* ./
+RUN npm install && npm install -g gentle-pi
+
+COPY crm/ ./
+
+ENV NODE_ENV=production
+CMD ["npx", "tsx", "src/scripts/vps-worker.ts"]

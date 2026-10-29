@@ -3,8 +3,10 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { projects, tasks, organizations, milestones, contracts } from "../../db/schema";
+import { projects, tasks, organizations, milestones, contracts, taskRuns } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
+import path from "node:path";
+import fsp from "node:fs/promises";
 import {
   createProject,
   createTask,
@@ -438,6 +440,44 @@ projectsRouter.patch(
     return c.json({ success: true, run: result.run, task: result.task, ...(result.transitionSkipped ? { transitionSkipped: result.transitionSkipped } : {}) });
   }
 );
+
+// Tail of a run log for runs executed by the VPS worker: the file lives on a
+// shared volume reachable by this API, guarded to WORKER_LOG_ROOT so a run
+// row can never make the API read arbitrary container paths. Desktop-launched
+// runs keep reading their local file directly.
+projectsRouter.get("/tasks/:id/runs/:runId/log", requireScope(["ops"]), async (c) => {
+  const root = process.env.WORKER_LOG_ROOT;
+  if (!root) {
+    return c.json({ error: "WORKER_LOG_ROOT is not configured on this API instance" }, 404);
+  }
+  const [run] = await db
+    .select()
+    .from(taskRuns)
+    .where(sql`${taskRuns.id} = ${c.req.param("runId")}`)
+    .limit(1);
+  if (!run?.logPath) {
+    return c.json({ error: "Run or log path not found" }, 404);
+  }
+  const resolved = path.resolve(run.logPath);
+  const normalizedRoot = path.resolve(root);
+  if (!resolved.startsWith(normalizedRoot + path.sep)) {
+    return c.json({ error: "Log path is outside WORKER_LOG_ROOT" }, 403);
+  }
+  try {
+    const stat = await fsp.stat(resolved);
+    const size = Math.min(stat.size, 65536);
+    const fh = await fsp.open(resolved, "r");
+    const buf = Buffer.alloc(size);
+    if (size > 0) await fh.read(buf, 0, size, stat.size - size);
+    await fh.close();
+    return c.json({ log: buf.toString("utf-8"), size: stat.size, truncated: stat.size > size });
+  } catch {
+    return c.json(
+      { error: "Log file not readable (the run may have executed on another machine)" },
+      404
+    );
+  }
+});
 
 // Configure where a project repo lives on the launcher machine.
 projectsRouter.patch(

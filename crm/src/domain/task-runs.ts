@@ -1,4 +1,4 @@
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { db } from "../db/client";
 import { tasks, taskRuns } from "../db/schema";
 import { updateTaskStatus } from "./projects";
@@ -22,6 +22,10 @@ export type OpenTaskRunResult =
  * `dispatched` (from approved/ready); a rework run on an already
  * `in_progress` task opens without a transition. `pending_approval` tasks
  * can never be launched — the owner gate is enforced here, not only in the route.
+ *
+ * The approved/ready → dispatched flip is an atomic conditional UPDATE: when
+ * the desktop launcher and the VPS worker race for the same task, exactly one
+ * of them wins the claim and the other gets `already_dispatched`.
  */
 export async function openTaskRun(input: OpenTaskRunInput): Promise<OpenTaskRunResult> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, input.taskId)).limit(1);
@@ -52,10 +56,32 @@ export async function openTaskRun(input: OpenTaskRunInput): Promise<OpenTaskRunR
   }
 
   if (task.status === "approved" || task.status === "ready") {
-    const moved = await updateTaskStatus({ taskId: input.taskId, status: "dispatched", actor: input.actor });
-    if (!moved.success) {
-      return { success: false, code: moved.code, message: moved.message };
+    const claimed = await db
+      .update(tasks)
+      .set({ status: "dispatched", updatedAt: new Date() })
+      .where(
+        and(
+          eq(tasks.id, input.taskId),
+          inArray(tasks.status, ["approved", "ready"])
+        )
+      )
+      .returning();
+    if (claimed.length === 0) {
+      return {
+        success: false,
+        code: "already_dispatched",
+        message: "Task already has a live run; refuse the double launch.",
+      };
     }
+    await logEvent({
+      entity: "task",
+      entityId: input.taskId,
+      action: "task_status_changed",
+      actor: input.actor,
+      before: { status: task.status },
+      after: { status: "dispatched" },
+      reason: "run claim",
+    });
   }
 
   const [run] = await db
