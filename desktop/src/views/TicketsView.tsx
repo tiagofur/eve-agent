@@ -111,9 +111,11 @@ export const TicketsView: React.FC = () => {
     setActiveTicketId(ticketId);
     setDrawerLoading(true);
     try {
+      // Projects failing must not block the drawer: it degrades to no
+      // relink options instead of losing the incident view.
       const [details, projectRes] = await Promise.all([
         crmApi.getTicketDetails(ticketId),
-        crmApi.getProjects(),
+        crmApi.getProjects().catch(() => ({ projects: [] as ProjectItem[] })),
       ]);
       setTicketDetails(details);
       setProjects(projectRes.projects);
