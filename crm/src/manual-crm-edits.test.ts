@@ -3,7 +3,7 @@ import { app } from "./app";
 import { pool, db } from "./db/client";
 import { hashApiKey } from "./auth/keys";
 import { apiKeys, contacts, events, leads, organizations, projects, tickets } from "./db/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { ingestLead } from "./domain/leads";
 
 describe("Edición manual del CRM (fichas 360 y leads)", () => {
@@ -274,7 +274,6 @@ describe("Edición manual del CRM (fichas 360 y leads)", () => {
   it("reutiliza la organización existente aunque el nombre cambie de formato", async () => {
     const [org] = await db.insert(organizations).values({ name: "Creapolis.Dev" }).returning();
     try {
-      const before = await db.select({ id: organizations.id }).from(organizations);
       await ingestLead({
         clientName: "Tiago Test",
         companyName: "creapolis  DEV.",
@@ -282,8 +281,9 @@ describe("Edición manual del CRM (fichas 360 y leads)", () => {
         source: "test",
         actor: "test",
       });
-      const after = await db.select({ id: organizations.id }).from(organizations);
-      expect(after.length).toBe(before.length); // no creó una nueva
+      // La prueba de dedup es que el lead cayó en la org PRE-EXISTENTE (y no
+      // en una nueva): contar todas las organizaciones es rácido, otros
+      // archivos de test insertan las suyas en paralelo sobre la misma DB.
       const [freshLead] = await db
         .select()
         .from(leads)
@@ -291,6 +291,13 @@ describe("Edición manual del CRM (fichas 360 y leads)", () => {
         .orderBy(desc(leads.createdAt))
         .limit(1);
       expect(freshLead?.summary).toBe("lead con variantes del mismo nombre");
+      const [duplicate] = await db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(
+          sql`regexp_replace(LOWER(${organizations.name}), '[^a-z0-9]', '', 'g') = 'creapolisdev'`
+        );
+      expect(duplicate!.id).toBe(org!.id); // una sola org con esa clave normalizada
       if (freshLead) {
         await db.delete(events).where(eq(events.entityId, freshLead.id));
         await db.delete(leads).where(eq(leads.id, freshLead.id));
