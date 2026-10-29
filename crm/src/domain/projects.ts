@@ -163,19 +163,38 @@ export async function createTask(input: CreateTaskInput): Promise<CreateTaskResu
 
   const initialStatus = input.initialStatus ?? "pending_approval";
 
-  const [task] = await db
-    .insert(tasks)
-    .values({
-      projectId: input.projectId,
-      milestoneId: input.milestoneId,
-      ticketId: input.ticketId,
-      title: input.title,
-      spec: input.spec,
-      status: initialStatus,
-      assignee: input.assignee ?? "gentle-shell",
-      kind: input.kind ?? "feature",
-    })
-    .returning();
+  let task: typeof tasks.$inferSelect | undefined;
+  try {
+    [task] = await db
+      .insert(tasks)
+      .values({
+        projectId: input.projectId,
+        milestoneId: input.milestoneId,
+        ticketId: input.ticketId,
+        title: input.title,
+        spec: input.spec,
+        status: initialStatus,
+        assignee: input.assignee ?? "gentle-shell",
+        kind: input.kind ?? "feature",
+      })
+      .returning();
+  } catch (err) {
+    // Mechanical one-active-correction-per-ticket guarantee: the partial
+    // unique index rejects a second in-flight attempt for the same ticket
+    // from ANY dispatch path. Surface it as a domain error, not a 500.
+    // Drizzle wraps driver errors: the pg code can sit on err or err.cause.
+    const pgCode = (err as { code?: string })?.code ?? (err as { cause?: { code?: string } })?.cause?.code;
+    if (pgCode === "23505" && input.ticketId) {
+      return {
+        success: false,
+        code: "correction_already_active",
+        message:
+          `Ticket ${input.ticketId} already has an active correction (pending_approval/approved/in_progress/in_review). ` +
+          "Reject or finish it before dispatching another one.",
+      };
+    }
+    throw err;
+  }
 
   if (!task) {
     throw new Error("Failed to create task");

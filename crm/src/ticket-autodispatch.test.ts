@@ -3,7 +3,7 @@ import { app } from "./app";
 import { pool, db } from "./db/client";
 import { hashApiKey } from "./auth/keys";
 import { apiKeys, organizations, projects, tasks, tickets, events } from "./db/schema";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 /**
  * GATE 1 handoff is mechanical: approving a support ticket (open →
@@ -24,6 +24,16 @@ describe("ticket approval auto-dispatches the correction", () => {
   const ticketIds: string[] = [];
 
   beforeAll(async () => {
+    // Defensive: a crashed previous run may have left these fixtures behind
+    // (failed afterAlls cascade: one bad delete skips the key sweep).
+    await db
+      .delete(apiKeys)
+      .where(inArray(apiKeys.keyHash, [hashApiKey(opsKey), hashApiKey(ownerKey)]));
+    await db
+      .delete(projects)
+      .where(inArray(projects.name, ["TEST-AutoDisp App", "TEST-AutoDisp Other"]));
+    await db.delete(organizations).where(eq(organizations.name, "TEST-AutoDisp Org"));
+
     await db.insert(apiKeys).values([
       { name: "AutoDisp Ops", scope: "ops", keyHash: hashApiKey(opsKey) },
       { name: "AutoDisp Owner", scope: "owner", keyHash: hashApiKey(ownerKey) },
@@ -47,13 +57,23 @@ describe("ticket approval auto-dispatches the correction", () => {
 
   afterAll(async () => {
     // Project deletion cascades to tasks (auto-dispatched ones included).
-    for (const id of ticketIds) await db.delete(tickets).where(eq(tickets.id, id));
-    await db.delete(projects).where(eq(projects.id, projectId));
-    await db.delete(projects).where(eq(projects.id, otherProjectId));
-    await db.delete(organizations).where(eq(organizations.id, orgId));
-    await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(opsKey)));
-    await db.delete(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(ownerKey)));
-    await pool.end();
+    // Events have no FK: sweep the audit rows of these tickets explicitly.
+    // Keys are swept unconditionally: even a beforeAll failure must not
+    // leave the next run colliding on the hash unique index.
+    try {
+      if (ticketIds.length) {
+        await db.delete(events).where(inArray(events.entityId, ticketIds));
+        for (const id of ticketIds) await db.delete(tickets).where(eq(tickets.id, id));
+      }
+      if (projectId) await db.delete(projects).where(eq(projects.id, projectId));
+      if (otherProjectId) await db.delete(projects).where(eq(projects.id, otherProjectId));
+      if (orgId) await db.delete(organizations).where(eq(organizations.id, orgId));
+    } finally {
+      await db
+        .delete(apiKeys)
+        .where(inArray(apiKeys.keyHash, [hashApiKey(opsKey), hashApiKey(ownerKey)]));
+      await pool.end();
+    }
   });
 
   const createTicket = async (system: string, extra: Record<string, unknown> = {}) => {
@@ -197,6 +217,46 @@ describe("ticket approval auto-dispatches the correction", () => {
     expect(pending!.projectId).toBe(otherProjectId);
     const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
     expect(ticket!.projectId).toBe(otherProjectId);
+  });
+
+  it("unlinking an approved ticket supersedes its pending correction without re-dispatch", async () => {
+    const ticketId = await createTicket("AutoDisp App unlink", { projectId });
+    await approve(ticketId);
+    expect((await linkedTasks(ticketId)).length).toBe(1);
+
+    const unlink = await app.request(`/api/tickets/${ticketId}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ projectId: null, reason: "Owner removed the link" }),
+    });
+    expect(unlink.status).toBe(200);
+
+    const rows = await linkedTasks(ticketId);
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.status).toBe("rejected");
+    const [ticket] = await db.select().from(tickets).where(eq(tickets.id, ticketId));
+    expect(ticket!.projectId).toBeNull();
+  });
+
+  it("manual dispatch on a ticket with an active correction fails clearly", async () => {
+    const ticketId = await createTicket("AutoDisp App manual-dup", { projectId });
+    await approve(ticketId);
+    expect((await linkedTasks(ticketId)).length).toBe(1);
+
+    const dup = await app.request("/api/projects/tasks", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        projectId,
+        ticketId,
+        title: "Second attempt",
+        spec: "spec",
+        kind: "correction",
+      }),
+    });
+    expect(dup.status).toBe(400);
+    expect(((await dup.json()) as { code: string }).code).toBe("correction_already_active");
+    expect((await linkedTasks(ticketId)).length).toBe(1);
   });
 
   it("info tickets never dispatch corrections", async () => {

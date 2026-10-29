@@ -14,6 +14,9 @@ import {
 import { logEvent } from "./events";
 import { notifySupportTicketCreated } from "../services/telegram";
 import { createOutreachDraft } from "./outbox";
+// Runtime-only cycle with ./projects (both modules only call each other's
+// exports inside function bodies): safe for ESM live bindings. Do not add a
+// module-scope call on either side.
 import { createTask, rejectTask } from "./projects";
 
 export type TicketSeverity = (typeof ticketSeverityEnum.enumValues)[number];
@@ -325,16 +328,14 @@ export async function updateTicketContent(
     reason: input.reason || "Ticket content corrected",
   });
 
-  // Linking a project to an already-approved support ticket unblocks the
-  // GATE 1 dispatch that was held for the missing project (same mechanical
-  // handoff as the approval path). Re-linking to a DIFFERENT project
-  // supersedes the pending correction aimed at the old one, so the fresh
-  // dispatch targets the project the owner actually picked; approved or
-  // in-flight work is never touched (rejectTask only accepts pending).
+  // Any project change on an approved support ticket supersedes pending
+  // corrections aimed at the old link — unlinking included: a pending
+  // correction must never outlive the project it was dispatched from.
+  // Re-linking to a NEW project then re-dispatches to the right target;
+  // approved or in-flight work is never touched (rejectTask only accepts
+  // pending).
   const projectChanged =
-    input.projectId !== undefined &&
-    input.projectId !== null &&
-    input.projectId !== current.projectId;
+    input.projectId !== undefined && input.projectId !== current.projectId;
   if (projectChanged && updated.kind === "support" && updated.status === "in_progress") {
     const pendingCorrections = await db
       .select({ id: tasks.id })
@@ -343,11 +344,15 @@ export async function updateTicketContent(
     for (const pending of pendingCorrections) {
       await rejectTask({
         taskId: pending.id,
-        reason: "Superseded: the ticket was re-linked to a different project",
+        reason: input.projectId
+          ? "Superseded: the ticket was re-linked to a different project"
+          : "Superseded: the ticket's project link was removed",
         actor: input.actor,
       });
     }
-    await maybeDispatchCorrection(input.ticketId, input.actor);
+    if (input.projectId) {
+      await maybeDispatchCorrection(input.ticketId, input.actor);
+    }
   }
 
   return { success: true, ticket: updated };
@@ -447,8 +452,14 @@ const ACTIVE_CORRECTION_STATUSES = [
  * Dispatch the ticket's correction to the coding queue when the pipeline
  * expects one: an approved `support` ticket with a linked project and no
  * active correction task. A rejected/done task never blocks a fresh attempt.
- * Every skip/failure is audited on the ticket timeline; this hook must never
- * break the transition that triggered it.
+ * The owner-blocking skip (no project linked) is audited on the timeline;
+ * an info ticket or an already-active attempt returns silently. This hook
+ * must never break the transition that triggered it.
+ *
+ * Race safety lives in the DB: the partial unique index
+ * `tasks_one_active_correction_per_ticket` rejects a second active attempt
+ * even when two approvals race the check-then-insert (a row lock here would
+ * deadlock against the task insert's FK check on this same row).
  */
 export async function maybeDispatchCorrection(ticketId: string, actor: string): Promise<void> {
   try {
@@ -497,6 +508,18 @@ export async function maybeDispatchCorrection(ticketId: string, actor: string): 
     });
 
     if (!result.success) {
+      if (result.code === "correction_already_active") {
+        // A concurrent dispatch won the race: one active attempt exists, which
+        // is the invariant — audit it and move on.
+        await logEvent({
+          entity: "ticket",
+          entityId: ticketId,
+          action: "correction_dispatch_duplicate",
+          actor,
+          after: { reason: "a concurrent dispatch already created the active correction" },
+        });
+        return;
+      }
       await logEvent({
         entity: "ticket",
         entityId: ticketId,
