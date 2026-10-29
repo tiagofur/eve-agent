@@ -3,7 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { channelEnum, contacts } from "../../db/schema";
+import { channelEnum, contacts, interactions } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
 
@@ -71,6 +71,44 @@ contactsRouter.patch(
     return c.json({ success: true, contact: updated });
   }
 );
+
+// Delete a contact manually (ops only). History survives the person: leads
+// and interactions reference contact_id with ON DELETE SET NULL, so the
+// timeline keeps every entry with the contact detached.
+contactsRouter.delete("/:id", requireScope(["ops"]), async (c) => {
+  const contactId = c.req.param("id") ?? "";
+  const actor = c.get("actor");
+
+  const [contact] = await db
+    .select()
+    .from(contacts)
+    .where(sql`${contacts.id} = ${contactId}`)
+    .limit(1);
+  if (!contact) {
+    return c.json({ error: "Contact not found" }, 404);
+  }
+
+  const linked = await db
+    .select({ id: interactions.id })
+    .from(interactions)
+    .where(sql`${interactions.contactId} = ${contactId}`);
+
+  await db.delete(contacts).where(sql`${contacts.id} = ${contactId}`);
+
+  await logEvent({
+    entity: "contact",
+    entityId: contactId,
+    action: "deleted",
+    actor,
+    after: {
+      name: contact.name,
+      organizationId: contact.organizationId,
+      detachedInteractions: linked.length,
+    },
+  });
+
+  return c.json({ success: true, detachedInteractions: linked.length });
+});
 
 // Set or clear a follow-up reminder on a contact (ops only, Nivel 1)
 contactsRouter.patch(
