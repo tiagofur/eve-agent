@@ -3,10 +3,12 @@ import {
   crmApi,
   LeadItem,
   LeadDetailsResponse,
+  FunnelReport,
   type ContactPayload,
 } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
 import { ContactModal, type ContactInitial } from "./Client360Modals";
+import { NewLeadModal, LeadEditModal } from "./CrmForms";
 import {
   SlideOver,
   Modal,
@@ -14,6 +16,7 @@ import {
   InfoGrid,
   ContactActions,
   Skeleton,
+  cn,
 } from "../components/ui";
 import {
   Users,
@@ -37,6 +40,9 @@ import {
   Copy,
   Pencil,
   Plus,
+  LayoutList,
+  Columns3,
+  Minus,
 } from "lucide-react";
 
 const STAGE_LABELS: Record<string, { label: string; color: string }> = {
@@ -86,12 +92,53 @@ const NEXT_STAGES: Record<string, string[]> = {
   support: ["active"],
 };
 
+const SERVICE_TYPE_LABELS: Record<string, string> = {
+  software_development: "Desarrollo de software",
+  automation: "Automatización",
+  ai_implementation: "Implementación de IA",
+  consulting: "Consultoría",
+};
+
+/** Zonas del tablero: el embudo fluye de izquierda a derecha; ganados,
+ *  activos y perdidos quedan como estanterías separadas (won/lost colapsados
+ *  por defecto para que no estorben el día a día). */
+const PIPELINE_ZONES: Array<{ label: string; stages: string[] }> = [
+  {
+    label: "Embudo",
+    stages: ["new", "researched", "contacted", "qualified", "discovery", "proposal", "contract"],
+  },
+  { label: "Ganado", stages: ["won"] },
+  { label: "Activos", stages: ["onboarding", "active", "support"] },
+  { label: "Perdido", stages: ["lost"] },
+];
+
+const daysInStage = (iso?: string | null): number | null => {
+  if (!iso) return null;
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  return days >= 0 ? days : 0;
+};
+
 export const LeadsView: React.FC = () => {
   const [leads, setLeads] = useState<LeadItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [stageFilter, setStageFilter] = useState<string>("all");
+  const [viewMode, setViewModeRaw] = useState<"list" | "board">(
+    () => ((localStorage.getItem("CREAPOLIS_LEADS_VIEW") as "list" | "board") || "list")
+  );
+  const setViewMode = (mode: "list" | "board") => {
+    setViewModeRaw(mode);
+    localStorage.setItem("CREAPOLIS_LEADS_VIEW", mode);
+  };
+  const [funnel, setFunnel] = useState<FunnelReport | null>(null);
+  // Override manual: alta y edición de leads
+  const [newLeadOpen, setNewLeadOpen] = useState(false);
+  const [editLeadOpen, setEditLeadOpen] = useState(false);
+  // Drag & drop del tablero: lead arrastrado y columna destino actual
+  const [dragLead, setDragLead] = useState<LeadItem | null>(null);
+  const [dropStage, setDropStage] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ won: true, lost: true });
 
   // Lead Detail Drawer State
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
@@ -111,13 +158,18 @@ export const LeadsView: React.FC = () => {
   const [lostReason, setLostReason] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchLeads = async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await crmApi.getLeads();
+      const [res, funnelRes] = await Promise.all([
+        crmApi.getLeads(),
+        crmApi.getFunnelReport().catch(() => null),
+      ]);
       setLeads(res.leads);
+      setFunnel(funnelRes);
     } catch (err: any) {
       setError(err.message || "Failed to load leads from CRM");
     } finally {
@@ -183,14 +235,47 @@ export const LeadsView: React.FC = () => {
         }
       : null;
 
-  const openTransitionModal = (lead: LeadItem, e?: React.MouseEvent) => {
+  const openTransitionModal = (
+    lead: LeadItem,
+    e?: React.MouseEvent,
+    prefillStage?: string,
+    prefillReason?: string
+  ) => {
     if (e) e.stopPropagation();
     setSelectedLead(lead);
     const available = NEXT_STAGES[lead.stage] || [];
-    setTargetStage(available[0] || "");
-    setTransitionReason("");
+    setTargetStage(prefillStage && available.includes(prefillStage) ? prefillStage : available[0] || "");
+    setTransitionReason(prefillReason ?? "");
     setLostReason("");
   };
+
+  // Soltar una tarjeta en una columna del kanban: si la transición es válida
+  // se abre el modal de etapa prellenado; si no, error inline sin cambiar nada.
+  const handleDrop = (stage: string) => {
+    const lead = dragLead;
+    setDragLead(null);
+    setDropStage(null);
+    if (!lead || lead.stage === stage) return;
+    if (!(NEXT_STAGES[lead.stage] || []).includes(stage)) {
+      setActionError(
+        `Transición no permitida: de "${STAGE_LABELS[lead.stage]?.label ?? lead.stage}" a "${
+          STAGE_LABELS[stage]?.label ?? stage
+        }".`
+      );
+      setTimeout(() => setActionError(null), 6000);
+      return;
+    }
+    openTransitionModal(lead, undefined, stage, "Cambio manual en desktop");
+  };
+
+  const fmtBudget = (lead: LeadItem): string | null =>
+    lead.estimatedValueCents != null
+      ? (lead.estimatedValueCents / 100).toLocaleString("es-MX", {
+          style: "currency",
+          currency: lead.currency || "USD",
+          maximumFractionDigits: 0,
+        })
+      : null;
 
   const handleStageSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -294,20 +379,66 @@ export const LeadsView: React.FC = () => {
             AI-driven pipeline with verified dossiers, contact history, and 1-click stage actions.
           </p>
         </div>
-        <button
-          onClick={fetchLeads}
-          disabled={loading}
-          className="flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <div
+            className="flex rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden"
+            role="tablist"
+            aria-label="Modo de vista"
+          >
+            <button
+              onClick={() => setViewMode("list")}
+              aria-pressed={viewMode === "list"}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 text-xs font-semibold transition",
+                viewMode === "list" ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-white"
+              )}
+            >
+              <LayoutList className="w-3.5 h-3.5" /> Lista
+            </button>
+            <button
+              onClick={() => setViewMode("board")}
+              aria-pressed={viewMode === "board"}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 text-xs font-semibold transition",
+                viewMode === "board" ? "bg-zinc-700 text-white" : "text-zinc-400 hover:text-white"
+              )}
+            >
+              <Columns3 className="w-3.5 h-3.5" /> Pipeline
+            </button>
+          </div>
+          <button
+            onClick={() => setNewLeadOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-sm font-semibold rounded-lg transition shadow-md"
+          >
+            <Plus className="w-4 h-4" /> Nuevo lead
+          </button>
+          <button
+            onClick={fetchLeads}
+            disabled={loading}
+            className="flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-sm font-medium transition"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {actionSuccess && (
         <div className="p-3 bg-emerald-950/60 border border-emerald-800 text-emerald-300 rounded-lg flex items-center gap-2 text-sm shadow-md">
           <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
           {actionSuccess}
+        </div>
+      )}
+
+      {actionError && (
+        <div className="p-3 bg-amber-950/50 border border-amber-800 text-amber-300 rounded-lg flex items-center justify-between gap-2 text-sm">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            {actionError}
+          </span>
+          <button onClick={() => setActionError(null)} aria-label="Descartar aviso" className="shrink-0">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -347,6 +478,41 @@ export const LeadsView: React.FC = () => {
         </div>
       </div>
 
+      {viewMode === "list" && funnel && funnel.totalInFunnel > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-2.5">
+          <div className="flex items-center justify-between gap-3 text-xs flex-wrap">
+            <span className="font-semibold text-zinc-300">Embudo de conversión</span>
+            <span className="text-zinc-500">
+              {funnel.totalInFunnel} en curso · {funnel.wonCount} ganados · {funnel.lostCount} perdidos
+            </span>
+          </div>
+          <div className="flex h-2.5 rounded-full overflow-hidden bg-zinc-800">
+            {funnel.funnel
+              .filter((s) => s.count > 0)
+              .map((s) => (
+                <div
+                  key={s.stage}
+                  className={STAGE_LABELS[s.stage]?.color.split(" ")[0] ?? "bg-zinc-700"}
+                  style={{ width: `${(s.count / Math.max(1, funnel.totalInFunnel)) * 100}%` }}
+                  title={`${STAGE_LABELS[s.stage]?.label ?? s.stage}: ${s.count}`}
+                />
+              ))}
+          </div>
+          <div className="flex flex-wrap gap-x-3.5 gap-y-1 text-[11px] text-zinc-500">
+            {funnel.funnel
+              .filter((s) => s.count > 0)
+              .map((s) => (
+                <span key={s.stage}>
+                  {STAGE_LABELS[s.stage]?.label ?? s.stage}:{" "}
+                  <span className="text-zinc-300 font-semibold">{s.count}</span>
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {viewMode === "list" && (
+        <>
       {/* Table */}
       <div className="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-900/60 backdrop-blur">
         <div className="overflow-x-auto">
@@ -457,6 +623,161 @@ export const LeadsView: React.FC = () => {
           </table>
         </div>
       </div>
+        </>
+      )}
+
+      {/* Pipeline kanban (drag & drop entre etapas permitidas) */}
+      {viewMode === "board" && (
+        <div>
+          {loading && leads.length === 0 ? (
+            <p className="text-sm text-zinc-500 py-8 text-center">Cargando pipeline…</p>
+          ) : filtered.length === 0 ? (
+            <div className="p-8 text-center bg-zinc-900/50 border border-zinc-800 rounded-xl text-sm text-zinc-400">
+              No hay leads que coincidan con el filtro.
+              <div className="text-xs text-zinc-500 mt-1">
+                Crea uno con "Nuevo lead" o ajusta la búsqueda.
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-4 overflow-x-auto pb-3 items-start">
+              {PIPELINE_ZONES.map((zone, zi) => (
+                <React.Fragment key={zone.label}>
+                  {zi > 0 && <div className="self-stretch w-px bg-zinc-800/80 shrink-0" aria-hidden />}
+                  <div className="flex flex-col gap-2 shrink-0">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 px-1">
+                      {zone.label}
+                    </span>
+                    <div className="flex gap-3 items-start">
+                      {zone.stages.map((stage) => {
+                        const stageLeads = filtered.filter((l) => l.stage === stage);
+                        const stageMeta = STAGE_LABELS[stage];
+
+                        if (collapsed[stage]) {
+                          return (
+                            <button
+                              key={stage}
+                              onClick={() => setCollapsed((c) => ({ ...c, [stage]: false }))}
+                              title={`Expandir ${stageMeta?.label ?? stage}`}
+                              className="w-11 shrink-0 rounded-xl border border-zinc-800 bg-zinc-900/60 flex flex-col items-center gap-2.5 py-3 hover:border-zinc-600 transition self-stretch"
+                            >
+                              <span className="text-xs font-bold text-zinc-200">{stageLeads.length}</span>
+                              <span
+                                className="text-[11px] font-semibold text-zinc-400"
+                                style={{ writingMode: "vertical-rl" }}
+                              >
+                                {stageMeta?.label ?? stage}
+                              </span>
+                            </button>
+                          );
+                        }
+
+                        const allowedNow = dragLead
+                          ? (NEXT_STAGES[dragLead.stage] || []).includes(stage)
+                          : false;
+                        const isDropTarget = dropStage === stage;
+
+                        return (
+                          <div
+                            key={stage}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setDropStage(stage);
+                            }}
+                            onDragLeave={() => setDropStage((s) => (s === stage ? null : s))}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              handleDrop(stage);
+                            }}
+                            className={cn(
+                              "w-60 shrink-0 rounded-xl border flex flex-col max-h-[calc(100vh-360px)] min-h-[200px] transition",
+                              isDropTarget && allowedNow
+                                ? "border-emerald-500 bg-emerald-950/20"
+                                : "border-zinc-800 bg-zinc-900/40",
+                              dragLead && !allowedNow && "opacity-40"
+                            )}
+                          >
+                            <header className="shrink-0 px-3 py-2.5 border-b border-zinc-800/70 flex items-center justify-between gap-2">
+                              <span
+                                className={cn(
+                                  "text-xs font-bold",
+                                  stageMeta?.color.split(" ")[1] ?? "text-zinc-300"
+                                )}
+                              >
+                                {stageMeta?.label ?? stage}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs text-zinc-500">{stageLeads.length}</span>
+                                {(stage === "won" || stage === "lost") && (
+                                  <button
+                                    onClick={() => setCollapsed((c) => ({ ...c, [stage]: true }))}
+                                    title="Colapsar columna"
+                                    aria-label={`Colapsar ${stageMeta?.label ?? stage}`}
+                                    className="p-0.5 rounded text-zinc-400 hover:text-zinc-200 transition"
+                                  >
+                                    <Minus className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </header>
+                            <div className="p-2 space-y-2 overflow-y-auto flex-1">
+                              {stageLeads.map((lead) => (
+                                <div
+                                  key={lead.id}
+                                  draggable
+                                  onDragStart={(e) => {
+                                    setDragLead(lead);
+                                    e.dataTransfer.effectAllowed = "move";
+                                  }}
+                                  onDragEnd={() => {
+                                    setDragLead(null);
+                                    setDropStage(null);
+                                  }}
+                                  onClick={() => openLeadDrawer(lead.id)}
+                                  className="cursor-grab active:cursor-grabbing rounded-lg border border-zinc-800 bg-zinc-950/80 p-2.5 space-y-1.5 hover:border-emerald-700 transition"
+                                >
+                                  <div className="text-xs font-semibold text-white truncate">
+                                    {lead.contactName || "Anónimo"}
+                                  </div>
+                                  {lead.organizationName && (
+                                    <div className="text-[11px] text-zinc-500 truncate flex items-center gap-1">
+                                      <Building2 className="w-3 h-3 shrink-0" />
+                                      {lead.organizationName}
+                                    </div>
+                                  )}
+                                  <div className="flex items-center justify-between gap-2 text-[10px] text-zinc-500">
+                                    <span className="truncate">
+                                      {lead.serviceType
+                                        ? SERVICE_TYPE_LABELS[lead.serviceType] ?? lead.serviceType
+                                        : lead.source}
+                                    </span>
+                                    <span className="shrink-0" title="Días en esta etapa">
+                                      {daysInStage(lead.stageChangedAt)}d
+                                    </span>
+                                  </div>
+                                  {fmtBudget(lead) && (
+                                    <div className="text-[11px] font-semibold text-emerald-300">
+                                      {fmtBudget(lead)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              {stageLeads.length === 0 && (
+                                <div className="rounded-lg border border-dashed border-zinc-800/80 text-center text-[11px] text-zinc-600 py-4">
+                                  Suelta aquí
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Slide-over Drawer for Lead / Prospect AI Details */}
       {activeLeadId && (
@@ -469,6 +790,17 @@ export const LeadsView: React.FC = () => {
                 {STAGE_LABELS[leadDetails.lead.stage]?.label || leadDetails.lead.stage}
               </Badge>
             )
+          }
+          actions={
+            leadDetails ? (
+              <button
+                onClick={() => setEditLeadOpen(true)}
+                title="Editar los campos del lead (servicio, resumen, presupuesto)"
+                className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
+            ) : undefined
           }
           meta={
             leadDetails && (
@@ -974,6 +1306,40 @@ export const LeadsView: React.FC = () => {
               </>
             ) : null}
         </SlideOver>
+      )}
+
+      {/* Alta manual de lead (override sin agente) */}
+      {newLeadOpen && (
+        <NewLeadModal
+          onClose={() => setNewLeadOpen(false)}
+          onCreated={(leadId) => {
+            setNewLeadOpen(false);
+            fetchLeads();
+            openLeadDrawer(leadId);
+            setActionSuccess("Lead creado: arranca en la etapa Nuevo.");
+            setTimeout(() => setActionSuccess(null), 4000);
+          }}
+        />
+      )}
+
+      {/* Edición manual de los campos del lead */}
+      {editLeadOpen && leadDetails && (
+        <LeadEditModal
+          initial={{
+            id: leadDetails.lead.id,
+            serviceType: leadDetails.lead.serviceType,
+            summary: leadDetails.lead.summary,
+            estimatedValueCents: leadDetails.lead.estimatedValueCents ?? null,
+          }}
+          onSaved={async () => {
+            setEditLeadOpen(false);
+            await openLeadDrawer(leadDetails.lead.id);
+            fetchLeads();
+            setActionSuccess("Lead actualizado (queda auditado en el timeline).");
+            setTimeout(() => setActionSuccess(null), 4000);
+          }}
+          onClose={() => setEditLeadOpen(false)}
+        />
       )}
 
       {/* Añadir / editar el contacto del lead */}
