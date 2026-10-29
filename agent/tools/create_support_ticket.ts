@@ -77,6 +77,11 @@ export default defineTool({
         : "No project was linked (no projectName given).";
 
       if (crmResult.duplicate) {
+        // The existing ticket kept ITS OWN project link: report the request,
+        // never claim the link happened.
+        const dupProjectReport = linkedProjectName
+          ? `You named project ${linkedProjectName}, but the existing ticket's own link was left unchanged — verify it (update_support_ticket projectName) before assuming the target.`
+          : "No project was requested for this repeat report.";
         return {
           status: "ticket_already_open",
           ticketId: crmResult.ticketId,
@@ -86,7 +91,7 @@ export default defineTool({
           systemAffected: input.systemAffected,
           linkedProjectId: projectId ?? null,
           linkedProjectName: linkedProjectName ?? null,
-          message: `This incident is already open as ticket ${crmResult.ticketId} — no duplicate created, owner not re-paged. ${projectReport}`,
+          message: `This incident is already open as ticket ${crmResult.ticketId} — no duplicate created, owner not re-paged. ${dupProjectReport}`,
         };
       }
 
