@@ -24,7 +24,9 @@ import {
   CheckCheck,
   History,
   ChevronDown,
+  Pencil,
 } from "lucide-react";
+import { NewProjectModal, ProjectEditModal } from "./CrmForms";
 
 const isTauri = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -168,6 +170,7 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
     () => localStorage.getItem("CREAPOLIS_AUTOLAUNCH") !== "off"
   );
   const [showForm, setShowForm] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [liveLogs, setLiveLogs] = useState<Record<string, string>>({});
   // Run huérfano: el shell terminó pero nadie cerró el run en el CRM
   // (p. ej. la app se cerró durante la ejecución).
@@ -435,6 +438,13 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
             className="flex items-center gap-1.5 px-3 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm font-medium transition"
           >
             <Plus className="w-4 h-4" /> Nueva corrección
+          </button>
+          <button
+            onClick={() => setNewProjectOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-lg text-sm font-medium transition"
+            title="Registrar un proyecto manualmente (elegir cliente)"
+          >
+            <Plus className="w-4 h-4" /> Nuevo proyecto
           </button>
           <button
             onClick={fetchData}
@@ -772,8 +782,17 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
           {loading && projects.length === 0 ? (
             <div className="text-center py-12 text-zinc-500 col-span-2">Cargando proyectos…</div>
           ) : projects.length === 0 ? (
-            <div className="p-8 text-center bg-zinc-900/40 border border-zinc-800 rounded-xl text-zinc-400 text-sm col-span-2">
-              No hay proyectos registrados. Eve PM los crea al ganar contratos.
+            <div className="p-8 text-center bg-zinc-900/40 border border-zinc-800 rounded-xl text-zinc-400 text-sm col-span-2 space-y-3">
+              <div>
+                No hay proyectos registrados. Eve PM los crea al ganar contratos; también puedes
+                registrar uno a mano.
+              </div>
+              <button
+                onClick={() => setNewProjectOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-sm font-semibold rounded-lg transition"
+              >
+                <Plus className="w-4 h-4" /> Nuevo proyecto
+              </button>
             </div>
           ) : (
             projects.map((proj) => (
@@ -781,6 +800,18 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
             ))
           )}
         </div>
+      )}
+
+      {/* Alta manual de proyecto (elegir cliente, hitos después) */}
+      {newProjectOpen && (
+        <NewProjectModal
+          onClose={() => setNewProjectOpen(false)}
+          onCreated={() => {
+            setNewProjectOpen(false);
+            fetchData();
+            setActiveTab("projects");
+          }}
+        />
       )}
 
       {/* Cierre manual de un run huérfano */}
@@ -1072,6 +1103,7 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
   onSaved,
 }) => {
   const [localPath, setLocalPath] = useState(project.localPath ?? "");
+  const [editOpen, setEditOpen] = useState(false);
   const [defaultBranch, setDefaultBranch] = useState(project.defaultBranch);
   const [testCommand, setTestCommand] = useState(project.testCommand ?? "");
   const [busy, setBusy] = useState<"save" | "verify" | null>(null);
@@ -1184,9 +1216,18 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
             <Building2 className="w-3 h-3" /> {project.organizationName}
           </div>
         </div>
-        <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
-          {project.status}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setEditOpen(true)}
+            title="Editar nombre, repositorio o estado (los proyectos no se borran: se entregan o cancelan)"
+            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">
+            {project.status}
+          </span>
+        </div>
       </div>
 
       {project.repoUrl && (
@@ -1361,6 +1402,22 @@ const ProjectFolderCard: React.FC<{ project: ProjectItem; onSaved: () => void }>
           </div>
         )}
       </div>
+
+      {editOpen && (
+        <ProjectEditModal
+          initial={{
+            id: project.id,
+            name: project.name,
+            repoUrl: project.repoUrl,
+            status: project.status,
+          }}
+          onSaved={() => {
+            setEditOpen(false);
+            onSaved();
+          }}
+          onClose={() => setEditOpen(false)}
+        />
+      )}
     </div>
   );
 };

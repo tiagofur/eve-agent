@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, OrganizationItem, OrganizationSummary, type ContactPayload } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
-import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle, Plus, Pencil, Trash2 } from "lucide-react";
+import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle, Plus, Pencil, Trash2, NotebookPen } from "lucide-react";
 
 import { ThreadDrawer } from "./ThreadDrawer";
 import { ContactModal, OrgDataModal, type ContactInitial, type OrgDataInitial } from "./Client360Modals";
+import { NewOrgModal, NewProjectModal, LogInteractionModal } from "./CrmForms";
 import {
   SlideOver,
   Modal,
@@ -42,6 +43,10 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
   const [orgModalOpen, setOrgModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Override manual: alta de organización, nuevo proyecto y registro de interacción
+  const [newOrgOpen, setNewOrgOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [interactionOpen, setInteractionOpen] = useState(false);
 
   const fetchOrgs = async () => {
     try {
@@ -134,12 +139,20 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
           </h2>
           <p className="text-sm text-zinc-400">Ficha unificada: contactos, leads, proyectos, tickets e historial.</p>
         </div>
-        <button
-          onClick={fetchOrgs}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
-        >
-          <RefreshCw className="w-4 h-4" /> Actualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setNewOrgOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500 hover:bg-emerald-400 text-black text-sm font-semibold rounded-lg transition shadow-md"
+          >
+            <Plus className="w-4 h-4" /> Nueva organización
+          </button>
+          <button
+            onClick={fetchOrgs}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm"
+          >
+            <RefreshCw className="w-4 h-4" /> Actualizar
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-3">
@@ -430,7 +443,20 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                 />
 
                 <section className="space-y-3">
-                  <SectionHeading icon={FolderKanban} title="Proyectos" count={summary.projects.length} />
+                  <SectionHeading
+                    icon={FolderKanban}
+                    title="Proyectos"
+                    count={summary.projects.length}
+                    action={
+                      <button
+                        onClick={() => setNewProjectOpen(true)}
+                        title="Crear un proyecto para este cliente"
+                        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 rounded-md transition"
+                      >
+                        <Plus className="w-3.5 h-3.5" /> Nuevo proyecto
+                      </button>
+                    }
+                  />
                   {summary.projects.length === 0 ? (
                     <EmptyState
                       icon={FolderKanban}
@@ -515,7 +541,19 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                 </section>
 
                 <section className="space-y-3">
-                  <SectionHeading icon={History} title="Historial" />
+                  <SectionHeading
+                    icon={History}
+                    title="Historial"
+                    action={
+                      <button
+                        onClick={() => setInteractionOpen(true)}
+                        title="Registrar una llamada, reunión o nota a mano"
+                        className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-md transition"
+                      >
+                        <NotebookPen className="w-3.5 h-3.5" /> Registrar interacción
+                      </button>
+                    }
+                  />
                   {summary.timeline.length === 0 ? (
                     <EmptyState icon={History} title="Sin eventos registrados." />
                   ) : (
@@ -567,7 +605,11 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
         <Modal
           onClose={() => setConfirmDelete(false)}
           title="Eliminar organización"
-          description={`Se elimina "${activeOrg.name}" de forma permanente junto con sus contactos y leads. Los tickets quedan con la organización sin asignar. Esta acción no se puede deshacer.`}
+          description={
+            summary
+              ? `Se elimina "${activeOrg.name}" de forma permanente junto con ${summary.leads.length} lead(s) y ${summary.contacts.length} contacto(s) asociados. Los tickets y estimaciones quedan sin organización asignada. Esta acción no se puede deshacer.`
+              : `Se elimina "${activeOrg.name}" de forma permanente junto con sus contactos y leads. Esta acción no se puede deshacer.`
+          }
         >
           <div className="flex justify-end gap-2">
             <button
@@ -588,6 +630,45 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
           </div>
         </Modal>
       )}
+      {/* Alta manual de organización (override sin agente) */}
+      {newOrgOpen && (
+        <NewOrgModal
+          onClose={() => setNewOrgOpen(false)}
+          onCreated={(orgId) => {
+            setNewOrgOpen(false);
+            fetchOrgs();
+            openSummary(orgId);
+          }}
+        />
+      )}
+
+      {/* Nuevo proyecto desde la ficha 360 (cliente ya elegido) */}
+      {newProjectOpen && summary && (
+        <NewProjectModal
+          organizations={[summary.organization]}
+          preselectedOrgId={summary.organization.id}
+          onClose={() => setNewProjectOpen(false)}
+          onCreated={() => {
+            setNewProjectOpen(false);
+            openSummary(summary.organization.id);
+            fetchOrgs();
+          }}
+        />
+      )}
+
+      {/* Registrar interacción a mano en el timeline de la ficha */}
+      {interactionOpen && summary && (
+        <LogInteractionModal
+          links={{ organizationId: summary.organization.id }}
+          entityName={summary.organization.name}
+          onClose={() => setInteractionOpen(false)}
+          onSaved={() => {
+            setInteractionOpen(false);
+            openSummary(summary.organization.id);
+          }}
+        />
+      )}
+
       {threadContact && summary && (
         <ThreadDrawer
           contactId={threadContact.id}

@@ -17,6 +17,11 @@ import { publicChatRouter } from "./api/routes/public-chat";
 
 export const app = new Hono();
 
+app.onError((err, c) => {
+  console.error("[app.onError]", err);
+  return c.json({ error: err.message }, 500);
+});
+
 // Enable CORS for Desktop App (Tauri / WKWebView origin)
 app.use(
   "*",

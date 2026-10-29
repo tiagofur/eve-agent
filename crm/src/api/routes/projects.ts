@@ -3,8 +3,17 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { eq, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { projects, tasks, organizations, milestones, contracts, taskRuns } from "../../db/schema";
+import {
+  projectStatusEnum,
+  projects,
+  tasks,
+  organizations,
+  milestones,
+  contracts,
+  taskRuns,
+} from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
+import { logEvent } from "../../domain/events";
 import path from "node:path";
 import fsp from "node:fs/promises";
 import {
@@ -129,6 +138,68 @@ projectsRouter.post(
     });
 
     return c.json({ success: true, project }, 201);
+  }
+);
+
+// Edit a project manually (ops only): rename, set repo URL, or move status
+// (onboarding/active/paused/delivered/cancelled). Projects are never deleted:
+// tasks and billing history stay attached to the delivery record.
+projectsRouter.patch(
+  "/:id",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      name: z.string().min(1).max(200).optional(),
+      repoUrl: z.string().url().max(300).nullable().optional(),
+      status: z.enum(projectStatusEnum.enumValues).optional(),
+    })
+  ),
+  async (c) => {
+    const projectId = c.req.param("id");
+    const patch = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [project] = await db
+      .select()
+      .from(projects)
+      .where(sql`${projects.id} = ${projectId}`)
+      .limit(1);
+    if (!project) {
+      return c.json({ error: "Project not found" }, 404);
+    }
+
+    const before: Record<string, unknown> = {};
+    const changed: Record<string, unknown> = {};
+    for (const key of ["name", "repoUrl", "status"] as const) {
+      const next = patch[key];
+      if (next === undefined) continue;
+      const current = project[key];
+      if (current !== next) {
+        before[key] = current;
+        changed[key] = next;
+      }
+    }
+    if (Object.keys(changed).length === 0) {
+      return c.json({ error: "No fields to update" }, 400);
+    }
+
+    const [updated] = await db
+      .update(projects)
+      .set({ ...changed, updatedAt: new Date() } as Partial<typeof projects.$inferInsert>)
+      .where(sql`${projects.id} = ${projectId}`)
+      .returning();
+
+    await logEvent({
+      entity: "project",
+      entityId: projectId,
+      action: "updated",
+      actor,
+      before,
+      after: changed,
+    });
+
+    return c.json({ success: true, project: updated });
   }
 );
 

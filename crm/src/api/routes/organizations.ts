@@ -15,6 +15,7 @@ import {
 } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
+import { findOrganizationByName } from "../../domain/organizations";
 import { channelEnum } from "../../db/schema";
 
 export const organizationsRouter = new Hono<{ Variables: AuthContextVariables }>();
@@ -26,6 +27,88 @@ const contactPayloadSchema = z.object({
   phone: z.string().max(40).nullable().optional(),
   preferredChannel: z.enum(channelEnum.enumValues).nullable().optional(),
 });
+
+/**
+ * Create an organization manually (agent-first override: the owner registers a
+ * client or prospect by hand without waiting for the agent to ingest a lead).
+ * Reuses the ingestion name normalization so a manual row never fragments an
+ * existing 360 sheet.
+ */
+organizationsRouter.post(
+  "/",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      name: z.string().min(1).max(200),
+      domain: z.string().min(1).max(200).nullable().optional(),
+      website: z.string().max(300).nullable().optional(),
+      industry: z.string().max(120).nullable().optional(),
+      city: z.string().max(120).nullable().optional(),
+      country: z.string().max(120).nullable().optional(),
+    })
+  ),
+  async (c) => {
+    const data = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const existing = await findOrganizationByName(data.name);
+    if (existing) {
+      return c.json(
+        {
+          error: `Ya existe una organización con ese nombre: "${existing.name}"`,
+          existingId: existing.id,
+        },
+        409
+      );
+    }
+
+    let domain: string | null = null;
+    if (data.domain != null) {
+      domain = data.domain
+        .trim()
+        .replace(/^https?:\/\//, "")
+        .replace(/\/+$/, "")
+        .toLowerCase();
+      if (!domain) {
+        return c.json({ error: "Domain cannot be empty" }, 400);
+      }
+      const [clash] = await db
+        .select({ id: organizations.id, name: organizations.name })
+        .from(organizations)
+        .where(sql`${organizations.domain} = ${domain}`)
+        .limit(1);
+      if (clash) {
+        return c.json(
+          { error: `Ese dominio ya pertenece a "${clash.name}"`, existingId: clash.id },
+          409
+        );
+      }
+    }
+
+    const [created] = await db
+      .insert(organizations)
+      .values({
+        name: data.name.trim(),
+        domain,
+        website: data.website ?? null,
+        industry: data.industry ?? null,
+        city: data.city ?? null,
+        country: data.country ?? null,
+      })
+      .returning();
+
+    await logEvent({
+      entity: "organization",
+      entityId: created!.id,
+      action: "created",
+      actor,
+      after: { name: created!.name, domain, source: "manual_desktop" },
+    });
+
+    return c.json({ success: true, organization: created }, 201);
+  }
+);
 
 /**
  * Manual ops corrections from the Client 360 sheet (agent-first: humans can

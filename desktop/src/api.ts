@@ -60,9 +60,12 @@ export interface FollowUpItem {
 export interface LeadItem {
   id: string;
   stage: string;
+  stageChangedAt?: string | null;
   source: string;
   serviceType: string | null;
   summary: string | null;
+  estimatedValueCents?: number | null;
+  currency?: string | null;
   createdAt: string;
   organizationName: string | null;
   contactName: string | null;
@@ -314,10 +317,51 @@ export const crmApi = {
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
   getFunnelReport: () => request<FunnelReport>("/api/reports/funnel"),
   getLeads: () => request<{ leads: LeadItem[] }>("/api/leads"),
+  /** Alta manual de un lead desde el desktop (override sin agente). */
+  createLead: (data: {
+    clientName: string;
+    companyName?: string;
+    contact?: string;
+    serviceType?: "software_development" | "automation" | "ai_implementation" | "consulting";
+    projectSummary: string;
+    estimatedBudget?: string;
+    source?: string;
+  }) =>
+    request<{ success: boolean; leadId: string; stage: string }>("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({ ...data, source: data.source ?? "manual_desktop" }),
+    }),
+  /** Edición manual de los campos del lead (la etapa va por /stage). */
+  updateLead: (
+    leadId: string,
+    data: {
+      serviceType?: string | null;
+      summary?: string;
+      estimatedValueCents?: number | null;
+      currency?: string;
+    }
+  ) =>
+    request<{ success: boolean; lead: LeadItem }>(`/api/leads/${leadId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getOrganizations: () =>
     request<{ organizations: OrganizationItem[] }>("/api/organizations"),
   getOrganizationSummary: (orgId: string) =>
     request<OrganizationSummary>(`/api/organizations/${orgId}/summary`),
+  /** Alta manual de una organización. 409 con existingId si el nombre ya existe (dedup normalizado). */
+  createOrganization: (data: {
+    name: string;
+    domain?: string | null;
+    website?: string | null;
+    industry?: string | null;
+    city?: string | null;
+    country?: string | null;
+  }) =>
+    request<{ success: boolean; organization: OrganizationItem }>("/api/organizations", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   /** Eliminar organización (solo si no tiene proyectos). Cascada leads y contactos. */
   deleteOrganization: (orgId: string) =>
     request<{ success: boolean; removedLeads: number; removedContacts: number }>(
@@ -351,6 +395,11 @@ export const crmApi = {
     request<{ success: boolean; contact: { id: string } }>(`/api/contacts/${contactId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+  /** Eliminar contacto: leads e interacciones conservan su historial (contact_id → NULL). */
+  deleteContact: (contactId: string) =>
+    request<{ success: boolean; detachedInteractions: number }>(`/api/contacts/${contactId}`, {
+      method: "DELETE",
     }),
   /** Crear y vincular un contacto a un lead que llegó sin verificación. */
   createLeadContact: (leadId: string, data: ContactPayload) =>
@@ -484,6 +533,25 @@ export const crmApi = {
       body: JSON.stringify({ status, reason, clientMessage }),
     }),
   getProjects: () => request<{ projects: ProjectItem[] }>("/api/projects"),
+  /** Alta manual de un proyecto para un cliente existente (los hitos se agregan después). */
+  createProject: (data: { organizationId: string; name: string; repoUrl?: string }) =>
+    request<{ success: boolean; project: ProjectItem }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** Editar proyecto. Nunca se borra: se cierra (delivered) o cancela (cancelled). */
+  updateProject: (
+    projectId: string,
+    data: {
+      name?: string;
+      repoUrl?: string | null;
+      status?: "onboarding" | "active" | "paused" | "delivered" | "cancelled";
+    }
+  ) =>
+    request<{ success: boolean; project: ProjectItem }>(`/api/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   getReadyTasks: () => request<{ tasks: TaskItem[] }>("/api/projects/tasks/ready"),
   getPipelineTasks: () =>
     request<{ tasks: PipelineTaskItem[] }>("/api/projects/tasks/pipeline"),

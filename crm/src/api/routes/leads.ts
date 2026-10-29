@@ -9,7 +9,7 @@ import { ingestLead, changeLeadStage } from "../../domain/leads";
 import { logEvent } from "../../domain/events";
 import { createProject } from "../../domain/projects";
 import { LEAD_STAGES } from "../../domain/lead-stages";
-import { channelEnum } from "../../db/schema";
+import { channelEnum, serviceTypeEnum } from "../../db/schema";
 
 export const leadsRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -49,6 +49,64 @@ leadsRouter.post(
       },
       201
     );
+  }
+);
+
+// Edit lead fields manually (ops only): the owner corrects or completes what
+// the agent captured. Stage changes stay on /:id/stage (they require a reason).
+leadsRouter.patch(
+  "/:id",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      serviceType: z.enum(serviceTypeEnum.enumValues).nullable().optional(),
+      summary: z.string().min(1).max(2000).optional(),
+      estimatedValueCents: z.number().int().nonnegative().nullable().optional(),
+      currency: z.string().max(8).optional(),
+    })
+  ),
+  async (c) => {
+    const leadId = c.req.param("id");
+    const patch = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const [lead] = await db.select().from(leads).where(sql`${leads.id} = ${leadId}`).limit(1);
+    if (!lead) {
+      return c.json({ error: "Lead not found" }, 404);
+    }
+
+    const before: Record<string, unknown> = {};
+    const changed: Record<string, unknown> = {};
+    for (const key of ["serviceType", "summary", "estimatedValueCents", "currency"] as const) {
+      const next = patch[key];
+      if (next === undefined) continue;
+      const current = lead[key];
+      if (current !== next) {
+        before[key] = current;
+        changed[key] = next;
+      }
+    }
+    if (Object.keys(changed).length === 0) {
+      return c.json({ error: "No fields to update" }, 400);
+    }
+
+    const [updated] = await db
+      .update(leads)
+      .set({ ...changed, updatedAt: new Date() } as Partial<typeof leads.$inferInsert>)
+      .where(sql`${leads.id} = ${leadId}`)
+      .returning();
+
+    await logEvent({
+      entity: "lead",
+      entityId: leadId,
+      action: "updated",
+      actor,
+      before,
+      after: changed,
+    });
+
+    return c.json({ success: true, lead: updated });
   }
 );
 
@@ -265,6 +323,8 @@ leadsRouter.get("/", requireScope(["ops"]), async (c) => {
       source: leads.source,
       serviceType: leads.serviceType,
       summary: leads.summary,
+      estimatedValueCents: leads.estimatedValueCents,
+      currency: leads.currency,
       createdAt: leads.createdAt,
       organizationName: organizations.name,
       contactName: contacts.name,
@@ -292,6 +352,8 @@ leadsRouter.get("/:id/details", requireScope(["ops"]), async (c) => {
       source: leads.source,
       serviceType: leads.serviceType,
       summary: leads.summary,
+      estimatedValueCents: leads.estimatedValueCents,
+      currency: leads.currency,
       organizationId: leads.organizationId,
       contactId: leads.contactId,
       nextFollowUpAt: leads.nextFollowUpAt,

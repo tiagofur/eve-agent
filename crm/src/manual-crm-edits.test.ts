@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { app } from "./app";
 import { pool, db } from "./db/client";
 import { hashApiKey } from "./auth/keys";
-import { apiKeys, contacts, events, leads, organizations, projects, tickets } from "./db/schema";
+import { apiKeys, contacts, events, interactions, leads, organizations, projects, tickets } from "./db/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import { ingestLead } from "./domain/leads";
 
@@ -269,6 +269,137 @@ describe("Edición manual del CRM (fichas 360 y leads)", () => {
     expect(res.status).toBe(409);
 
     await db.delete(projects).where(eq(projects.id, project!.id));
+  });
+
+  it("crea una organización manualmente y rechaza duplicados normalizados", async () => {
+    const noAuth = await app.request(`/api/organizations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "TEST Org Sin Auth" }),
+    });
+    expect(noAuth.status).toBe(401);
+
+    const res = await app.request(`/api/organizations`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ name: "TEST Org Manual", city: "CDMX" }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { organization: { id: string; name: string; city: string } };
+    expect(body.organization.name).toBe("TEST Org Manual");
+    expect(body.organization.city).toBe("CDMX");
+
+    const dup = await app.request(`/api/organizations`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ name: "test  org  manual" }),
+    });
+    expect(dup.status).toBe(409);
+    const dupBody = (await dup.json()) as { existingId: string };
+    expect(dupBody.existingId).toBe(body.organization.id);
+
+    await db.delete(events).where(eq(events.entityId, body.organization.id));
+    await db.delete(organizations).where(eq(organizations.id, body.organization.id));
+  });
+
+  it("edita los campos de un lead y deja auditoría", async () => {
+    const res = await app.request(`/api/leads/${orphanLeadId}`, {
+      method: "PATCH",
+      headers: auth,
+      body: JSON.stringify({
+        serviceType: "automation",
+        summary: "Lead sin contacto (editado a mano)",
+        estimatedValueCents: 500000,
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { lead: { serviceType: string; estimatedValueCents: number } };
+    expect(body.lead.serviceType).toBe("automation");
+    expect(body.lead.estimatedValueCents).toBe(500000);
+
+    const audit = await db.select().from(events).where(eq(events.entityId, orphanLeadId));
+    expect(audit.some((e) => e.action === "updated" && (e.after as any)?.estimatedValueCents === 500000)).toBe(true);
+
+    const empty = await app.request(`/api/leads/${orphanLeadId}`, {
+      method: "PATCH",
+      headers: auth,
+      body: JSON.stringify({ serviceType: "automation" }),
+    });
+    expect(empty.status).toBe(400);
+
+    const notFound = await app.request(`/api/leads/${orgId}`, {
+      method: "PATCH",
+      headers: auth,
+      body: JSON.stringify({ summary: "x" }),
+    });
+    expect(notFound.status).toBe(404); // uuid de org, no de lead
+  });
+
+  it("elimina un contacto y conserva sus interacciones (set null)", async () => {
+    const [created] = await db
+      .insert(contacts)
+      .values({ organizationId: orgId, name: "TEST Eliminable" })
+      .returning();
+    const [inter] = await db
+      .insert(interactions)
+      .values({
+        organizationId: orgId,
+        contactId: created!.id,
+        channel: "email",
+        direction: "inbound",
+        content: "interacción de prueba para borrado",
+      })
+      .returning();
+
+    const res = await app.request(`/api/contacts/${created!.id}`, {
+      method: "DELETE",
+      headers: auth,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { detachedInteractions: number };
+    expect(body.detachedInteractions).toBe(1);
+
+    const [still] = await db.select().from(interactions).where(eq(interactions.id, inter!.id));
+    expect(still).toBeDefined();
+    expect(still!.contactId).toBeNull();
+
+    await db.delete(interactions).where(eq(interactions.id, inter!.id));
+  });
+
+  it("edita nombre, repo y status de un proyecto (nunca se borra)", async () => {
+    const [created] = await db
+      .insert(projects)
+      .values({ organizationId: orgId, name: "TEST proyecto editable" })
+      .returning();
+    try {
+      const res = await app.request(`/api/projects/${created!.id}`, {
+        method: "PATCH",
+        headers: auth,
+        body: JSON.stringify({
+          name: "TEST proyecto renombrado",
+          repoUrl: "https://github.com/test/repo",
+          status: "active",
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { project: { name: string; status: string; repoUrl: string } };
+      expect(body.project.name).toBe("TEST proyecto renombrado");
+      expect(body.project.status).toBe("active");
+      expect(body.project.repoUrl).toBe("https://github.com/test/repo");
+
+      const empty = await app.request(`/api/projects/${created!.id}`, {
+        method: "PATCH",
+        headers: auth,
+        body: JSON.stringify({ name: "TEST proyecto renombrado" }),
+      });
+      expect(empty.status).toBe(400);
+
+      const audit = await db.select().from(events).where(eq(events.entityId, created!.id));
+      expect(audit.some((e) => e.action === "updated" && (e.before as any)?.status === "onboarding")).toBe(true);
+    } finally {
+      await db.delete(projects).where(eq(projects.id, created!.id));
+      await db.delete(events).where(eq(events.entityId, created!.id));
+    }
   });
 
   it("reutiliza la organización existente aunque el nombre cambie de formato", async () => {
