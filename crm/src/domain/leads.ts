@@ -11,6 +11,7 @@ import {
 } from "../db/schema";
 import { validateTransition } from "./lead-stages";
 import { logEvent } from "./events";
+import { findOrganizationByName } from "./organizations";
 
 export type ServiceType = (typeof serviceTypeEnum.enumValues)[number];
 export type ChannelType = (typeof channelEnum.enumValues)[number];
@@ -115,11 +116,7 @@ export async function ingestLead(input: IngestLeadInput) {
   let orgId: string | undefined = undefined;
   if (input.companyName && input.companyName.trim().length > 0) {
     const cleanName = input.companyName.trim();
-    const [existingOrg] = await db
-      .select()
-      .from(organizations)
-      .where(sql`LOWER(${organizations.name}) = LOWER(${cleanName})`)
-      .limit(1);
+    const existingOrg = await findOrganizationByName(cleanName);
 
     if (existingOrg) {
       orgId = existingOrg.id;

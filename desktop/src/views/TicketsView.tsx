@@ -18,6 +18,7 @@ import {
   FileText,
   Folder,
   Terminal,
+  Trash2,
 } from "lucide-react";
 
 const SEVERITY_CONFIG: Record<
@@ -95,6 +96,7 @@ export const TicketsView: React.FC = () => {
   const [resolveNote, setResolveNote] = useState("");
   const [resolveClientMsg, setResolveClientMsg] = useState("");
   const [submittingAction, setSubmittingAction] = useState(false);
+  const [confirmDeleteTicket, setConfirmDeleteTicket] = useState(false);
 
   const fetchTickets = async () => {
     try {
@@ -861,12 +863,60 @@ export const TicketsView: React.FC = () => {
                       >
                         <RefreshCw className="w-3.5 h-3.5" /> Reabrir
                       </button>
+                      <button
+                        onClick={() => setConfirmDeleteTicket(true)}
+                        title="Eliminar el ticket de forma permanente (solo tickets cerrados)"
+                        className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 text-xs font-semibold rounded-lg transition disabled:opacity-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Eliminar
+                      </button>
                     </div>
                   )}
                 </div>
               </>
             ) : null}
         </SlideOver>
+      )}
+
+      {/* Confirm delete ticket */}
+      {confirmDeleteTicket && ticketDetails && (
+        <Modal
+          onClose={() => setConfirmDeleteTicket(false)}
+          title="Eliminar ticket"
+          description={`Se elimina de forma permanente el ticket "${ticketDetails.ticket.system}". Las interacciones y borradores asociados conservan su historial, pero quedan sin ticket. Esta acción no se puede deshacer.`}
+          width="max-w-lg"
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmDeleteTicket(false)}
+              className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white rounded-lg bg-zinc-800 hover:bg-zinc-700 transition"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  setSubmittingAction(true);
+                  await crmApi.deleteTicket(ticketDetails.ticket.id);
+                  setConfirmDeleteTicket(false);
+                  closeDrawer();
+                  fetchTickets();
+                } catch (err: any) {
+                  setConfirmDeleteTicket(false);
+                  alert(`No se pudo eliminar: ${err.message}`);
+                } finally {
+                  setSubmittingAction(false);
+                }
+              }}
+              disabled={submittingAction}
+              className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition disabled:opacity-50"
+            >
+              {submittingAction ? "Eliminando..." : "Eliminar definitivamente"}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Reject Ticket Modal with Client Response */}

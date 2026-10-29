@@ -3,6 +3,7 @@ import { db } from "../db/client";
 import { dossiers, organizations, leads } from "../db/schema";
 import { changeLeadStage, ingestLead, resolveOrCreateContact } from "./leads";
 import { logEvent } from "./events";
+import { findOrganizationByName } from "./organizations";
 
 export interface DossierContactInput {
   /** Person name when research identified a decision maker. */
@@ -115,11 +116,7 @@ export async function createDossier(input: CreateDossierInput) {
   // 1. Resolve or create organization
   if (!orgId && input.companyName) {
     const cleanName = input.companyName.trim();
-    const [existingOrg] = await db
-      .select()
-      .from(organizations)
-      .where(sql`LOWER(${organizations.name}) = LOWER(${cleanName})`)
-      .limit(1);
+    const existingOrg = await findOrganizationByName(cleanName);
 
     if (existingOrg) {
       orgId = existingOrg.id;

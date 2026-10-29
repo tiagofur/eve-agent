@@ -294,3 +294,40 @@ ticketsRouter.patch(
     return c.json({ success: true, ticket: result.ticket });
   }
 );
+
+// Delete a ticket manually (ops only). Only terminal tickets (closed) —
+// anything still open must go through close/reject so the correction pipeline
+// never loses an in-flight incident. Interactions and outbox drafts keep their
+// history with the ticket link nulled via FK; correction tasks (if any) lose
+// their ticket link the same way.
+ticketsRouter.delete("/:id", requireScope(["ops"]), async (c) => {
+  const ticketId = c.req.param("id") ?? "";
+  const actor = c.get("actor");
+
+  const [ticket] = await db
+    .select()
+    .from(tickets)
+    .where(eq(tickets.id, ticketId))
+    .limit(1);
+  if (!ticket) {
+    return c.json({ error: "Ticket not found" }, 404);
+  }
+  if (ticket.status !== "closed") {
+    return c.json(
+      { error: `Solo se pueden eliminar tickets cerrados (estado actual: ${ticket.status}). Ciérralo o deséstialo primero.` },
+      409
+    );
+  }
+
+  await db.delete(tickets).where(eq(tickets.id, ticketId));
+
+  await logEvent({
+    entity: "ticket",
+    entityId: ticketId,
+    action: "deleted",
+    actor,
+    after: { system: ticket.system, description: ticket.description, severity: ticket.severity },
+  });
+
+  return c.json({ success: true });
+});

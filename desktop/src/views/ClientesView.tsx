@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { crmApi, OrganizationItem, OrganizationSummary, type ContactPayload } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
-import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle, Plus, Pencil } from "lucide-react";
+import { Building2, RefreshCw, Search, FolderKanban, LifeBuoy, FileText, History, Globe, MapPin, BookUser, ArrowUpRight, AlertCircle, Plus, Pencil, Trash2 } from "lucide-react";
 
 import { ThreadDrawer } from "./ThreadDrawer";
 import { ContactModal, OrgDataModal, type ContactInitial, type OrgDataInitial } from "./Client360Modals";
 import {
   SlideOver,
+  Modal,
   Badge,
   EmptyState,
   SectionHeading,
@@ -39,6 +40,8 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
     { mode: "create" } | { mode: "edit"; contact: ContactInitial & { id: string } } | null
   >(null);
   const [orgModalOpen, setOrgModalOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchOrgs = async () => {
     try {
@@ -93,6 +96,22 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
     await crmApi.updateOrganization(activeOrgId, patch);
     await openSummary(activeOrgId);
     fetchOrgs();
+  };
+
+  const handleDeleteOrg = async () => {
+    if (!activeOrgId) return;
+    try {
+      setDeleting(true);
+      await crmApi.deleteOrganization(activeOrgId);
+      setConfirmDelete(false);
+      closeDrawer();
+      fetchOrgs();
+    } catch (err: any) {
+      setConfirmDelete(false);
+      alert(`No se pudo eliminar: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const filtered = orgs.filter((o) => {
@@ -189,6 +208,15 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
                   : `Prospecto · ${activeOrg.leadCount ?? 0} leads`}
               </Badge>
             )
+          }
+          actions={
+            <button
+              onClick={() => setConfirmDelete(true)}
+              title="Eliminar esta organización (solo si no tiene proyectos)"
+              className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-300 hover:bg-rose-950/60 transition"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
           }
           meta={
             <>
@@ -534,6 +562,31 @@ export const ClientesView: React.FC<{ onAskOrchestrator: (prompt: string) => voi
           onSubmit={handleSaveOrg}
           onClose={() => setOrgModalOpen(false)}
         />
+      )}
+      {confirmDelete && activeOrg && (
+        <Modal
+          onClose={() => setConfirmDelete(false)}
+          title="Eliminar organización"
+          description={`Se elimina "${activeOrg.name}" de forma permanente junto con sus contactos y leads. Los tickets quedan con la organización sin asignar. Esta acción no se puede deshacer.`}
+        >
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white rounded-lg bg-zinc-800 hover:bg-zinc-700 transition"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteOrg}
+              disabled={deleting}
+              className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg transition disabled:opacity-50"
+            >
+              {deleting ? "Eliminando..." : "Eliminar definitivamente"}
+            </button>
+          </div>
+        </Modal>
       )}
       {threadContact && summary && (
         <ThreadDrawer

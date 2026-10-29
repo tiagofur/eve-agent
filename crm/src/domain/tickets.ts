@@ -12,6 +12,7 @@ import {
   type ticketKindEnum,
 } from "../db/schema";
 import { logEvent } from "./events";
+import { findOrganizationByName } from "./organizations";
 import { notifySupportTicketCreated } from "../services/telegram";
 import { createOutreachDraft } from "./outbox";
 // Runtime-only cycle with ./projects (both modules only call each other's
@@ -134,11 +135,7 @@ export async function createTicket(input: CreateTicketInput): Promise<CreateTick
     if (contactId && !organizationId) {
       const orgName = input.companyName?.trim() || input.clientName.trim();
       if (orgName) {
-        const [existingOrg] = await db
-          .select()
-          .from(organizations)
-          .where(sql`LOWER(${organizations.name}) = LOWER(${orgName})`)
-          .limit(1);
+        const existingOrg = await findOrganizationByName(orgName);
         const org =
           existingOrg ??
           (await db.insert(organizations).values({ name: orgName }).returning())[0];
