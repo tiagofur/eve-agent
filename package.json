@@ -31,5 +31,8 @@
   },
   "engines": {
     "node": "24.x"
+  },
+  "overrides": {
+    "@ai-sdk/provider": "4.0.34"
   }
 }

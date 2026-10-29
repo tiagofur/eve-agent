@@ -281,3 +281,39 @@ cd crm && npm run typecheck   # CRM backend
 # Agent tooling smoke test (register lead + save dossier against the local CRM)
 npx tsx agent/scripts/test-prospect-muse.ts
 ```
+
+### F. Continuous Deployment (GitHub Actions)
+
+Production deploys to the VPS (`/opt/eve-agent`, Plesk box) are automatic — no manual SSH.
+
+- **CI** (`.github/workflows/ci.yml`): on every PR to `main` and every push — agent typecheck, CRM typecheck + full vitest suite against a fresh Postgres 17, desktop typecheck.
+- **Deploy** (`.github/workflows/deploy.yml`): on every push to `main` touching `agent/`, `crm/`, compose/Dockerfile/lockfiles. Docs-only or desktop-only changes do not deploy. Manual re-run: Actions tab → "Deploy to VPS" → Run workflow.
+
+Sequence per deploy (failure-safe order):
+
+```
+rsync repo → /opt/eve-agent (NUNCA toca .env* del VPS)
+→ tag imágenes actuales como :previous (punto de rollback)
+→ docker compose build (eve-agent + creapolis-crm)
+→ docker compose run --rm creapolis-crm npx drizzle-kit migrate
+   (si falla, el job para y los contenedores viejos siguen sirviendo)
+→ docker compose up -d
+→ health checks (CRM /health + eve /eve/v1/health, 12 reintentos)
+→ notificación Telegram (Deploy OK / Deploy FAILED con link al run)
+```
+
+Requirements & credentials: GitHub secrets `SSH_HOST`, `SSH_USER`, `SSH_KEY`, `DEPLOY_PATH`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_CHAT_ID`. The deploy key is a dedicated ed25519 pair (`~/.ssh/eve-deploy` locally); revoke by deleting its `github-actions-deploy-eve-agent` line in `/root/.ssh/authorized_keys` on the VPS, then rotate the GitHub secret.
+
+Rollback to the previous version (on the VPS):
+
+```bash
+cd /opt/eve-agent
+cat .deployed-commit                                   # qué versión corre ahora
+docker tag eve-agent-eve-agent:previous eve-agent-eve-agent:latest
+docker tag eve-agent-creapolis-crm:previous eve-agent-creapolis-crm:latest
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Note: migrations run before the switch; a rollback does not undo schema changes — write migrations to be backward-compatible for one release.
+
+Desktop installers are NOT built in CI (local Tauri/macOS build per section 3, Step 5); the desktop app needs no deploy — it points at the API URL via the Connection panel.

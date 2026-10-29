@@ -1,0 +1,117 @@
+name: Deploy to VPS
+
+# Deploys server components (eve-agent + CRM + migrations) to the production
+# VPS on every merge to main that touches them. Docs-only or desktop-only
+# changes do not deploy. Re-run manually from the Actions tab when needed.
+#
+# Sequence (failure-safe order):
+#   sync -> tag current images :previous (rollback point) -> build new images
+#   -> migrate (one-off container; old containers keep serving on failure)
+#   -> up -d -> health checks -> Telegram notify
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "crm/**"
+      - "Dockerfile.eve"
+      - "Dockerfile.crm"
+      - "docker-compose.prod.yml"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up deploy SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Keep rollback images
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "bash -s -- '${{ secrets.DEPLOY_PATH }}'" <<'REMOTE'
+          cd "$1"
+          for img in eve-agent-eve-agent eve-agent-creapolis-crm; do
+            docker image inspect "$img:latest" >/dev/null 2>&1 \
+              && docker tag "$img:latest" "$img:previous" || true
+          done
+          REMOTE
+
+      - name: Sync project to VPS
+        # .env files are NEVER synced: the VPS keeps its own production env.
+        # Excluded paths are also protected from --delete on the receiver.
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.zcode' \
+            --exclude '.agents' \
+            --exclude 'node_modules' \
+            --exclude 'desktop' \
+            --exclude 'docs' \
+            --exclude '*.env' \
+            --exclude '.env*' \
+            --exclude 'crm/.env*' \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Build images
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "cd ${{ secrets.DEPLOY_PATH }} && docker compose -f docker-compose.prod.yml build eve-agent creapolis-crm"
+
+      - name: Apply database migrations
+        # One-off container on the compose network. On failure the job stops
+        # here and the previous containers keep serving untouched.
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "cd ${{ secrets.DEPLOY_PATH }} && docker compose -f docker-compose.prod.yml run --rm creapolis-crm npx drizzle-kit migrate"
+
+      - name: Restart services
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            "cd ${{ secrets.DEPLOY_PATH }} && docker compose -f docker-compose.prod.yml up -d && echo '${{ github.sha }}' > .deployed-commit"
+
+      - name: Health checks
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" bash -se <<'REMOTE'
+          ok=0
+          for i in $(seq 1 12); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null 2>&1 \
+              && curl -fsS http://127.0.0.1:3200/eve/v1/health >/dev/null 2>&1; then
+              echo "CRM + eve-agent healthy (attempt $i)"; ok=1; break
+            fi
+            sleep 5
+          done
+          [ "$ok" = "1" ] || { echo "Health checks failed"; exit 1; }
+          REMOTE
+
+      - name: Notify Telegram
+        if: ${{ always() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_ADMIN_CHAT_ID != '' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            ICON="🚀"; VERB="Deploy OK"
+          else
+            ICON="🚨"; VERB="Deploy FAILED"
+          fi
+          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_ADMIN_CHAT_ID}" \
+            --data-urlencode "text=${ICON} ${VERB} — eve-agent@${GITHUB_SHA::7}
+          run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            >/dev/null
