@@ -115,6 +115,69 @@ organizationsRouter.patch(
   }
 );
 
+// Delete an organization manually (ops only). Only allowed while it has no
+// projects — projects are the org's real work and their FK is restrict. The
+// org's leads, contacts, dossiers, interactions and outbox drafts are removed
+// with it; tickets and estimates keep history with the org link nulled, and
+// audit events survive as history.
+organizationsRouter.delete("/:id", requireScope(["ops"]), async (c) => {
+  const orgId = c.req.param("id") ?? "";
+  const actor = c.get("actor");
+
+  const [org] = await db
+    .select()
+    .from(organizations)
+    .where(sql`${organizations.id} = ${orgId}`)
+    .limit(1);
+  if (!org) {
+    return c.json({ error: "Organization not found" }, 404);
+  }
+
+  const orgProjects = await db
+    .select({ id: projects.id })
+    .from(projects)
+    .where(sql`${projects.organizationId} = ${orgId}`);
+  if (orgProjects.length > 0) {
+    return c.json(
+      {
+        error: `No se puede eliminar: la organización tiene ${orgProjects.length} proyecto(s). Reasígnalos o elimínalos primero.`,
+      },
+      409
+    );
+  }
+
+  const orgLeads = await db
+    .select({ id: leads.id })
+    .from(leads)
+    .where(sql`${leads.organizationId} = ${orgId}`);
+  const orgContacts = await db
+    .select({ id: contacts.id })
+    .from(contacts)
+    .where(sql`${contacts.organizationId} = ${orgId}`);
+
+  // FK cascades handle the rest per row: leads cascade their
+  // interactions/outbox/dossiers, contacts cascade theirs; deleting the org
+  // cascades what is still linked at the org level and nulls tickets/estimates.
+  await db.delete(leads).where(sql`${leads.organizationId} = ${orgId}`);
+  await db.delete(contacts).where(sql`${contacts.organizationId} = ${orgId}`);
+  await db.delete(organizations).where(sql`${organizations.id} = ${orgId}`);
+
+  await logEvent({
+    entity: "organization",
+    entityId: orgId,
+    action: "deleted",
+    actor,
+    after: {
+      name: org.name,
+      domain: org.domain,
+      removedLeads: orgLeads.length,
+      removedContacts: orgContacts.length,
+    },
+  });
+
+  return c.json({ success: true, removedLeads: orgLeads.length, removedContacts: orgContacts.length });
+});
+
 // Add a contact manually from the Client 360 sheet (ops only). Manual rows do
 // not attest WhatsApp consent: ingestLead only implies consent when the contact
 // themselves provided the phone.

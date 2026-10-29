@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openFolderDialog } from "@tauri-apps/plugin-dialog";
 import { crmApi, PipelineTaskItem, ProjectItem, ProjectTaskHistoryItem, FolderCheckData, TaskRunItem } from "../api";
+import { Modal } from "../components/ui";
 import {
   FolderKanban,
   Terminal,
@@ -168,6 +169,11 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
   );
   const [showForm, setShowForm] = useState(false);
   const [liveLogs, setLiveLogs] = useState<Record<string, string>>({});
+  // Run huérfano: el shell terminó pero nadie cerró el run en el CRM
+  // (p. ej. la app se cerró durante la ejecución).
+  const [closeRunModal, setCloseRunModal] = useState<{ task: PipelineTaskItem } | null>(null);
+  const [closeRunExit, setCloseRunExit] = useState<"0" | "1">("0");
+  const [closeRunNote, setCloseRunNote] = useState("");
   const newCorrectionBtnRef = useRef<HTMLButtonElement>(null);
 
   interface ActiveRun {
@@ -609,7 +615,14 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
               {/* Running */}
               {running.length > 0 && (
                 <Section title={`Ejecutándose (${running.length})`}>
-                  {running.map((task) => (
+                  {running.map((task) => {
+                    const started = task.latestRun?.startedAt
+                      ? new Date(task.latestRun.startedAt).getTime()
+                      : null;
+                    const staleHours = started ? (Date.now() - started) / 3600000 : null;
+                    const orphan =
+                      task.latestRun?.status === "running" && !activeRuns.current[task.id];
+                    return (
                     <div key={task.id} className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-5">
                       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                         <div>
@@ -619,6 +632,14 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
                               {task.title}
                               <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
                             </h3>
+                            {staleHours !== null && staleHours >= 1 && (
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-900/60 text-amber-300 border border-amber-700"
+                                title="El run sigue abierto en el CRM; si el shell ya terminó, ciérralo manualmente."
+                              >
+                                sin cerrar hace {Math.floor(staleHours)}h
+                              </span>
+                            )}
                           </div>
                           <div className="text-xs text-zinc-400 mt-1 flex items-center gap-3 flex-wrap">
                             <span className="flex items-center gap-1">
@@ -631,18 +652,34 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
                             )}
                           </div>
                         </div>
-                        {activeRuns.current[task.id] && (
-                          <button
-                            onClick={() => cancelTask(task)}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-rose-900/60 text-zinc-300 hover:text-rose-200 rounded-lg text-sm font-medium transition"
-                          >
-                            <XCircle className="w-4 h-4" /> Cancelar
-                          </button>
-                        )}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {orphan && (
+                            <button
+                              onClick={() => {
+                                setCloseRunModal({ task });
+                                setCloseRunExit("0");
+                                setCloseRunNote("");
+                              }}
+                              title="El shell ya no está conectado a esta app: registra el resultado del run en el CRM"
+                              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-emerald-950/60 text-zinc-300 hover:text-emerald-200 rounded-lg text-sm font-medium transition"
+                            >
+                              <CheckCircle2 className="w-4 h-4" /> Cerrar run
+                            </button>
+                          )}
+                          {activeRuns.current[task.id] && (
+                            <button
+                              onClick={() => cancelTask(task)}
+                              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-rose-900/60 text-zinc-300 hover:text-rose-200 rounded-lg text-sm font-medium transition"
+                            >
+                              <XCircle className="w-4 h-4" /> Cancelar
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <LogBox text={liveLogs[task.id] ?? "esperando salida del agente…"} />
                     </div>
-                  ))}
+                    );
+                  })}
                 </Section>
               )}
 
@@ -744,6 +781,73 @@ export const ProjectsView: React.FC<{ onAskOrchestrator?: (text: string) => void
             ))
           )}
         </div>
+      )}
+
+      {/* Cierre manual de un run huérfano */}
+      {closeRunModal && closeRunModal.task.latestRun && (
+        <Modal
+          onClose={() => setCloseRunModal(null)}
+          title="Cerrar run manualmente"
+          description={`El run de "${closeRunModal.task.title}" quedó abierto en el CRM (p. ej. la app se cerró mientras el shell corría). Registra el resultado real: la rama y el log quedan en el historial y la tarea pasa a revisión. Puedes pegar el resumen final del log (bloque RUN REPORT) como resumen.`}
+          width="max-w-lg"
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const runId = closeRunModal.task.latestRun!.id;
+              try {
+                await crmApi.closeTaskRun(closeRunModal.task.id, runId, {
+                  exitCode: Number(closeRunExit),
+                  resultSummary: closeRunNote.trim() || undefined,
+                });
+                setCloseRunModal(null);
+                fetchData();
+              } catch (err: any) {
+                setActionError(err?.message ?? String(err));
+              }
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">Resultado</label>
+              <select
+                value={closeRunExit}
+                onChange={(e) => setCloseRunExit(e.target.value as "0" | "1")}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+              >
+                <option value="0">Terminó con éxito (pasa a revisión)</option>
+                <option value="1">Falló / se abandonó</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-300 mb-1">
+                Resumen del resultado (opcional)
+              </label>
+              <textarea
+                rows={4}
+                value={closeRunNote}
+                onChange={(e) => setCloseRunNote(e.target.value)}
+                placeholder="Qué hizo el shell, qué rama dejó, cómo se verificó…"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500 font-mono"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCloseRunModal(null)}
+                className="px-4 py-2 text-xs font-medium text-zinc-400 hover:text-white rounded-lg bg-zinc-800 hover:bg-zinc-700 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-semibold text-black bg-emerald-400 hover:bg-emerald-300 rounded-lg transition"
+              >
+                Cerrar run
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
     </div>
   );
@@ -958,6 +1062,7 @@ const NewCorrectionForm: React.FC<{
           )}
         </div>
       </div>
+
     </div>
   );
 };

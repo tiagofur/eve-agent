@@ -318,6 +318,12 @@ export const crmApi = {
     request<{ organizations: OrganizationItem[] }>("/api/organizations"),
   getOrganizationSummary: (orgId: string) =>
     request<OrganizationSummary>(`/api/organizations/${orgId}/summary`),
+  /** Eliminar organización (solo si no tiene proyectos). Cascada leads y contactos. */
+  deleteOrganization: (orgId: string) =>
+    request<{ success: boolean; removedLeads: number; removedContacts: number }>(
+      `/api/organizations/${orgId}`,
+      { method: "DELETE" }
+    ),
   /** Corrección manual de datos de la empresa desde la ficha 360. */
   updateOrganization: (
     orgId: string,
@@ -386,6 +392,9 @@ export const crmApi = {
     request<{ tickets: TicketItem[] }>(
       `/api/tickets${status ? `?status=${encodeURIComponent(status)}` : ""}`
     ),
+  /** Eliminar ticket cerrado (los abiertos se rechazan con 409). */
+  deleteTicket: (ticketId: string) =>
+    request<{ success: boolean }>(`/api/tickets/${ticketId}`, { method: "DELETE" }),
   getTicketDetails: (ticketId: string) =>
     request<TicketDetailsResponse>(`/api/tickets/${ticketId}/details`),
   updateTicketContent: (
