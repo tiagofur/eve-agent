@@ -39,6 +39,7 @@ export default defineTool({
   async execute(input) {
     // Best-effort project link: a mismatch never blocks logging the incident.
     let projectId: string | undefined;
+    let linkedProjectName: string | undefined;
     let projectNote: string | undefined;
     if (input.projectName) {
       try {
@@ -46,6 +47,7 @@ export default defineTool({
         const match = resolveProjectLoose(projects, input.projectName);
         if (match && !match.ambiguous) {
           projectId = match.project.id;
+          linkedProjectName = match.project.name;
         } else if (match?.ambiguous) {
           projectNote = `projectName '${input.projectName}' matched multiple projects — ticket left unlinked`;
         } else {
@@ -68,7 +70,18 @@ export default defineTool({
         projectId,
       });
 
+      const projectReport = linkedProjectName
+        ? `Linked project: ${linkedProjectName}.`
+        : projectNote
+        ? `${projectNote}.`
+        : "No project was linked (no projectName given).";
+
       if (crmResult.duplicate) {
+        // The existing ticket kept ITS OWN project link: report the request,
+        // never claim the link happened.
+        const dupProjectReport = linkedProjectName
+          ? `You named project ${linkedProjectName}, but the existing ticket's own link was left unchanged — verify it (update_support_ticket projectName) before assuming the target.`
+          : "No project was requested for this repeat report.";
         return {
           status: "ticket_already_open",
           ticketId: crmResult.ticketId,
@@ -77,7 +90,8 @@ export default defineTool({
           slaDueAt: crmResult.slaDueAt,
           systemAffected: input.systemAffected,
           linkedProjectId: projectId ?? null,
-          message: `This incident is already open as ticket ${crmResult.ticketId} — no duplicate created, owner not re-paged.`,
+          linkedProjectName: linkedProjectName ?? null,
+          message: `This incident is already open as ticket ${crmResult.ticketId} — no duplicate created, owner not re-paged. ${dupProjectReport}`,
         };
       }
 
@@ -90,8 +104,9 @@ export default defineTool({
         slaHours: crmResult.slaHours,
         systemAffected: input.systemAffected,
         linkedProjectId: projectId ?? null,
+        linkedProjectName: linkedProjectName ?? null,
         ...(projectNote ? { projectNote } : {}),
-        message: `Support ticket ${crmResult.ticketId} opened (${crmResult.kind}). Target SLA: ${crmResult.slaHours} hour(s). The owner was paged for triage (support kind). Next step: the OWNER must approve the ticket before any correction is dispatched.`,
+        message: `Support ticket ${crmResult.ticketId} opened (${crmResult.kind}). Target SLA: ${crmResult.slaHours} hour(s). ${projectReport} REPORT the linked project to the user by name so they can verify or correct it (update_support_ticket projectName). Next step: the OWNER must approve the ticket (Tickets view or Telegram) — approval automatically dispatches the correction to the coding queue when a project is linked.`,
       };
     } catch (err) {
       return {
