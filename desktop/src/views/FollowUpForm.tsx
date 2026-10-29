@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { crmApi } from "../api";
 import { BellRing } from "lucide-react";
+import { apiIsoToLocalInputValue, toLocalInputValue } from "../lib/localTime";
 
 interface Props {
   kind: "lead" | "ticket" | "organization" | "contact";
@@ -12,7 +13,9 @@ interface Props {
 
 /** Compacto: programa o limpia el próximo seguimiento de un lead, ticket o cliente. */
 export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, currentNote, onSaved }) => {
-  const [date, setDate] = useState(currentAt ? currentAt.slice(0, 16) : "");
+  // API timestamps are UTC instants; datetime-local renders its value as local
+  // wall time, so convert before displaying (ticket 0659d873: 8:00 am → 1:00 pm).
+  const [date, setDate] = useState(currentAt ? apiIsoToLocalInputValue(currentAt) : "");
   const [note, setNote] = useState(currentNote || "");
   const [saving, setSaving] = useState(false);
 
@@ -20,10 +23,7 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
     const d = new Date();
     d.setDate(d.getDate() + days);
     d.setHours(9, 0, 0, 0);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    setDate(
-      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-    );
+    setDate(toLocalInputValue(d));
   };
 
   const save = async (clear: boolean) => {
@@ -36,7 +36,7 @@ export const FollowUpForm: React.FC<Props> = ({ kind, entityId, currentAt, curre
       else if (kind === "contact") await crmApi.setContactFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
       else await crmApi.setOrganizationFollowUp(entityId, payload.nextFollowUpAt, payload.followUpNote);
       if (!clear) {
-        setDate(iso ? iso.slice(0, 16) : "");
+        setDate(iso ? apiIsoToLocalInputValue(iso) : "");
       } else {
         setDate("");
         setNote("");
