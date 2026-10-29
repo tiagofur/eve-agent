@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { crmApi, TicketItem, TicketDetailsResponse } from "../api";
+import { crmApi, TicketItem, TicketDetailsResponse, ProjectItem } from "../api";
 import { FollowUpForm } from "./FollowUpForm";
 import {
   LifeBuoy,
@@ -16,6 +16,7 @@ import {
   Ban,
   History,
   FileText,
+  Folder,
   Terminal,
 } from "lucide-react";
 
@@ -74,6 +75,7 @@ export const TicketsView: React.FC = () => {
   const [ticketDetails, setTicketDetails] = useState<TicketDetailsResponse | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
 
   // Rejection modal state
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -109,8 +111,12 @@ export const TicketsView: React.FC = () => {
     setActiveTicketId(ticketId);
     setDrawerLoading(true);
     try {
-      const details = await crmApi.getTicketDetails(ticketId);
+      const [details, projectRes] = await Promise.all([
+        crmApi.getTicketDetails(ticketId),
+        crmApi.getProjects(),
+      ]);
       setTicketDetails(details);
+      setProjects(projectRes.projects);
     } catch (err: any) {
       alert(`Could not load ticket details: ${err.message}`);
       setActiveTicketId(null);
@@ -192,6 +198,27 @@ export const TicketsView: React.FC = () => {
       setTimeout(() => setActionSuccess(null), 4000);
     } catch (err: any) {
       alert(`Error resolving ticket: ${err.message}`);
+    } finally {
+      setSubmittingAction(false);
+    }
+  };
+
+  const handleRelinkProject = async (ticketId: string, projectId: string) => {
+    const target = projects.find((p) => p.id === projectId);
+    try {
+      setSubmittingAction(true);
+      await crmApi.updateTicketContent(ticketId, {
+        projectId,
+        reason: "Owner verificó/corrigió el proyecto vinculado desde el drawer",
+      });
+      setActionSuccess(
+        `Proyecto vinculado: ${target?.name ?? projectId}. En un ticket aprobado, la corrección se despacha sola a la cola de coding.`
+      );
+      openTicketDrawer(ticketId);
+      fetchTickets();
+      setTimeout(() => setActionSuccess(null), 5000);
+    } catch (err: any) {
+      alert(`Error vinculando el proyecto: ${err.message}`);
     } finally {
       setSubmittingAction(false);
     }
@@ -430,6 +457,18 @@ export const TicketsView: React.FC = () => {
                     <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono font-medium">
                       System: {ticket.system}
                     </span>
+                    {ticket.projectName ? (
+                      <span className="text-xs px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-medium flex items-center gap-1">
+                        <Folder className="w-3 h-3" />
+                        {ticket.projectName}
+                      </span>
+                    ) : (
+                      (ticket.kind || "support") === "support" && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-800 font-medium">
+                          sin proyecto
+                        </span>
+                      )
+                    )}
                     <span
                       className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${statusConfig.badge}`}
                     >
@@ -612,6 +651,58 @@ export const TicketsView: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Linked project: owner verifies (and fixes) what the agent linked */}
+                  {ticketDetails.ticket.kind === "support" && (
+                    <div
+                      className={`rounded-xl p-4 space-y-2 border ${
+                        !ticketDetails.ticket.projectId &&
+                        ["open", "in_progress"].includes(ticketDetails.ticket.status)
+                          ? "bg-amber-950/30 border-amber-800"
+                          : "bg-zinc-900/60 border-zinc-800"
+                      }`}
+                    >
+                      <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                        <Folder className="w-3.5 h-3.5 text-indigo-400" /> Proyecto vinculado
+                      </h4>
+                      {!ticketDetails.ticket.projectId &&
+                        ["open", "in_progress"].includes(ticketDetails.ticket.status) && (
+                          <p className="text-xs text-amber-300">
+                            Sin proyecto: al aprobar el ticket la corrección no se puede despachar.
+                            Vincula el proyecto correcto y se despacha automáticamente.
+                          </p>
+                        )}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {ticketDetails.ticket.projectName && (
+                          <span className="text-sm text-white font-medium">
+                            {ticketDetails.ticket.projectName}
+                          </span>
+                        )}
+                        <select
+                          value=""
+                          onChange={(e) =>
+                            e.target.value &&
+                            handleRelinkProject(ticketDetails.ticket.id, e.target.value)
+                          }
+                          disabled={submittingAction}
+                          className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                        >
+                          <option value="">
+                            {ticketDetails.ticket.projectId
+                              ? "Cambiar proyecto…"
+                              : "Vincular proyecto…"}
+                          </option>
+                          {projects
+                            .filter((p) => p.id !== ticketDetails.ticket.projectId)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Problem Description */}
                   <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 space-y-2">
