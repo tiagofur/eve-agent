@@ -232,8 +232,14 @@ The full support lifecycle (ITIL-inspired: resolution ≠ closure — the client
 ```
 Cliente reporta (chat/WhatsApp/manual)
   → 1. Ticket creado (create_support_ticket) con projectId + problema REAL   [agente]
+       el agente SIEMPRE reporta el proyecto vinculado por nombre
   → 2. GATE 1: owner aprueba el ticket (Tickets view / Telegram) → in_progress
-  → 3. pm despacha corrección con ticketId (CRM rechaza si el ticket está `open`)
+       AUTO: si el ticket tiene proyecto, la corrección se despacha sola a la
+       cola de coding (pending_approval, spec desde el contenido del ticket);
+       sin proyecto queda bloqueada con evento `correction_dispatch_blocked`
+       (vincular proyecto desde el drawer la despacha)
+  → 3. (Opcional) pm despacha una corrección refinada con ticketId cuando el
+       owner la pide y no hay corrección activa
   → 4. GATE 2: owner aprueba la tarea (pending_approval) → gentle-shell corre
   → 5. Owner revisa el reporte (in_review) → done
        AUTO: ticket → resolved + borrador de notificación al cliente (outbox)
@@ -242,17 +248,17 @@ Cliente reporta (chat/WhatsApp/manual)
   → 7. Cliente confirma → owner cierra (closed). "Reabrir" disponible.
 ```
 
-Mechanical gates (CRM-enforced, not prompt-enforced): a `POST /api/projects/tasks` with a `ticketId` whose ticket is still `open` fails with `ticket_not_approved` — the agent must ask the owner, never retry. Task `done` auto-resolves the linked ticket (`system:task-done` actor) and queues the notification draft; skips (no contact/org, dedup) are audited as `client_notification_skipped` events.
+Mechanical gates (CRM-enforced, not prompt-enforced): a `POST /api/projects/tasks` with a `ticketId` whose ticket is still `open` fails with `ticket_not_approved` — the agent must ask the owner, never retry. Ticket approval auto-dispatches the correction (`maybeDispatchCorrection`: one active attempt per ticket, rejected/done tasks never block a retry, every skip audited on the timeline). Re-linking an approved ticket to a different project supersedes its pending correction and re-dispatches to the right target. Task `done` auto-resolves the linked ticket (`system:task-done` actor) and queues the notification draft; skips (no contact/org, dedup) are audited as `client_notification_skipped` events.
 
 Desktop surfaces:
 
 1. **Configure once per project** (Desktop → Proyectos y carpetas): set `localPath`, `defaultBranch`, optional `testCommand`, then **Verificar carpeta**. Launches are blocked until verified. Each project card also carries the collapsible **Historial de tareas** (Todas · Finalizadas · Rechazadas) with PR links and agent reports.
-2. **Tickets de soporte**: every support ticket pages the owner on Telegram (Aprobar / Resolver / Rechazar). The drawer shows SLA, timeline, linked corrections (status/PR/report), edits the description (vague-intake fix), resolves with internal note + client message, handles `waiting_client` (close on confirmation / reopen attention) and reopens resolved/closed tickets.
+2. **Tickets de soporte**: every support ticket pages the owner on Telegram (Aprobar / Resolver / Rechazar; la tarjeta muestra el proyecto vinculado). The drawer shows SLA, timeline, the linked project (verifiable and changeable from a selector — re-linking supersedes the pending correction and re-dispatches), linked corrections (status/PR/report), edits the description (vague-intake fix), resolves with internal note + client message, handles `waiting_client` (close on confirmation / reopen attention) and reopens resolved/closed tickets.
 3. **Approve the correction**: pending corrections show project + folder + full issue; **Aprobar y lanzar** (owner key) marks it `approved` and launches gentle-shell in the verified folder. Runs audited in `task_runs`.
 4. **Review**: finished runs land in `in_review` with the agent's report; **Marcar resuelta** completes the task (`done`) — which auto-resolves the ticket and queues the client draft.
 5. **Outbox**: pending drafts → Aprobar → the **Aprobados · por enviar** queue → Copiar → send manually through the channel → **Marcar enviado** (logs the interaction; ticket-linked drafts move the ticket to `waiting_client`).
 
-Agent side: `create_support_ticket` (auto-links `projectName`), `get_support_tickets` (dedup check), `update_support_ticket` (correct content / advance status), `dispatch_coding_task(ticketId)`. A correction without a ticket, a dispatch from an unapproved ticket, or an unnotified client are pipeline violations the agent must report, not paper over.
+Agent side: `create_support_ticket` (auto-links `projectName`, returns `linkedProjectName` for the owner to verify), `get_support_tickets` (dedup check), `update_support_ticket` (correct content / relink by `projectName` / advance status), `dispatch_coding_task(ticketId)` (refined-spec corrections only). A correction without a ticket, a dispatch from an unapproved ticket, or an unnotified client are pipeline violations the agent must report, not paper over.
 
 Prerequisites on the launcher machine: `gentle-shell` installed (default lookup: `~/.local/bin/gentle-shell`, override with `GENTLE_SHELL_BIN`), and project repos cloned locally.
 
