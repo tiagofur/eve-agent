@@ -64,7 +64,9 @@ jobs:
             --exclude '.agents' \
             --exclude 'node_modules' \
             --exclude 'desktop' \
-            --exclude 'docs' \
+            --include 'docs/products' \
+            --include 'docs/products/**' \
+            --exclude 'docs/*' \
             --exclude '*.env' \
             --exclude '.env*' \
             --exclude 'crm/.env*' \
