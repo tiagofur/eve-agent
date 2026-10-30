@@ -3,6 +3,7 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createSubscriptionFetch } from "../../../../agent/lib/meta-subscription";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import {
@@ -15,6 +16,13 @@ import {
 export const marketingRouter = new Hono<{ Variables: AuthContextVariables }>();
 
 function getModel() {
+  // Gemini first when the key exists (same precedence as agent/lib/models.ts);
+  // removing GEMINI_API_KEY falls back to Meta with no code change.
+  if (process.env.GEMINI_API_KEY) {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+    return google(process.env.GEMINI_MODEL_ID || "gemini-flash-latest");
+  }
+
   const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
   if (metaKey) {
     const meta = createOpenAI({

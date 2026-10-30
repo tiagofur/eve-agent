@@ -44,6 +44,10 @@ describe("Chat threads API", () => {
     expect(body.thread.title).toBe("TEST-conversación");
     createdThreadIds.push(body.thread.id);
 
+    // Separar los created_at: dos inserts en el mismo milisegundo hacen
+    // no-determinístico el orden "newest first" del listado.
+    await new Promise((r) => setTimeout(r, 10));
+
     const res2 = await app.request("/api/chat/threads", {
       method: "POST",
       headers: auth,

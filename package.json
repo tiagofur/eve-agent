@@ -12,9 +12,11 @@
     "dev": "eve dev",
     "eval": "eve eval",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.109",
     "@ai-sdk/openai": "^4.0.93",
     "@chat-adapter/state-memory": "^4.41.1",
     "@chat-adapter/whatsapp": "^4.41.1",
@@ -30,7 +32,8 @@
   "devDependencies": {
     "@types/node": "24.x",
     "microsandbox": "0.5.5",
-    "typescript": "7.0.2"
+    "typescript": "7.0.2",
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": "24.x"
