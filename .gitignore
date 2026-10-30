@@ -12,3 +12,5 @@ dist
 *.tsbuildinfo
 target
 src-tauri/target
+# Content packs locales (ZIPs del pipeline de marketing)
+crm/data/

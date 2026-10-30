@@ -312,6 +312,50 @@ export interface TicketDetailsResponse {
   tasks?: ProjectTaskHistoryItem[];
 }
 
+
+export interface ContentPackItem {
+  id: string;
+  kind: "video" | "carousel" | "image";
+  topic: string;
+  hook: string | null;
+  caption: string;
+  captionsByPlatform: Record<string, string> | null;
+  hashtags: string[];
+  platforms: string[];
+  notes: string | null;
+  scheduledFor: string | null;
+  status: "pending_approval" | "approved" | "rejected";
+  rejectedReason: string | null;
+  hasCover: boolean;
+  approvedAt: string | null;
+  downloadedAt: string | null;
+  createdBy: string;
+  createdAt: string;
+}
+
+/** ZIP download as blob (needs raw fetch: the JSON helper would parse it). */
+export async function fetchContentPackZip(id: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/api/content-packs/${id}/download`, {
+    headers: { Authorization: `Bearer ${OWNER_KEY}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`API Error (${res.status}): ${errorText}`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+  return { blob: await res.blob(), filename: match?.[1] ?? `pack-${id.slice(0, 8)}.zip` };
+}
+
+/** Cover image as object URL for previews; null when the pack has none. */
+export async function fetchContentPackCoverUrl(id: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/api/content-packs/${id}/cover`, {
+    headers: { Authorization: `Bearer ${OWNER_KEY}` },
+  });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
 export const crmApi = {
   getHealth: () => request<{ status: string }>("/health"),
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
@@ -627,6 +671,15 @@ export const crmApi = {
       method: "DELETE",
     }),
   getSocialPosts: () => request<{ posts: SocialPostItem[] }>("/api/marketing"),
+  getContentPacks: (status?: "pending_approval" | "approved" | "rejected") =>
+    request<{ packs: ContentPackItem[] }>(
+      `/api/content-packs${status ? `?status=${status}` : ""}`
+    ),
+  reviewContentPack: (id: string, decision: "approved" | "rejected", rejectedReason?: string) =>
+    request<{ success: boolean }>(`/api/content-packs/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify({ decision, rejectedReason }),
+    }),
   generateSocialPost: (data: { platform: string; topic: string; tone?: string }) =>
     request<{ success: boolean; post: SocialPostItem }>("/api/marketing/generate", {
       method: "POST",

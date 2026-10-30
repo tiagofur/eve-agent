@@ -81,8 +81,9 @@ services:
       - SEARCH_PROVIDER=${SEARCH_PROVIDER}
       - SEARCH_API_KEY=${SEARCH_API_KEY}
       - WORKER_LOG_ROOT=/data/worker/runs
+      - CONTENT_DIR=/data/content-packs
     volumes:
-      - worker_data:/data:ro
+      - worker_data:/data:rw
     depends_on:
       creapolis-db:
         condition: service_healthy

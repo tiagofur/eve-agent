@@ -122,6 +122,14 @@ export const socialPostStatusEnum = pgEnum("social_post_status", [
   "rejected",
 ]);
 
+export const contentPackKindEnum = pgEnum("content_pack_kind", ["video", "carousel", "image"]);
+
+export const contentPackStatusEnum = pgEnum("content_pack_status", [
+  "pending_approval",
+  "approved",
+  "rejected",
+]);
+
 export type LeadStage = (typeof leadStageEnum.enumValues)[number];
 export type ChannelType = (typeof channelEnum.enumValues)[number];
 export type DirectionType = (typeof directionEnum.enumValues)[number];
@@ -138,6 +146,8 @@ export type ContractStatus = (typeof contractStatusEnum.enumValues)[number];
 export type ApiScope = (typeof apiScopeEnum.enumValues)[number];
 export type SocialPlatform = (typeof socialPlatformEnum.enumValues)[number];
 export type SocialPostStatus = (typeof socialPostStatusEnum.enumValues)[number];
+export type ContentPackKind = (typeof contentPackKindEnum.enumValues)[number];
+export type ContentPackStatus = (typeof contentPackStatusEnum.enumValues)[number];
 
 /* ------------------------------------------------------------------ */
 /* Shared column helpers                                               */
@@ -551,6 +561,38 @@ export const socialPosts = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [index("social_posts_status_idx").on(t.status), index("social_posts_platform_idx").on(t.platform)],
+);
+
+/**
+ * Content packs: daily marketing bundles (video / carousel / image) produced by
+ * the content pipeline. Each pack stores its ZIP (and optional cover) on disk
+ * under CONTENT_DIR and the copy (caption + per-platform variants) here.
+ * The owner reviews (approve/reject), downloads the ZIP and uploads manually.
+ */
+export const contentPacks = pgTable(
+  "content_packs",
+  {
+    id: id(),
+    kind: contentPackKindEnum("kind").notNull(),
+    topic: text("topic").notNull(),
+    hook: text("hook"),
+    caption: text("caption").notNull(),
+    captionsByPlatform: jsonb("captions_by_platform").$type<Record<string, string>>(),
+    hashtags: text("hashtags").array().notNull().default(sql`'{}'::text[]`),
+    platforms: text("platforms").array().notNull().default(sql`'{}'::text[]`),
+    notes: text("notes"),
+    zipPath: text("zip_path").notNull(),
+    coverPath: text("cover_path"),
+    scheduledFor: date("scheduled_for"),
+    status: contentPackStatusEnum("status").notNull().default("pending_approval"),
+    rejectedReason: text("rejected_reason"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    downloadedAt: timestamp("downloaded_at", { withTimezone: true }),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("content_packs_status_idx").on(t.status), index("content_packs_created_idx").on(t.createdAt)],
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
