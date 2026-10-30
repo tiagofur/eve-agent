@@ -33,6 +33,13 @@ export async function sendTelegramMessage(
   inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>,
   parseMode: "HTML" | "Markdown" = "HTML"
 ) {
+  // Local dev / tests share the real bot token via .env.local; sending from
+  // there pings the owner's Telegram with QA noise (and races the prod
+  // poller). Only production containers (NODE_ENV=production) may send.
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[Telegram] send skipped (NODE_ENV !== production):", text.slice(0, 80).replace(/\n/g, " "));
+    return { ok: false, skipped: true };
+  }
   const { token, adminChatId } = getCredentials();
   if (!token || !adminChatId) {
     console.error("[Telegram] Credentials missing in environment");
@@ -73,6 +80,10 @@ export async function sendTelegramPhoto(
   caption: string,
   inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>
 ) {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[Telegram] photo send skipped (NODE_ENV !== production)");
+    return { ok: false, skipped: true };
+  }
   const { token, adminChatId } = getCredentials();
   if (!token || !adminChatId) return { ok: false };
 
