@@ -865,3 +865,48 @@ export async function crmGetProductDoc(slug: string): Promise<{ meta: CrmProduct
   }
   return (await res.json()) as { meta: CrmProductDoc; markdown: string };
 }
+
+export interface CrmContentPackUpload {
+  meta: {
+    kind: "video" | "carousel" | "image";
+    topic: string;
+    hook?: string;
+    caption: string;
+    captionsByPlatform?: Record<string, string>;
+    hashtags?: string[];
+    platforms?: string[];
+    notes?: string;
+    scheduledFor?: string;
+  };
+  zip: Buffer;
+  cover?: Buffer;
+}
+
+/** Uploads a content pack (multipart) — lands in pending_approval for the owner. */
+export async function crmUploadContentPack(input: CrmContentPackUpload): Promise<{
+  success: boolean;
+  pack: { id: string; kind: string; topic: string; status: string };
+}> {
+  const form = new FormData();
+  form.append("file", new Blob([new Uint8Array(input.zip)], { type: "application/zip" }), "pack.zip");
+  if (input.cover) {
+    form.append("cover", new Blob([new Uint8Array(input.cover)], { type: "image/png" }), "cover.png");
+  }
+  form.append("meta", JSON.stringify(input.meta));
+
+  const res = await fetch(`${getCrmUrl()}/api/content-packs/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM content pack upload failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as {
+    success: boolean;
+    pack: { id: string; kind: string; topic: string; status: string };
+  };
+}
