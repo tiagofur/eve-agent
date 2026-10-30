@@ -357,6 +357,24 @@ ${post.imagePrompt ? `<b>Prompt Visual (Muse Image):</b>\n<code>${escapeHtml(pos
   return await sendTelegramMessage(text, keyboard, "HTML");
 }
 
+/**
+ * Nightly content-pipeline signal: a pack is waiting for review + manual
+ * upload. Review/download happen in the Desktop "Contenido" tab (the ZIP
+ * needs a human to upload it), so this is a plain notification — no buttons.
+ */
+export async function notifyContentPackCreated(packId: string, kind: string, topic: string) {
+  const kindLabel = kind === "video" ? "VIDEO" : kind === "carousel" ? "CARRUSEL" : "IMAGEN";
+  const text = `📦 <b>NUEVO PACK DE CONTENIDO (${kindLabel})</b>
+<i>Pipeline de marketing</i>
+
+<b>Tema:</b> ${escapeHtml(topic)}
+
+Listo para revisión en Desktop → pestaña <b>Contenido</b>:
+descarga el ZIP y súbelo manualmente a las plataformas.`;
+
+  return await sendTelegramMessage(text, undefined, "HTML");
+}
+
 let isPolling = false;
 
 /**

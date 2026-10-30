@@ -11,6 +11,7 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY agent/ /agent/
 COPY crm/ ./
+COPY docs/products/ ./docs/products/
 
 EXPOSE 8787
 ENV PORT=8787

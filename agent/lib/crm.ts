@@ -812,3 +812,56 @@ export async function crmGetProjectTasks(projectId: string): Promise<{ tasks: Pr
 
   return (await res.json()) as { tasks: ProjectTaskItem[] };
 }
+
+export interface CrmProductDoc {
+  slug: string;
+  nombre?: string;
+  tipo?: string;
+  resumen?: string;
+  audiencia?: string;
+}
+
+export interface CrmProductSearchResult {
+  slug: string;
+  nombre?: string;
+  score: number;
+  excerpts: string[];
+}
+
+/** Catalog of documented products/services served from docs/products/. */
+export async function crmListProductDocs(): Promise<{ products: CrmProductDoc[]; docsAvailable: boolean }> {
+  const res = await fetch(`${getCrmUrl()}/api/products`, {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM product docs list failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { products: CrmProductDoc[]; docsAvailable: boolean };
+}
+
+export async function crmSearchProductDocs(
+  query: string
+): Promise<{ query: string; results: CrmProductSearchResult[] }> {
+  const url = new URL(`${getCrmUrl()}/api/products/search`);
+  url.searchParams.set("q", query);
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM product docs search failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { query: string; results: CrmProductSearchResult[] };
+}
+
+export async function crmGetProductDoc(slug: string): Promise<{ meta: CrmProductDoc; markdown: string }> {
+  const res = await fetch(`${getCrmUrl()}/api/products/${encodeURIComponent(slug)}`, {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM product doc fetch failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { meta: CrmProductDoc; markdown: string };
+}

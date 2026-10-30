@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Bot,
   Megaphone,
+  Layers,
   Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
@@ -21,10 +22,11 @@ import { TicketsView } from "./views/TicketsView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
 import { MarketingView } from "./views/MarketingView";
+import { ContentView } from "./views/ContentView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "marketing" | "outbox" | "leads" | "clientes" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "tickets" | "projects";
 
 const apiHost = (() => {
   try {
@@ -121,6 +123,18 @@ export const App: React.FC = () => {
             >
               <Megaphone className="w-4 h-4 text-pink-400" />
               <span>Marketing Studio</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("content")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "content"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <Layers className="w-4 h-4 text-cyan-400" />
+              <span>Contenido</span>
             </button>
 
             <button
@@ -248,6 +262,7 @@ export const App: React.FC = () => {
             <ChatView externalPrompt={chatPrompt} onPromptConsumed={() => setChatPrompt(null)} />
           )}
           {activeTab === "marketing" && <MarketingView />}
+          {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}
           {activeTab === "leads" && <LeadsView />}
           {activeTab === "clientes" && <ClientesView onAskOrchestrator={askOrchestrator} />}

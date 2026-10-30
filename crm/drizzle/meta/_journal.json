@@ -134,6 +134,13 @@
       "when": 1793287514679,
       "tag": "0018_faithful_sebastian_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793377481550,
+      "tag": "0019_freezing_zaran",
+      "breakpoints": true
     }
   ]
 }

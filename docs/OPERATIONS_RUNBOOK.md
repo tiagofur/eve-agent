@@ -218,6 +218,18 @@ curl -X POST http://localhost:8787/api/marketing/generate \
 3. Inserts into database in `pending_approval` status.
 4. Sends photo with `[✅ Aprobar]` / `[❌ Rechazar]` buttons to Telegram.
 
+### C-bis. Content Packs (pipeline de contenido diario)
+
+Los packs de contenido (video/carrusel/imagen) que el pipeline de marketing produce cada día viven en la tabla `content_packs` con sus ZIPs en disco (`CONTENT_DIR`, por defecto `crm/data/content-packs`; en producción el volumen compartido `/data/content-packs` del compose). Flujo: el productor los sube vía `POST /api/content-packs/upload` (multipart: `file` zip + `cover` opcional + `meta` JSON) → quedan `pending_approval` con notificación Telegram → el owner los revisa en Desktop → pestaña **Contenido** (aprobar/rechazar con motivo) → descarga el ZIP y lo sube manualmente a las plataformas (primera descarga queda marcada en `downloaded_at`).
+
+La documentación de productos/servicios (`docs/products/`) viaja en la imagen del CRM y se sirve en `/api/products` (list/search/read); el agente la consume con la tool `search_product_docs`. Regla: contenido de marketing grounded solo desde ahí.
+
+```bash
+# Listar packs pendientes / descargar ZIP
+curl -H "Authorization: Bearer $OPS_API_KEY" "http://localhost:8787/api/content-packs?status=pending_approval"
+curl -OJ -H "Authorization: Bearer $OWNER_API_KEY" http://localhost:8787/api/content-packs/<id>/download
+```
+
 ### C. Resetting or Cleaning Test Data
 To clean automated test records while preserving real prospects and API keys:
 ```bash
