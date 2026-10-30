@@ -218,6 +218,23 @@ curl -X POST http://localhost:8787/api/marketing/generate \
 3. Inserts into database in `pending_approval` status.
 4. Sends photo with `[✅ Aprobar]` / `[❌ Rechazar]` buttons to Telegram.
 
+### C-ter. Conectar Gemini (cuando haya crédito/billing activo)
+
+Todo el sistema ya está preparado: en cuanto `GEMINI_API_KEY` exista, el agente (orquestador + subagentes) y `/api/marketing` usan Gemini automáticamente; sin la key siguen en Muse sin ningún cambio de código.
+
+1. Dar de alta billing en Google Cloud / AI Studio y crear la API key (aistudio.google.com → Get API key).
+2. En el VPS, agregar al `.env` de producción (junto a las demás variables):
+   ```
+   GEMINI_API_KEY=AIza...
+   # Opcional (default gemini-flash-latest): gemini-3-flash, gemini-3.1-flash-lite, ...
+   GEMINI_MODEL_ID=
+   ```
+3. Re-desplegar: Actions → "Deploy to VPS" → Run workflow (o push vacío).
+4. Verificar: `docker exec creapolis-eve-agent printenv GEMINI_API_KEY` debe existir, y un mensaje por Desktop → Chat debe responder (la respuesta confirma el modelo). Revisar `docker logs creapolis-eve-agent --since 5m` si algo falla.
+5. Los schedules quedan activos: intel 07:00, designer 08:30, strategist domingo 20:00. El primer día revisa Desktop → Contenido y rechaza con motivo lo que no te guste: el strategist evita repetir ángulos rechazados.
+
+Costo estimado del pipeline de contenido con Gemini: ~$15/mes (copy + TTS + imágenes Nano Banana; el render de slides es local y gratis).
+
 ### C-bis. Content Packs (pipeline de contenido diario)
 
 Los packs de contenido (video/carrusel/imagen) que el pipeline de marketing produce cada día viven en la tabla `content_packs` con sus ZIPs en disco (`CONTENT_DIR`, por defecto `crm/data/content-packs`; en producción el volumen compartido `/data/content-packs` del compose). Flujo: el productor los sube vía `POST /api/content-packs/upload` (multipart: `file` zip + `cover` opcional + `meta` JSON) → quedan `pending_approval` con notificación Telegram → el owner los revisa en Desktop → pestaña **Contenido** (aprobar/rechazar con motivo) → descarga el ZIP y lo sube manualmente a las plataformas (primera descarga queda marcada en `downloaded_at`).
