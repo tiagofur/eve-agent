@@ -4,6 +4,11 @@ import { agentModel } from "./lib/models";
 export default defineAgent({
   model: agentModel,
   reasoning: "high",
+  build: {
+    // Native .node addon: must stay external or `eve build` tries to bundle
+    // the binary and fails with UNLOADABLE_DEPENDENCY.
+    externalDependencies: ["@resvg/resvg-js"],
+  },
   // Verified 2026-10-15 against Meta Model API docs / OpenRouter / Vercel
   // AI Gateway: muse-spark-1.3-contributor has a 1,048,576-token window.
   // Lets `eve build` compile compaction without an AI Gateway metadata
