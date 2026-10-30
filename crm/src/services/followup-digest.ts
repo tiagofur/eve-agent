@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import cron from "node-cron";
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
-import { contacts, leads, organizations, tickets } from "../db/schema";
+import { contacts, events, leads, organizations, tickets } from "../db/schema";
+import { logEvent } from "../domain/events";
 import { escapeHtml, sendTelegramMessage } from "./telegram";
 
 export interface DigestItem {
@@ -119,27 +121,75 @@ export async function sendFollowupDigest(now: Date = new Date()): Promise<{ sent
   return { sent: res?.ok !== false, count: items.length };
 }
 
-let lastSentDate = "";
+const DIGEST_ENTITY = "followup_digest";
+
+/** Límite del día local del servidor: comparten el cron de las 9 y el catch-up de boot. */
+function startOfLocalDay(now: Date): Date {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+/**
+ * La marca "digest ya enviado hoy" vive en la tabla events (action=digest_sent),
+ * no en memoria: cada deploy recrea el contenedor y un contador en memoria
+ * hacía que el catch-up de boot reenviara el digest en cada deploy.
+ */
+export async function wasDigestSentToday(now: Date = new Date()): Promise<boolean> {
+  const [row] = await db
+    .select({ id: events.id })
+    .from(events)
+    .where(
+      and(
+        eq(events.entity, DIGEST_ENTITY),
+        eq(events.action, "digest_sent"),
+        gte(events.createdAt, startOfLocalDay(now))
+      )
+    )
+    .limit(1);
+  return !!row;
+}
+
+export async function runDailyDigestOnce(now: Date = new Date()): Promise<void> {
+  if (await wasDigestSentToday(now)) {
+    console.log("[Digest] follow-ups: already sent today, skipping");
+    return;
+  }
+  try {
+    const { sent, count } = await sendFollowupDigest(now);
+    console.log(`[Digest] follow-ups: sent=${sent} count=${count}`);
+    // Solo se marca un envío realmente entregado: si Telegram falló, el
+    // próximo boot o el cron del día siguiente reintenta.
+    if (sent) {
+      await logEvent({
+        entity: DIGEST_ENTITY,
+        entityId: randomUUID(),
+        action: "digest_sent",
+        actor: "system",
+        after: { count },
+        reason: "Marca diaria anti-reenvío del digest de seguimientos",
+      });
+    }
+  } catch (err) {
+    console.error("[Digest] failed:", err);
+  }
+}
+
+let digestInFlight: Promise<void> | null = null;
 
 /** Push matutino 9:00 (hora del servidor) + catch-up si el daemon arrancó después de las 9. */
 export function startFollowupDigest(): void {
-  const runIfNewDay = async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    if (lastSentDate === today) return;
-    lastSentDate = today;
-    try {
-      const { sent, count } = await sendFollowupDigest();
-      console.log(`[Digest] follow-ups: sent=${sent} count=${count}`);
-    } catch (err) {
-      console.error("[Digest] failed:", err);
-      lastSentDate = "";
-    }
+  const trigger = () => {
+    if (digestInFlight) return;
+    digestInFlight = runDailyDigestOnce().finally(() => {
+      digestInFlight = null;
+    });
   };
 
-  cron.schedule("0 9 * * *", () => void runIfNewDay());
+  cron.schedule("0 9 * * *", trigger);
 
   const now = new Date();
   if (now.getHours() >= 9) {
-    void runIfNewDay();
+    trigger();
   }
 }

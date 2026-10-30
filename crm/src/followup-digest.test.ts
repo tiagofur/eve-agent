@@ -1,9 +1,20 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { randomUUID } from "node:crypto";
+import { describe, expect, it, beforeAll, afterAll, afterEach, vi } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { pool, db } from "./db/client";
-import { apiKeys, contacts, leads, organizations, tickets } from "./db/schema";
+import { apiKeys, contacts, events, leads, organizations, tickets } from "./db/schema";
 import { hashApiKey } from "./auth/keys";
-import { eq } from "drizzle-orm";
-import { getDueFollowups } from "./services/followup-digest";
+import { getDueFollowups, runDailyDigestOnce, wasDigestSentToday } from "./services/followup-digest";
+
+vi.mock("./services/telegram", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./services/telegram")>();
+  return {
+    ...original,
+    sendTelegramMessage: vi.fn(async () => ({ ok: true })),
+  };
+});
+
+import { sendTelegramMessage } from "./services/telegram";
 
 describe("Digest matutino", () => {
   let orgId = "";
@@ -69,5 +80,38 @@ describe("Digest matutino", () => {
     expect(items.some((i) => i.kind === "ticket" && i.label === "Web (TEST-Digest)")).toBe(false);
     const times = items.map((i) => i.at.getTime());
     expect([...times].sort((a, b) => a - b)).toEqual(times);
+  });
+
+  afterEach(async () => {
+    await db
+      .delete(events)
+      .where(and(eq(events.entity, "followup_digest"), eq(events.action, "digest_sent")));
+  });
+
+  it("envía el digest una sola vez por día aunque el daemon reinicie", async () => {
+    // Limpia marcas de corridas anteriores del mismo día en la DB de test.
+    await db
+      .delete(events)
+      .where(and(eq(events.entity, "followup_digest"), eq(events.action, "digest_sent")));
+    vi.mocked(sendTelegramMessage).mockClear();
+
+    await runDailyDigestOnce();
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+    expect(await wasDigestSentToday()).toBe(true);
+
+    await runDailyDigestOnce(); // simula el restart del contenedor post-deploy
+    expect(sendTelegramMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("la marca de ayer no bloquea el digest de hoy", async () => {
+    const yesterday = new Date(Date.now() - 26 * 3_600_000);
+    await db.insert(events).values({
+      entity: "followup_digest",
+      entityId: randomUUID(),
+      action: "digest_sent",
+      actor: "system",
+      createdAt: yesterday,
+    });
+    expect(await wasDigestSentToday()).toBe(false);
   });
 });
