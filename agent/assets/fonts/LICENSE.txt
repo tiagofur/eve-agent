@@ -1,0 +1,3 @@
+Inter font family (Regular, Bold, Black) — SIL Open Font License 1.1
+Downloaded from Google Fonts (static TTF instances), © The Inter Project Authors.
+https://github.com/rsms/inter/

@@ -17,6 +17,8 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/package.json ./package.json
+COPY agent/assets/fonts ./agent/assets/fonts
+ENV FONTS_DIR=/app/agent/assets/fonts
 
 EXPOSE 3200
 ENV PORT=3200
