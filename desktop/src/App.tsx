@@ -12,12 +12,14 @@ import {
   Bot,
   Megaphone,
   Layers,
+  HandCoins,
   Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
 import { OutboxView } from "./views/OutboxView";
 import { LeadsView } from "./views/LeadsView";
 import { ClientesView } from "./views/ClientesView";
+import { SalesView } from "./views/SalesView";
 import { TicketsView } from "./views/TicketsView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
@@ -26,7 +28,7 @@ import { ContentView } from "./views/ContentView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
 
 const apiHost = (() => {
   try {
@@ -181,6 +183,18 @@ export const App: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab("ventas")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "ventas"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <HandCoins className="w-4 h-4 text-emerald-400" />
+              <span>Ventas</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab("tickets")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
                 activeTab === "tickets"
@@ -266,6 +280,7 @@ export const App: React.FC = () => {
           {activeTab === "outbox" && <OutboxView />}
           {activeTab === "leads" && <LeadsView />}
           {activeTab === "clientes" && <ClientesView onAskOrchestrator={askOrchestrator} />}
+          {activeTab === "ventas" && <SalesView />}
           {activeTab === "tickets" && <TicketsView />}
           {activeTab === "projects" && <ProjectsView onAskOrchestrator={askOrchestrator} />}
         </div>

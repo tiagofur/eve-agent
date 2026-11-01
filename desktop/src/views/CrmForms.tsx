@@ -8,18 +8,19 @@ import { Modal } from "../components/ui";
  * inputs sobre zinc-950, botón primario esmeralda, error inline del API.
  */
 
-const inputClass =
+// Vocabulario compartido de formularios manuales (también lo usa SalesForms).
+export const inputClass =
   "w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500";
-const labelClass = "block text-xs font-medium text-zinc-300 mb-1";
+export const labelClass = "block text-xs font-medium text-zinc-300 mb-1";
 
-const FormError: React.FC<{ message: string | null }> = ({ message }) =>
+export const FormError: React.FC<{ message: string | null }> = ({ message }) =>
   message ? (
     <p className="text-xs text-rose-300 bg-rose-950/50 border border-rose-800 rounded-lg px-3 py-2">
       {message}
     </p>
   ) : null;
 
-const FormButtons: React.FC<{
+export const FormButtons: React.FC<{
   onClose: () => void;
   busy: boolean;
   disabled?: boolean;
@@ -484,7 +485,7 @@ export const NewProjectModal: React.FC<{
     <Modal
       onClose={onClose}
       title="Nuevo proyecto"
-      description="Registra la entrega aunque no venga de un lead ganado. Los hitos se agregan después; el proyecto arranca en onboarding."
+      description="Registra la entrega aunque no venga de un lead ganado. Los hitos se agregan en Ventas → Cobros; el proyecto arranca en onboarding."
       width="max-w-md"
     >
       <form onSubmit={submit} className="space-y-3">

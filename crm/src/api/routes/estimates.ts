@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { estimates } from "../../db/schema";
+import { estimates, leads, organizations } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 
 export const estimatesRouter = new Hono<{ Variables: AuthContextVariables }>();
@@ -65,6 +65,8 @@ estimatesRouter.post(
 );
 
 // List estimates, newest first, optionally filtered by lead or organization.
+// Every row carries the display name of its target organization (direct or
+// via the lead) so the desktop list needs no extra round-trips.
 estimatesRouter.get("/", requireScope(["ops"]), async (c) => {
   const leadId = c.req.query("leadId");
   const organizationId = c.req.query("organizationId");
@@ -81,7 +83,39 @@ estimatesRouter.get("/", requireScope(["ops"]), async (c) => {
     .orderBy(desc(estimates.createdAt))
     .limit(limit);
 
-  return c.json({ estimates: rows });
+  const directOrgIds = rows.map((r) => r.organizationId).filter((id): id is string => !!id);
+  const leadIds = rows.map((r) => r.leadId).filter((id): id is string => !!id);
+  const leadOrgIds = leadIds.length
+    ? (await db.select({ organizationId: leads.organizationId }).from(leads).where(inArray(leads.id, leadIds)))
+        .map((l) => l.organizationId)
+        .filter((id): id is string => !!id)
+    : [];
+  const orgIds = [...new Set([...directOrgIds, ...leadOrgIds])];
+  const orgNames = new Map(
+    orgIds.length
+      ? (await db.select({ id: organizations.id, name: organizations.name }).from(organizations).where(inArray(organizations.id, orgIds))).map((o) => [o.id, o.name])
+      : []
+  );
+  const leadOrg = new Map(
+    leadIds.length
+      ? (
+          await db
+            .select({ id: leads.id, organizationId: leads.organizationId })
+            .from(leads)
+            .where(inArray(leads.id, leadIds))
+        ).map((l) => [l.id, l.organizationId])
+      : []
+  );
+
+  return c.json({
+    estimates: rows.map((r) => ({
+      ...r,
+      organizationName:
+        (r.organizationId ? orgNames.get(r.organizationId) : null) ??
+        (r.leadId && leadOrg.get(r.leadId) ? orgNames.get(leadOrg.get(r.leadId)!) : null) ??
+        null,
+    })),
+  });
 });
 
 // Fetch one estimate by id.

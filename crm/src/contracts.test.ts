@@ -113,4 +113,17 @@ describe("contracts lifecycle", () => {
     const voidNoReason = await move(await draftContract("Contrato sin motivo TEST"), "void");
     expect(voidNoReason.status).toBe(400);
   });
+
+  it("lists contracts with the target organization resolved", async () => {
+    const id = await draftContract("Contrato listado TEST");
+    const res = await app.request("/api/contracts?limit=100", { headers: ops });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      contracts: Array<{ id: string; organizationName: string | null; projectName: string | null }>;
+    };
+    const ours = body.contracts.find((ct) => ct.id === id);
+    expect(ours).toBeDefined();
+    expect(ours!.organizationName).toBe("TEST-Contracts");
+    expect(ours!.projectName).toBeNull();
+  });
 });
