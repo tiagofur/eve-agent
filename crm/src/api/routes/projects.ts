@@ -24,6 +24,9 @@ import {
   rejectTask,
   updateProjectFolder,
   recordFolderCheck,
+  addMilestone,
+  updateMilestone,
+  deleteMilestone,
 } from "../../domain/projects";
 import { openTaskRun, closeTaskRun, latestRunsForTasks } from "../../domain/task-runs";
 
@@ -103,6 +106,70 @@ projectsRouter.get("/billing", requireScope(["ops"]), async (c) => {
       };
     }),
   });
+});
+
+// Add a milestone (ops): the manual billing surface shared by the desktop
+// Ventas view and the agent flows. Amounts stay explicit: null = not agreed.
+projectsRouter.post(
+  "/:id/milestones",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      title: z.string().min(1).max(300),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      amountCents: z.number().int().nonnegative().optional(),
+      currency: z.string().max(8).optional(),
+    })
+  ),
+  async (c) => {
+    const actor = c.get("actor");
+    const data = c.req.valid("json");
+    const result = await addMilestone({ projectId: c.req.param("id")!, ...data, actor });
+    if (!result.success) {
+      const status = result.code === "project_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, milestone: result.milestone }, 201);
+  }
+);
+
+// Edit a milestone (ops): fields, amount, or the done toggle. null clears
+// dueDate/amountCents; done=true stamps doneAt, done=false clears it.
+projectsRouter.patch(
+  "/milestones/:milestoneId",
+  requireScope(["ops"]),
+  zValidator(
+    "json",
+    z.object({
+      title: z.string().min(1).max(300).optional(),
+      dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      amountCents: z.number().int().nonnegative().nullable().optional(),
+      currency: z.string().max(8).optional(),
+      done: z.boolean().optional(),
+    })
+  ),
+  async (c) => {
+    const actor = c.get("actor");
+    const data = c.req.valid("json");
+    const result = await updateMilestone({ milestoneId: c.req.param("milestoneId")!, ...data, actor });
+    if (!result.success) {
+      const status = result.code === "milestone_not_found" ? 404 : 400;
+      return c.json({ error: result.message, code: result.code }, status as 400);
+    }
+    return c.json({ success: true, milestone: result.milestone, changed: result.changed });
+  }
+);
+
+// Delete a milestone (ops). Tasks keep their history (milestone_id → NULL).
+projectsRouter.delete("/milestones/:milestoneId", requireScope(["ops"]), async (c) => {
+  const actor = c.get("actor");
+  const result = await deleteMilestone({ milestoneId: c.req.param("milestoneId")!, actor });
+  if (!result.success) {
+    const status = result.code === "milestone_not_found" ? 404 : 400;
+    return c.json({ error: result.message, code: result.code }, status as 400);
+  }
+  return c.json({ success: true });
 });
 
 // Create project

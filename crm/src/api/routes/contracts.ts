@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { desc, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
-import { contracts } from "../../db/schema";
+import { contracts, leads, organizations, projects } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { createContract, moveContractStatus } from "../../domain/contracts";
 
@@ -76,6 +76,8 @@ contractsRouter.patch(
 );
 
 // List contracts, newest first, optionally filtered by lead, project or status.
+// Rows carry display names (organization via lead or project, project name)
+// so the desktop list needs no extra round-trips.
 contractsRouter.get("/", requireScope(["ops"]), async (c) => {
   const leadId = c.req.query("leadId");
   const projectId = c.req.query("projectId");
@@ -94,5 +96,51 @@ contractsRouter.get("/", requireScope(["ops"]), async (c) => {
     .orderBy(desc(contracts.createdAt))
     .limit(limit);
 
-  return c.json({ contracts: rows });
+  const contractProjectIds = rows.map((r) => r.projectId).filter((id): id is string => !!id);
+  const contractLeadIds = rows.map((r) => r.leadId).filter((id): id is string => !!id);
+  const projectRows = contractProjectIds.length
+    ? await db
+        .select({ id: projects.id, name: projects.name, organizationId: projects.organizationId })
+        .from(projects)
+        .where(inArray(projects.id, contractProjectIds))
+    : [];
+  const leadRows = contractLeadIds.length
+    ? await db
+        .select({ id: leads.id, organizationId: leads.organizationId })
+        .from(leads)
+        .where(inArray(leads.id, contractLeadIds))
+    : [];
+  const orgIds = [
+    ...new Set([
+      ...projectRows.map((p) => p.organizationId),
+      ...leadRows.map((l) => l.organizationId).filter((id): id is string => !!id),
+    ]),
+  ];
+  const orgNames = new Map(
+    orgIds.length
+      ? (
+          await db
+            .select({ id: organizations.id, name: organizations.name })
+            .from(organizations)
+            .where(inArray(organizations.id, orgIds))
+        ).map((o) => [o.id, o.name as string])
+      : []
+  );
+  const projectById = new Map(projectRows.map((p) => [p.id, p]));
+  const leadById = new Map(leadRows.map((l) => [l.id, l]));
+
+  return c.json({
+    contracts: rows.map((r) => {
+      const project = r.projectId ? projectById.get(r.projectId) : undefined;
+      const lead = r.leadId ? leadById.get(r.leadId) : undefined;
+      return {
+        ...r,
+        projectName: project?.name ?? null,
+        organizationName:
+          (project ? orgNames.get(project.organizationId) : null) ??
+          (lead?.organizationId ? orgNames.get(lead.organizationId) : null) ??
+          null,
+      };
+    }),
+  });
 });

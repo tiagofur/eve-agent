@@ -107,4 +107,15 @@ describe("estimates persistence", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("lists estimates with the target organization name resolved", async () => {
+    const listed = await app.request("/api/estimates?limit=100", { headers });
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as {
+      estimates: Array<{ id: string; organizationName: string | null }>;
+    };
+    const ours = body.estimates.filter((e) => createdIds.includes(e.id));
+    expect(ours.length).toBeGreaterThan(0);
+    expect(ours.every((e) => e.organizationName === "TEST-Estimates")).toBe(true);
+  });
 });

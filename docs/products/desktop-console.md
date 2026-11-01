@@ -15,7 +15,7 @@ La **consola de operaciones** del owner: app nativa para macOS (Tauri v2, arm64)
 
 ## Qué hace
 
-- Vistas: **Dashboard** (métricas del día), **Chat** con el orquestador, **Marketing Studio**, **Outbox** (aprobaciones HITL), **Leads** (pipeline Lista⇄Kanban + CRUD), **Clientes** (ficha 360 con contactos, interacciones, forms de edición), **Proyectos** (tareas/correcciones), **Tickets** (SLA).
+- Vistas: **Dashboard** (métricas del día), **Chat** con el orquestador, **Marketing Studio**, **Contenido** (packs diarios), **Outbox** (aprobaciones HITL), **Leads** (pipeline Lista⇄Kanban + CRUD), **Clientes** (ficha 360 con contactos, interacciones, forms de edición), **Ventas** (propuestas, contratos y cobros/hitos), **Proyectos** (tareas/correcciones), **Tickets** (SLA).
 - Override manual completo: crear/editar leads, organizaciones, contactos y proyectos; borrado con confirmaciones fuertes que explicitan consecuencias.
 - QA visual integrado: la app apunta a producción para lecturas y a API local para mutaciones.
 - Se instala en `/Applications` como app nativa (DMG firmado del build de Tauri).

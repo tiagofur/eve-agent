@@ -490,6 +490,173 @@ export async function updateProjectFolder(
   return { success: true, project: updated! };
 }
 
+/* ------------------------------------------------------------------ */
+/* Milestones (billing): manual CRUD for the Ventas view. The biller    */
+/* and the reminders read these rows, so amounts stay explicit: null    */
+/* means not agreed, never guessed.                                     */
+/* ------------------------------------------------------------------ */
+
+export interface AddMilestoneInput {
+  projectId: string;
+  title: string;
+  dueDate?: string;
+  amountCents?: number;
+  currency?: string;
+  actor: string;
+}
+
+export type MilestoneResult =
+  | { success: true; milestone: typeof milestones.$inferSelect }
+  | { success: false; code: string; message: string };
+
+export async function addMilestone(input: AddMilestoneInput): Promise<MilestoneResult> {
+  const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+  if (!project) {
+    return { success: false, code: "project_not_found", message: `Project ${input.projectId} not found` };
+  }
+
+  const [milestone] = await db
+    .insert(milestones)
+    .values({
+      projectId: input.projectId,
+      title: input.title,
+      dueDate: input.dueDate,
+      amountCents: input.amountCents ?? null,
+      ...(input.currency ? { currency: input.currency } : {}),
+    })
+    .returning();
+  if (!milestone) throw new Error("Failed to create milestone");
+
+  await logEvent({
+    entity: "milestone",
+    entityId: milestone.id,
+    action: "milestone_created",
+    actor: input.actor,
+    after: {
+      projectId: input.projectId,
+      title: input.title,
+      dueDate: input.dueDate ?? null,
+      amountCents: input.amountCents ?? null,
+      currency: milestone.currency,
+    },
+    reason: `Milestone added to project ${project.name}`,
+  });
+
+  return { success: true, milestone };
+}
+
+export interface UpdateMilestoneInput {
+  milestoneId: string;
+  title?: string;
+  /** null clears the date. */
+  dueDate?: string | null;
+  /** null clears the amount (back to "not agreed"). */
+  amountCents?: number | null;
+  currency?: string;
+  /** done=true stamps doneAt; done=false clears it. */
+  done?: boolean;
+  actor: string;
+}
+
+export type UpdateMilestoneResult =
+  | { success: true; milestone: typeof milestones.$inferSelect; changed: boolean }
+  | { success: false; code: string; message: string };
+
+export async function updateMilestone(input: UpdateMilestoneInput): Promise<UpdateMilestoneResult> {
+  const [current] = await db
+    .select()
+    .from(milestones)
+    .where(eq(milestones.id, input.milestoneId))
+    .limit(1);
+  if (!current) {
+    return { success: false, code: "milestone_not_found", message: `Milestone ${input.milestoneId} not found` };
+  }
+
+  const before: Record<string, unknown> = {};
+  const changes: Record<string, unknown> = {};
+  const pick = (key: string, next: unknown, prev: unknown) => {
+    if (next === undefined || next === prev) return;
+    before[key] = prev;
+    changes[key] = next;
+  };
+  pick("title", input.title, current.title);
+  pick("dueDate", input.dueDate ?? null, current.dueDate);
+  pick("amountCents", input.amountCents ?? null, current.amountCents);
+  pick("currency", input.currency, current.currency);
+  if (input.done !== undefined) {
+    // Toggle semantics: only stamp/clear when the state actually flips,
+    // never re-stamp an already-done milestone.
+    if (input.done && !current.doneAt) {
+      before.doneAt = current.doneAt;
+      changes.doneAt = new Date();
+    } else if (!input.done && current.doneAt) {
+      before.doneAt = current.doneAt;
+      changes.doneAt = null;
+    }
+  }
+
+  if (Object.keys(changes).length === 0) {
+    return { success: true, milestone: current, changed: false };
+  }
+
+  const [updated] = await db
+    .update(milestones)
+    .set(changes as Partial<typeof milestones.$inferInsert>)
+    .where(eq(milestones.id, input.milestoneId))
+    .returning();
+
+  await logEvent({
+    entity: "milestone",
+    entityId: input.milestoneId,
+    action: "milestone_updated",
+    actor: input.actor,
+    before,
+    after: changes,
+  });
+
+  return { success: true, milestone: updated!, changed: true };
+}
+
+export interface DeleteMilestoneInput {
+  milestoneId: string;
+  actor: string;
+}
+
+export type DeleteMilestoneResult =
+  | { success: true }
+  | { success: false; code: string; message: string };
+
+/** Deleting a milestone detaches its tasks (milestone_id → NULL); billing history stays in the audit log. */
+export async function deleteMilestone(input: DeleteMilestoneInput): Promise<DeleteMilestoneResult> {
+  const [current] = await db
+    .select()
+    .from(milestones)
+    .where(eq(milestones.id, input.milestoneId))
+    .limit(1);
+  if (!current) {
+    return { success: false, code: "milestone_not_found", message: `Milestone ${input.milestoneId} not found` };
+  }
+
+  await db.delete(milestones).where(eq(milestones.id, input.milestoneId));
+
+  await logEvent({
+    entity: "milestone",
+    entityId: input.milestoneId,
+    action: "milestone_deleted",
+    actor: input.actor,
+    before: {
+      projectId: current.projectId,
+      title: current.title,
+      dueDate: current.dueDate,
+      amountCents: current.amountCents,
+      currency: current.currency,
+      doneAt: current.doneAt,
+    },
+  });
+
+  return { success: true };
+}
+
 export interface RecordFolderCheckInput {
   projectId: string;
   check: FolderCheck;

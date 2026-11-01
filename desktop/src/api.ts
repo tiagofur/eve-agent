@@ -202,6 +202,67 @@ export interface PipelineTaskItem {
   latestRun: TaskRunItem | null;
 }
 
+/* ------------------------------------------------------------------ */
+/* Ventas: propuestas (estimates), contratos y cobros (hitos).         */
+/* ------------------------------------------------------------------ */
+
+export interface MilestoneItem {
+  id: string;
+  projectId: string;
+  title: string;
+  dueDate: string | null;
+  doneAt: string | null;
+  /** Monto acordado en centavos. Null = sin monto acordado (nunca adivinar). */
+  amountCents: number | null;
+  currency: string;
+  createdAt: string;
+}
+
+export interface ContractItem {
+  id: string;
+  leadId: string | null;
+  projectId: string | null;
+  organizationName: string | null;
+  projectName: string | null;
+  title: string;
+  body: string;
+  status: "draft" | "in_review" | "sent" | "signed" | "void";
+  reviewerNote: string | null;
+  voidReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingProject {
+  id: string;
+  name: string;
+  status: string;
+  organizationId: string;
+  organizationName: string | null;
+  createdAt: string;
+  milestones: MilestoneItem[];
+  contracts: ContractItem[];
+  overdueMilestones: MilestoneItem[];
+  dueSoonMilestones: MilestoneItem[];
+  unsignedContracts: ContractItem[];
+}
+
+export interface EstimateItem {
+  id: string;
+  leadId: string | null;
+  organizationId: string | null;
+  organizationName: string | null;
+  category: string;
+  complexity: string;
+  scopeSummary: string;
+  phases: Array<{ title: string; timeframe?: string }>;
+  timelineText: string | null;
+  valueCents: number | null;
+  currency: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
@@ -577,7 +638,7 @@ export const crmApi = {
       body: JSON.stringify({ status, reason, clientMessage }),
     }),
   getProjects: () => request<{ projects: ProjectItem[] }>("/api/projects"),
-  /** Alta manual de un proyecto para un cliente existente (los hitos se agregan después). */
+  /** Alta manual de un proyecto para un cliente existente (los hitos se gestionan en Ventas → Cobros). */
   createProject: (data: { organizationId: string; name: string; repoUrl?: string }) =>
     request<{ success: boolean; project: ProjectItem }>("/api/projects", {
       method: "POST",
@@ -693,6 +754,58 @@ export const crmApi = {
   publishSocialPost: (id: string) =>
     request<{ success: boolean }>(`/api/marketing/${id}/publish`, {
       method: "POST",
+    }),
+  /* ---- Ventas ---- */
+  getBilling: () => request<{ projects: BillingProject[] }>("/api/projects/billing"),
+  getEstimates: () => request<{ estimates: EstimateItem[] }>("/api/estimates?limit=100"),
+  /** Propuesta manual: creada como "owner:desktop", igual que las del agente solutions. */
+  createEstimate: (data: {
+    organizationId: string;
+    category: string;
+    complexity: string;
+    scopeSummary: string;
+    phases: Array<{ title: string; timeframe?: string }>;
+    timelineText?: string;
+    valueCents?: number | null;
+    currency?: string;
+  }) =>
+    request<{ success: boolean; estimate: EstimateItem }>("/api/estimates", {
+      method: "POST",
+      body: JSON.stringify({ ...data, createdBy: "owner:desktop" }),
+    }),
+  getContracts: () => request<{ contracts: ContractItem[] }>("/api/contracts?limit=100"),
+  /** Borrador de contrato manual: requiere lead o proyecto como objetivo. */
+  createContract: (data: { leadId?: string; projectId?: string; title: string; body: string; reviewerNote?: string }) =>
+    request<{ success: boolean; contract: ContractItem }>("/api/contracts", {
+      method: "POST",
+      body: JSON.stringify({ ...data, createdBy: "owner:desktop" }),
+    }),
+  /** Máquina estricta: draft→in_review→sent→signed. Firmar solo pasa con owner key (la que usa el desktop). */
+  moveContractStatus: (contractId: string, status: ContractItem["status"], reason?: string) =>
+    request<{ success: boolean; contract: ContractItem }>(`/api/contracts/${contractId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status, reason }),
+    }),
+  createMilestone: (
+    projectId: string,
+    data: { title: string; dueDate?: string; amountCents?: number; currency?: string }
+  ) =>
+    request<{ success: boolean; milestone: MilestoneItem }>(`/api/projects/${projectId}/milestones`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** Editar hito. done marca/desmarca; null limpia fecha o monto. */
+  updateMilestone: (
+    milestoneId: string,
+    data: { title?: string; dueDate?: string | null; amountCents?: number | null; currency?: string; done?: boolean }
+  ) =>
+    request<{ success: boolean; milestone: MilestoneItem }>(`/api/projects/milestones/${milestoneId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteMilestone: (milestoneId: string) =>
+    request<{ success: boolean }>(`/api/projects/milestones/${milestoneId}`, {
+      method: "DELETE",
     }),
 };
 
