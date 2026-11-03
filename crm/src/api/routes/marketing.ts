@@ -75,26 +75,29 @@ marketingRouter.post(
       topic: z.string().min(5),
       tone: z.string().optional(),
       targetAudience: z.string().optional(),
+      format: z.enum(["image", "video"]).optional().default("image"),
     })
   ),
   async (c) => {
-    const { platform, topic, tone, targetAudience } = c.req.valid("json");
+    const { platform, topic, tone, targetAudience, format } = c.req.valid("json");
     const actor = c.get("actor");
     const model = getModel();
 
     try {
+      const isVideo = format === "video";
       const prompt = `You are the Lead Marketing Specialist for Creapolis.Dev (a high-performance software agency specializing in autonomous AI agents, enterprise automation, and custom web/desktop apps).
 Generate a high-converting, professional, and technical marketing post for ${platform.toUpperCase()}.
 
 TOPIC: ${topic}
 TARGET AUDIENCE: ${targetAudience || "Tech founders, business owners, operations managers"}
 TONE: ${tone || "Modern, authoritative, builder-oriented, clear ROI, no generic corporate buzzwords"}
+FORMAT: ${isVideo ? "Short-form video (Reel / TikTok / Short)" : "Static post with high-impact visual"}
 
 Respond ONLY with valid JSON following this schema:
 {
   "caption": "The complete post caption with emojis, hook, problem, solution, ROI, and call to action (in natural Spanish)",
   "hashtags": ["CreapolisDev", "AIAgents", "Automation", ...],
-  "imagePrompt": "Detailed English prompt for generative image models (Nano Banana, Imagen). Style: sleek dark tech aesthetic, dark gray/zinc background, glowing emerald/cyan neon accents, clean geometric 3D shapes or futuristic agent dashboard, high resolution, 8k render, no blurry text."
+  ${isVideo ? `"videoPrompt": "Detailed English prompt for generative video model (Google Veo / Gemini Omni Flash). Describe high-tech camera movement, dynamic motion, dark tech zinc background, cyan/emerald glowing neon accents, 3D volumetric interfaces or agent workflows, cinematic 60fps."` : `"imagePrompt": "Detailed English prompt for generative image models (Nano Banana, Imagen). Style: sleek dark tech aesthetic, dark gray/zinc background, glowing emerald/cyan neon accents, clean geometric 3D shapes or futuristic agent dashboard, high resolution, 8k render, no blurry text."`}
 }`;
 
       const { text } = await generateText({
@@ -106,14 +109,54 @@ Respond ONLY with valid JSON following this schema:
       const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
       const parsed = JSON.parse(cleaned);
 
-      // Generate Image using Google Nano Banana (Gemini) or fallback to Meta
+      // Generate Media: Video (Google Veo / Omni Flash) or Image (Nano Banana 2.1)
       let imageUrl: string | undefined = undefined;
+      const visualPrompt = parsed.videoPrompt || parsed.imagePrompt;
       const geminiKey = process.env.GEMINI_API_KEY;
       const nanoBananaModel = process.env.NANO_BANANA_MODEL_ID || "gemini-nano-banana-2.1";
+      const omniFlashModel = process.env.OMNI_FLASH_MODEL_ID || "gemini-omni-1.1-flash";
       const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
       const baseUrl = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
-      if (geminiKey && parsed.imagePrompt) {
+      if (isVideo && geminiKey && visualPrompt) {
+        try {
+          const vidRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/interactions?key=${geminiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: omniFlashModel,
+                input: [{ type: "text", text: visualPrompt }],
+                response_format: {
+                  type: "video",
+                  delivery: "uri",
+                  aspect_ratio: platform === "instagram" ? "9:16" : "16:9",
+                  duration: "5s",
+                  resolution: "720p",
+                },
+              }),
+            }
+          );
+          if (vidRes.ok) {
+            const vidData = (await vidRes.json()) as any;
+            const outputStep = vidData.steps?.find((s: any) => s.type === "model_output" || s.content?.[0]?.uri);
+            const videoPart = outputStep?.content?.[0];
+            if (videoPart?.uri) {
+              const downloadRes = await fetch(`${videoPart.uri}&key=${geminiKey}`);
+              if (downloadRes.ok) {
+                const buf = Buffer.from(await downloadRes.arrayBuffer());
+                imageUrl = `data:video/mp4;base64,${buf.toString("base64")}`;
+              }
+            }
+          } else {
+            const errText = await vidRes.text();
+            console.error(`Failed to generate video with ${omniFlashModel} (${vidRes.status}):`, errText);
+          }
+        } catch (vidErr) {
+          console.error("Failed to generate video with Omni Flash:", vidErr);
+        }
+      } else if (geminiKey && visualPrompt) {
         try {
           const imgRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${nanoBananaModel}:generateContent?key=${geminiKey}`,
@@ -121,7 +164,7 @@ Respond ONLY with valid JSON following this schema:
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                contents: [{ parts: [{ text: parsed.imagePrompt }] }],
+                contents: [{ parts: [{ text: visualPrompt }] }],
                 generationConfig: {
                   responseModalities: ["IMAGE"],
                 },
@@ -142,7 +185,7 @@ Respond ONLY with valid JSON following this schema:
         } catch (imgErr) {
           console.error("Failed to generate image with Nano Banana:", imgErr);
         }
-      } else if (metaKey && parsed.imagePrompt) {
+      } else if (metaKey && visualPrompt) {
         try {
           const imgRes = await fetch(`${baseUrl}/images/generations`, {
             method: "POST",
@@ -152,7 +195,7 @@ Respond ONLY with valid JSON following this schema:
             },
             body: JSON.stringify({
               model: "muse-image-1.0",
-              prompt: parsed.imagePrompt,
+              prompt: visualPrompt,
               n: 1,
               size: "1024x1024",
             }),
@@ -172,7 +215,7 @@ Respond ONLY with valid JSON following this schema:
         topic,
         caption: parsed.caption,
         hashtags: parsed.hashtags || [],
-        imagePrompt: parsed.imagePrompt,
+        imagePrompt: visualPrompt,
         imageUrl,
         actor,
       });

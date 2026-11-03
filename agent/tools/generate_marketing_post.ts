@@ -24,6 +24,10 @@ export default defineTool({
       .string()
       .optional()
       .describe("Target reader persona"),
+    format: z
+      .enum(["image", "video"])
+      .optional()
+      .describe("Visual format: 'image' (generated via Nano Banana 2.1) or 'video' (generated via Google Veo / Gemini Omni Flash)"),
   }),
   async execute(input, ctx) {
     requireStaff(ctx, "generate_marketing_post");

@@ -453,6 +453,7 @@ export interface GenerateMarketingPostParams {
   topic: string;
   tone?: string;
   targetAudience?: string;
+  format?: "image" | "video";
 }
 
 export async function crmGenerateMarketingPost(data: GenerateMarketingPostParams) {
