@@ -346,7 +346,7 @@ ${hashtagsFormatted ? `<b>Hashtags:</b> ${hashtagsFormatted}\n` : ""}
 <b>Copy Propuesto:</b>
 <pre>${escapeHtml(post.caption.slice(0, 900) + (post.caption.length > 900 ? "..." : ""))}</pre>
 
-${post.imagePrompt ? `<b>Prompt Visual (Muse Image):</b>\n<code>${escapeHtml(post.imagePrompt.slice(0, 400))}</code>\n\n` : ""}¿Deseas autorizar la publicación en ${platformUpper}?`;
+${post.imagePrompt ? `<b>Prompt Visual (Nano Banana):</b>\n<code>${escapeHtml(post.imagePrompt.slice(0, 400))}</code>\n\n` : ""}¿Deseas autorizar la publicación en ${platformUpper}?`;
 
   const keyboard = [
     [

@@ -5,7 +5,7 @@ import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
-    "Generate a complete social media marketing post (Instagram, Facebook, LinkedIn) with technical copy, hashtags, and Muse Image visual prompt, automatically sending it to Telegram for executive approval.",
+    "Generate a complete social media marketing post (Instagram, Facebook, LinkedIn) with technical copy, hashtags, and Nano Banana visual prompt, automatically sending it to Telegram for executive approval.",
   inputSchema: z.object({
     platform: z
       .enum(["instagram", "facebook", "linkedin", "twitter"])

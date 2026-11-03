@@ -94,7 +94,7 @@ Respond ONLY with valid JSON following this schema:
 {
   "caption": "The complete post caption with emojis, hook, problem, solution, ROI, and call to action (in natural Spanish)",
   "hashtags": ["CreapolisDev", "AIAgents", "Automation", ...],
-  "imagePrompt": "Detailed English prompt for generative image models (Muse Image, Midjourney). Style: sleek dark tech aesthetic, dark gray/zinc background, glowing emerald/cyan neon accents, clean geometric 3D shapes or futuristic agent dashboard, high resolution, 8k render, no blurry text."
+  "imagePrompt": "Detailed English prompt for generative image models (Nano Banana, Imagen). Style: sleek dark tech aesthetic, dark gray/zinc background, glowing emerald/cyan neon accents, clean geometric 3D shapes or futuristic agent dashboard, high resolution, 8k render, no blurry text."
 }`;
 
       const { text } = await generateText({
@@ -106,12 +106,43 @@ Respond ONLY with valid JSON following this schema:
       const cleaned = text.replace(/```json/g, "").replace(/```/g, "").trim();
       const parsed = JSON.parse(cleaned);
 
-      // Generate Image using muse-image-1.0 with the same META_API_KEY
+      // Generate Image using Google Nano Banana (Gemini) or fallback to Meta
       let imageUrl: string | undefined = undefined;
+      const geminiKey = process.env.GEMINI_API_KEY;
+      const nanoBananaModel = process.env.NANO_BANANA_MODEL_ID || "gemini-nano-banana-2.1";
       const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
       const baseUrl = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
-      if (metaKey && parsed.imagePrompt) {
+      if (geminiKey && parsed.imagePrompt) {
+        try {
+          const imgRes = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${nanoBananaModel}:generateContent?key=${geminiKey}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: parsed.imagePrompt }] }],
+                generationConfig: {
+                  responseModalities: ["IMAGE"],
+                },
+              }),
+            }
+          );
+          if (imgRes.ok) {
+            const imgData = (await imgRes.json()) as any;
+            const part = imgData.candidates?.[0]?.content?.parts?.[0];
+            if (part?.inlineData?.data) {
+              const mime = part.inlineData.mimeType || "image/jpeg";
+              imageUrl = `data:${mime};base64,${part.inlineData.data}`;
+            }
+          } else {
+            const errText = await imgRes.text();
+            console.error(`Failed to generate image with Nano Banana (${imgRes.status}):`, errText);
+          }
+        } catch (imgErr) {
+          console.error("Failed to generate image with Nano Banana:", imgErr);
+        }
+      } else if (metaKey && parsed.imagePrompt) {
         try {
           const imgRes = await fetch(`${baseUrl}/images/generations`, {
             method: "POST",
