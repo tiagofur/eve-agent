@@ -28,6 +28,13 @@ export default defineTool({
       .enum(["image", "video"])
       .optional()
       .describe("Visual format: 'image' (generated via Nano Banana 2.1) or 'video' (generated via Google Veo / Gemini Omni Flash)"),
+    productSlug: z
+      .string()
+      .regex(/^[a-z0-9-]+$/)
+      .optional()
+      .describe(
+        "Slug of a canonical product doc (docs/products, discoverable via search_product_docs) to ground the post: the copy may only claim documented features. When omitted, the CRM auto-detects the product from the topic."
+      ),
   }),
   async execute(input, ctx) {
     requireStaff(ctx, "generate_marketing_post");
