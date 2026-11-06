@@ -114,7 +114,7 @@ Respond ONLY with valid JSON following this schema:
       const visualPrompt = parsed.videoPrompt || parsed.imagePrompt;
       const geminiKey = process.env.GEMINI_API_KEY;
       const nanoBananaModel = process.env.NANO_BANANA_MODEL_ID || "gemini-nano-banana-2.1";
-      const omniFlashModel = process.env.OMNI_FLASH_MODEL_ID || "gemini-omni-1.1-flash";
+      const omniFlashModel = process.env.OMNI_FLASH_MODEL_ID || "gemini-omni-1.2-flash";
       const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
       const baseUrl = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
