@@ -741,11 +741,22 @@ export const crmApi = {
       method: "POST",
       body: JSON.stringify({ decision, rejectedReason }),
     }),
-  generateSocialPost: (data: { platform: string; topic: string; tone?: string }) =>
+  generateSocialPost: (data: {
+    platform: string;
+    topic: string;
+    tone?: string;
+    format?: "image" | "video";
+    productSlug?: string;
+  }) =>
     request<{ success: boolean; post: SocialPostItem }>("/api/marketing/generate", {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  getProducts: () =>
+    request<{
+      products: Array<{ slug: string; nombre?: string; tipo?: string; resumen?: string }>;
+      docsAvailable: boolean;
+    }>("/api/products"),
   reviewSocialPost: (id: string, decision: "approved" | "rejected", rejectedReason?: string) =>
     request<{ success: boolean }>(`/api/marketing/${id}/review`, {
       method: "POST",

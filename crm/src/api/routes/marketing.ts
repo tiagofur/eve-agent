@@ -12,6 +12,7 @@ import {
   reviewSocialPost,
   publishSocialPost,
 } from "../../domain/marketing";
+import { pickMarketingContext, readDoc } from "../../domain/products";
 
 export const marketingRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -58,6 +59,18 @@ function getModel() {
   return metaSubscription(process.env.META_MODEL_ID || "muse-spark-1.3-contributor");
 }
 
+// Product grounding block injected into the generation prompt. The docs are
+// the single source of truth for product claims (docs/products/README).
+function buildProductContext(nombre: string, slug: string, markdown: string): string {
+  return `PRODUCT CONTEXT — ${nombre} (canonical doc docs/products/${slug}.md):
+${markdown}
+
+GROUNDING RULES (hard):
+- Only claim features, platforms, and prices that appear in this doc. If a detail is not in the doc, do not invent it.
+- Use the "Ángulos de marketing" section as the angle starting point for the caption.
+- If the TOPIC conflicts with the doc, the doc wins.`;
+}
+
 // 1. List social posts
 marketingRouter.get("/", requireScope(["ops"]), async (c) => {
   const posts = await listSocialPosts();
@@ -76,15 +89,43 @@ marketingRouter.post(
       tone: z.string().optional(),
       targetAudience: z.string().optional(),
       format: z.enum(["image", "video"]).optional().default("image"),
+      productSlug: z
+        .string()
+        .regex(/^[a-z0-9-]+$/)
+        .optional(),
     })
   ),
   async (c) => {
-    const { platform, topic, tone, targetAudience, format } = c.req.valid("json");
+    const { platform, topic, tone, targetAudience, format, productSlug } = c.req.valid("json");
     const actor = c.get("actor");
     const model = getModel();
 
     try {
       const isVideo = format === "video";
+
+      // Ground the post in the canonical product docs (docs/products/*.md):
+      // explicit slug when provided, otherwise auto-detect from the topic.
+      // Pendiente docs are off-limits for marketing content (docs README rule).
+      let productContext = "";
+      if (productSlug) {
+        const doc = await readDoc(productSlug);
+        if (!doc) {
+          return c.json({ error: `Unknown product doc '${productSlug}'` }, 400);
+        }
+        if (doc.meta.tipo === "pendiente") {
+          return c.json(
+            { error: `Product doc '${productSlug}' is tipo:pendiente — marketing content is blocked until the owner completes it.` },
+            400
+          );
+        }
+        productContext = buildProductContext(doc.meta.nombre || doc.meta.slug, doc.meta.slug, doc.markdown);
+      } else {
+        const detected = await pickMarketingContext(topic);
+        if (detected) {
+          productContext = buildProductContext(detected.nombre || detected.slug, detected.slug, detected.markdown);
+        }
+      }
+
       const prompt = `You are the Lead Marketing Specialist for Creapolis.Dev (a high-performance software agency specializing in autonomous AI agents, enterprise automation, and custom web/desktop apps).
 Generate a high-converting, professional, and technical marketing post for ${platform.toUpperCase()}.
 
@@ -92,6 +133,7 @@ TOPIC: ${topic}
 TARGET AUDIENCE: ${targetAudience || "Tech founders, business owners, operations managers"}
 TONE: ${tone || "Modern, authoritative, builder-oriented, clear ROI, no generic corporate buzzwords"}
 FORMAT: ${isVideo ? "Short-form video (Reel / TikTok / Short)" : "Static post with high-impact visual"}
+${productContext ? `\n${productContext}\n` : ""}
 
 Respond ONLY with valid JSON following this schema:
 {

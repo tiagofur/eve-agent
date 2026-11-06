@@ -29,6 +29,9 @@ export const MarketingView: React.FC = () => {
   const [platform, setPlatform] = useState<"instagram" | "facebook" | "linkedin" | "twitter">("instagram");
   const [topic, setTopic] = useState("");
   const [tone, setTone] = useState("Moderno, técnico y orientado a ROI");
+  const [format, setFormat] = useState<"image" | "video">("image");
+  const [productSlug, setProductSlug] = useState("");
+  const [products, setProducts] = useState<Array<{ slug: string; nombre?: string; tipo?: string; resumen?: string }>>([]);
 
   const loadPosts = async () => {
     try {
@@ -42,8 +45,19 @@ export const MarketingView: React.FC = () => {
     }
   };
 
+  const loadProducts = async () => {
+    try {
+      const res = await crmApi.getProducts();
+      // Docs tipo:pendiente are off-limits for marketing content (docs README).
+      setProducts(res.products.filter((p) => p.tipo !== "pendiente"));
+    } catch (err) {
+      console.error("Failed to load products:", err);
+    }
+  };
+
   useEffect(() => {
     loadPosts();
+    loadProducts();
   }, []);
 
   const handleGenerate = async (e: React.FormEvent) => {
@@ -56,6 +70,8 @@ export const MarketingView: React.FC = () => {
         platform,
         topic,
         tone,
+        format,
+        ...(productSlug ? { productSlug } : {}),
       });
       setShowGenerateModal(false);
       setTopic("");
@@ -365,12 +381,65 @@ export const MarketingView: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Formato Visual
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFormat("image")}
+                    className={`flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-xs font-semibold transition ${
+                      format === "image"
+                        ? "bg-zinc-800 border-emerald-500 text-white"
+                        : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>Imagen</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormat("video")}
+                    className={`flex items-center justify-center gap-1.5 p-2.5 rounded-lg border text-xs font-semibold transition ${
+                      format === "video"
+                        ? "bg-zinc-800 border-emerald-500 text-white"
+                        : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    <span className="text-sm leading-none">🎬</span>
+                    <span>Video (Reel)</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
+                  Producto (grounding — docs canónicos)
+                </label>
+                <select
+                  value={productSlug}
+                  onChange={(e) => setProductSlug(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="">Auto-detectar desde el tema</option>
+                  {products.map((p) => (
+                    <option key={p.slug} value={p.slug}>
+                      {p.nombre || p.slug}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  El copy y el prompt visual solo afirmarán features documentadas en docs/products.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Tema o Caso de Éxito a Promover
                 </label>
                 <textarea
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
-                  placeholder="Ej: Caso de éxito Creapolis.Dev: Cómo un agente de WhatsApp automatizó el agendamiento y recuperó $3,000/mes para una clínica dental..."
+                  placeholder="Ej: Pepinillo: 4 modos de enfoque intercambiables para deep work en iPhone, Mac y Android..."
                   rows={3}
                   required
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
