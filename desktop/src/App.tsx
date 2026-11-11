@@ -13,6 +13,7 @@ import {
   Megaphone,
   Layers,
   HandCoins,
+  CalendarClock,
   Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
@@ -25,10 +26,11 @@ import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
 import { MarketingView } from "./views/MarketingView";
 import { ContentView } from "./views/ContentView";
+import { SchedulesView } from "./views/SchedulesView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "programadas" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
 
 const apiHost = (() => {
   try {
@@ -113,6 +115,18 @@ export const App: React.FC = () => {
             >
               <Bot className="w-4 h-4 text-emerald-400" />
               <span>Orquestador Chat</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("programadas")}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "programadas"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <CalendarClock className="w-4 h-4 text-violet-400" />
+              <span>Programadas</span>
             </button>
 
             <button
@@ -275,6 +289,7 @@ export const App: React.FC = () => {
           {activeTab === "chat" && (
             <ChatView externalPrompt={chatPrompt} onPromptConsumed={() => setChatPrompt(null)} />
           )}
+          {activeTab === "programadas" && <SchedulesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}

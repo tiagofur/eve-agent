@@ -15,6 +15,7 @@ import { estimatesRouter } from "./api/routes/estimates";
 import { contractsRouter } from "./api/routes/contracts";
 import { contentPacksRouter } from "./api/routes/content-packs";
 import { productsRouter } from "./api/routes/products";
+import { schedulesRouter } from "./api/routes/schedules";
 import { publicChatRouter } from "./api/routes/public-chat";
 
 export const app = new Hono();
@@ -59,5 +60,6 @@ app.route("/api/estimates", estimatesRouter);
 app.route("/api/contracts", contractsRouter);
 app.route("/api/content-packs", contentPacksRouter);
 app.route("/api/products", productsRouter);
+app.route("/api/schedules", schedulesRouter);
 app.route("/api/public/chat", publicChatRouter);
 

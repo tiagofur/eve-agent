@@ -122,6 +122,10 @@ export const socialPostStatusEnum = pgEnum("social_post_status", [
   "rejected",
 ]);
 
+export const scheduleSourceEnum = pgEnum("schedule_source", ["system", "user"]);
+export const scheduleRunStatusEnum = pgEnum("schedule_run_status", ["running", "succeeded", "failed"]);
+export const scheduleRunTriggerEnum = pgEnum("schedule_run_trigger", ["cron", "manual"]);
+
 export const contentPackKindEnum = pgEnum("content_pack_kind", ["video", "carousel", "image"]);
 
 export const contentPackStatusEnum = pgEnum("content_pack_status", [
@@ -148,6 +152,9 @@ export type SocialPlatform = (typeof socialPlatformEnum.enumValues)[number];
 export type SocialPostStatus = (typeof socialPostStatusEnum.enumValues)[number];
 export type ContentPackKind = (typeof contentPackKindEnum.enumValues)[number];
 export type ContentPackStatus = (typeof contentPackStatusEnum.enumValues)[number];
+export type ScheduleSource = (typeof scheduleSourceEnum.enumValues)[number];
+export type ScheduleRunStatus = (typeof scheduleRunStatusEnum.enumValues)[number];
+export type ScheduleRunTrigger = (typeof scheduleRunTriggerEnum.enumValues)[number];
 
 /* ------------------------------------------------------------------ */
 /* Shared column helpers                                               */
@@ -655,5 +662,54 @@ export const chatMessages = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("chat_messages_thread_idx").on(t.threadId)],
+);
+
+/**
+ * Agent cronjobs (scheduled prompts). The single source of truth for what the
+ * scheduler dispatches; seeded from the former static agent/schedules/*.ts
+ * files and editable from Mission Control or by the agent's own tools.
+ */
+export const schedules = pgTable(
+  "schedules",
+  {
+    id: id(),
+    // Stable slug used by the agent tools (create/update/delete by name).
+    name: text("name").notNull(),
+    title: text("title").notNull(),
+    // Standard 5-field cron expression, evaluated in the server's local time.
+    cron: text("cron").notNull(),
+    prompt: text("prompt").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    // system = seeded by the migration (the original 4); user = created later.
+    source: scheduleSourceEnum("source").notNull().default("user"),
+    // NULL = never computed yet (fresh seed): the first tick aligns it to the
+    // next occurrence without firing the schedule out of its cadence.
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("schedules_name_uq").on(t.name), index("schedules_enabled_idx").on(t.enabled)],
+);
+
+/** One row per dispatched schedule execution (cron tick or manual run). */
+export const scheduleRuns = pgTable(
+  "schedule_runs",
+  {
+    id: id(),
+    scheduleId: uuid("schedule_id")
+      .notNull()
+      .references(() => schedules.id, { onDelete: "cascade" }),
+    status: scheduleRunStatusEnum("status").notNull().default("running"),
+    trigger: scheduleRunTriggerEnum("trigger").notNull().default("cron"),
+    // Each execution gets its own orchestrator thread, inspectable from
+    // Mission Control (messages render read-only from chat_messages).
+    threadId: uuid("thread_id").references(() => chatThreads.id, { onDelete: "set null" }),
+    resultSummary: text("result_summary"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("schedule_runs_schedule_idx").on(t.scheduleId, t.startedAt)],
 );
 

@@ -6,6 +6,7 @@ import { app } from "./app";
 import { ensureDefaultApiKeys } from "./auth/keys";
 import { startTelegramPolling } from "./services/telegram";
 import { startFollowupDigest } from "./services/followup-digest";
+import { startScheduleDispatcher } from "./services/schedule-dispatcher";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -30,6 +31,7 @@ async function start() {
       console.log(`Creapolis CRM API running at http://localhost:${info.port}`);
       startTelegramPolling();
       startFollowupDigest();
+      startScheduleDispatcher();
     }
   );
 }
