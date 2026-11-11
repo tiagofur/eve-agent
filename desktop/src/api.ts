@@ -818,6 +818,33 @@ export const crmApi = {
     request<{ success: boolean }>(`/api/projects/milestones/${milestoneId}`, {
       method: "DELETE",
     }),
+  /* ---- Programadas (agent cronjobs) ---- */
+  /** Lista con próxima/última ejecución y el reloj del servidor (hint de zona horaria). */
+  getSchedules: () =>
+    request<{ schedules: ScheduleItem[]; serverNow: string; timezone: string }>("/api/schedules"),
+  createSchedule: (data: { title: string; cron: string; prompt: string; name?: string }) =>
+    request<{ success: boolean; schedule: ScheduleItem }>("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** Cambiar cron o reactivar re-arma la próxima ejecución desde ahora. */
+  updateSchedule: (
+    id: string,
+    data: { title?: string; cron?: string; prompt?: string; enabled?: boolean }
+  ) =>
+    request<{ success: boolean; schedule: ScheduleItem }>(`/api/schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteSchedule: (id: string) =>
+    request<{ success: boolean }>(`/api/schedules/${id}`, { method: "DELETE" }),
+  /** Ejecución manual inmediata (async): devuelve el run abierto y su thread. */
+  runScheduleNow: (id: string) =>
+    request<{ success: boolean; runId: string; threadId: string }>(`/api/schedules/${id}/run`, {
+      method: "POST",
+    }),
+  getScheduleRuns: (id: string) =>
+    request<{ runs: ScheduleRunItem[] }>(`/api/schedules/${id}/runs`),
 };
 
 export interface ChatMessage {
@@ -867,6 +894,33 @@ export interface SocialPostItem {
   externalPostUrl?: string | null;
   createdBy: string;
   createdAt: string;
+}
+
+export interface ScheduleRunItem {
+  id: string;
+  scheduleId: string;
+  status: "running" | "succeeded" | "failed";
+  trigger: "cron" | "manual";
+  threadId: string | null;
+  resultSummary: string | null;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+/** Tarea programada del agente (cronjob): cadencia + prompt que se ejecuta solo. */
+export interface ScheduleItem {
+  id: string;
+  name: string;
+  title: string;
+  cron: string;
+  prompt: string;
+  enabled: boolean;
+  source: "system" | "user";
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastRun: ScheduleRunItem | null;
 }
 
 

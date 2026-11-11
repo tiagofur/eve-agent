@@ -912,3 +912,124 @@ export async function crmUploadContentPack(input: CrmContentPackUpload): Promise
     pack: { id: string; kind: string; topic: string; status: string };
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Scheduled tasks (agent cronjobs)                                    */
+/* ------------------------------------------------------------------ */
+
+export interface ScheduleRunSnapshot {
+  id: string;
+  status: string;
+  trigger: string;
+  startedAt: string;
+  finishedAt: string | null;
+  resultSummary: string | null;
+  error: string | null;
+}
+
+export interface ScheduleItem {
+  id: string;
+  name: string;
+  title: string;
+  cron: string;
+  prompt: string;
+  enabled: boolean;
+  source: string;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastRun: ScheduleRunSnapshot | null;
+}
+
+export async function crmListSchedules(): Promise<{
+  schedules: ScheduleItem[];
+  serverNow: string;
+  timezone: string;
+}> {
+  const res = await fetch(`${getCrmUrl()}/api/schedules`, {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM schedule list failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { schedules: ScheduleItem[]; serverNow: string; timezone: string };
+}
+
+export async function crmCreateSchedule(data: {
+  title: string;
+  cron: string;
+  prompt: string;
+  name?: string;
+  enabled?: boolean;
+}): Promise<{ success: boolean; schedule: ScheduleItem }> {
+  const res = await fetch(`${getCrmUrl()}/api/schedules`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM schedule creation failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { success: boolean; schedule: ScheduleItem };
+}
+
+/** Schedules are addressed by name (stable slug); falls back to id. */
+async function resolveScheduleId(target: { id?: string; name?: string }): Promise<string> {
+  if (target.id) return target.id;
+  const { schedules } = await crmListSchedules();
+  const found = schedules.find((s) => s.name === target.name);
+  if (!found) {
+    throw new Error(`No schedule found with name "${target.name}". Use list_schedules to see the exact names.`);
+  }
+  return found.id;
+}
+
+export async function crmUpdateSchedule(data: {
+  id?: string;
+  name?: string;
+  title?: string;
+  cron?: string;
+  prompt?: string;
+  enabled?: boolean;
+}): Promise<{ success: boolean; schedule: ScheduleItem }> {
+  const id = await resolveScheduleId(data);
+  const res = await fetch(`${getCrmUrl()}/api/schedules/${id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+    body: JSON.stringify({
+      title: data.title,
+      cron: data.cron,
+      prompt: data.prompt,
+      enabled: data.enabled,
+    }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM schedule update failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { success: boolean; schedule: ScheduleItem };
+}
+
+export async function crmDeleteSchedule(data: {
+  id?: string;
+  name?: string;
+}): Promise<{ success: boolean }> {
+  const id = await resolveScheduleId(data);
+  const res = await fetch(`${getCrmUrl()}/api/schedules/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM schedule delete failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { success: boolean };
+}
