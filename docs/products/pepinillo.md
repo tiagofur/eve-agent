@@ -44,6 +44,12 @@ Escritores, devs, diseñadores, analistas, estudiantes; en especial usuarios ADH
 - Rachas + Mode Intelligence: contenido de datos ("completas 80% más escritura con Flowtime").
 - Detalles nativos: Dynamic Island en vivo, arrancar foco por voz desde el Watch.
 
+## Precios (autorizados, hoja v3.1, 2026-04-21)
+
+- **Free** — Pomodoro + Stopwatch, hasta 3 tareas activas, analítica de hoy + 7 días, widget básico por tipo, 4 paisajes sonoros, solo local, sin export.
+- **Pepinillo+ — compra única, NO suscripción** ("One purchase. Yours forever."): global **$19.99** · LATAM **$9.99** (precios de referencia Apple; en Android la compra única también existe — precio exacto: el que muestre el paywall de la tienda, no citar número). Desbloquea Flowtime + Time Block, tareas ilimitadas, analítica completa + Reviews, reportes IA on-device, Mode Intelligence, temas y sonidos premium, watch completo, todos los widgets + Live Activity, export CSV/PDF, sync iCloud, protección de racha, time blocking con calendario.
+- **Everywhere/AI+ — suscripción** (incluye todo lo de Pepinillo+): global **$4.99/mes** o **$34.99/año** · LATAM **$2.49/mes** o **$17.99/año**. Añade sync multiplataforma, AI Coach, agendamiento y subtareas por IA, insights avanzados, 100 créditos IA/mes. Backend Sync, AI Coach, AI Scheduling y AI Subtasks son **coming soon — nunca presentarlos como existentes**.
+
 ## Stack
 
 Apps nativas (SwiftUI / Kotlin) · Apple Intelligence on-device · Health integrations · pricing freemium con tier paid.

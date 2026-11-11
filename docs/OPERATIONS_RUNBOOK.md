@@ -78,6 +78,62 @@ META_PAGE_ACCESS_TOKEN="<page-access-token-with-pages_manage_posts>"
 META_INSTAGRAM_ACCOUNT_ID="17841458937890967"
 ```
 
+### Publicación por marca (Instagram 1-click de los content packs)
+
+Cada marca (`creapolis`, `pepinillo`, `solennix`) publica a **su propia cuenta de Instagram**.
+Variables por marca en el `.env` de producción del CRM (la marca `creapolis` cae a las `META_*`
+legacy de arriba si no se configuran):
+
+```bash
+PUBLISH_CREAPOLIS_IG_ACCOUNT_ID="<ig-business-account-id>"
+PUBLISH_CREAPOLIS_ACCESS_TOKEN="<page-access-token>"
+# Opcional (publicación a Facebook de esa marca):
+PUBLISH_CREAPOLIS_FB_PAGE_ID="<page-id>"
+
+PUBLISH_PEPINILLO_IG_ACCOUNT_ID="<...>"
+PUBLISH_PEPINILLO_ACCESS_TOKEN="<...>"
+
+PUBLISH_SOLENNIX_IG_ACCOUNT_ID="<...>"
+PUBLISH_SOLENNIX_ACCESS_TOKEN="<...>"
+
+# Origen público del que Instagram descarga las slides del pack (ya es público por nginx):
+PUBLIC_CONTENT_BASE_URL="https://crm.creapolis.dev"
+```
+
+**Cómo generar las credenciales de una marca** (una vez por marca):
+
+1. La cuenta de Instagram debe ser **Professional (Business)** y estar **vinculada a una página
+   de Facebook** de la marca (Instagram → Configuración → Empresa → Página de Facebook vinculada).
+2. En [developers.facebook.com](https://developers.facebook.com) usa la app de Creapolis (o crea
+   una) y obtén un **User Access Token** con los permisos:
+   `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`.
+3. Cambia el token a **Page Access Token** de la página de la marca (Graph API Explorer:
+   GET `/me/accounts` → token de la página; los page tokens no expiran si la app está en modo
+   Live). El token debe poder ver la cuenta IG de la página.
+4. Saca el **IG Business Account ID**: GET `/{page-id}?fields=instagram_business_account` →
+   el campo `instagram_business_account.id`.
+5. Setea `PUBLISH_<MARCA>_IG_ACCOUNT_ID` y `PUBLISH_<MARCA>_ACCESS_TOKEN` en el `.env` del VPS
+   (`docker-compose.prod.yml` los inyecta) y reinicia el contenedor del CRM.
+
+**Smoke test sin tocar cuentas reales**: `PUBLISH_DRY_RUN=true` convierte cualquier publicación en
+éxito simulado. Con el CRM local:
+
+```bash
+cd crm && EVE_AGENT_URL=http://127.0.0.1:2000 PUBLISH_DRY_RUN=true npm run dev
+# Ejecuta manualmente content_pepinillo (Programadas → Ejecutar ahora) y aprueba+publica
+# por la API: el pack queda "published" con URL simulada, sin llamar a Meta.
+```
+
+**Smoke real por marca** (con credenciales ya seteadas en producción): ejecutar la schedule de la
+marca con "Ejecutar ahora", y en Telegram pulsar «✅ Aprobar y publicar». El mensaje se edita a
+«¡PUBLICADO EN INSTAGRAM!» con el enlace. Si falta una credencial, el botón responde con el error
+exacto de qué variable falta para esa marca.
+
+Notas: IG publica carruseles de hasta 10 slides (límite del pack: 10) e imágenes únicas; los packs
+de video quedan fuera del 1-click (descarga manual + subida). El caption usado es
+`captionsByPlatform.instagram` si existe, si no el general.
+
+
 ### CRM Local `.env` (Database & Server Ports)
 Copy `crm/.env.example` to `crm/.env` (git-ignored) and fill in real values. Generate or rotate keys with `npx tsx src/seed-keys.ts`:
 ```bash

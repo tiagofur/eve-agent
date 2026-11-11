@@ -19,24 +19,39 @@ import {
   type ContentPackItem,
 } from "../api";
 
-type StatusFilter = "pending_approval" | "approved" | "rejected" | "all";
+type StatusFilter = "pending_approval" | "approved" | "rejected" | "published" | "all";
+type BrandFilter = "all" | ContentPackItem["brand"];
 
 const STATUS_LABEL: Record<ContentPackItem["status"], string> = {
   pending_approval: "Pendiente",
   approved: "Aprobado",
   rejected: "Rechazado",
+  published: "Publicado",
 };
 
 const STATUS_STYLE: Record<ContentPackItem["status"], string> = {
   pending_approval: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   approved: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   rejected: "bg-red-500/15 text-red-400 border-red-500/30",
+  published: "bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
 };
 
 const KIND_LABEL: Record<ContentPackItem["kind"], string> = {
   video: "Video",
   carousel: "Carrusel",
   image: "Imagen",
+};
+
+const BRAND_LABEL: Record<ContentPackItem["brand"], string> = {
+  creapolis: "Creapolis",
+  pepinillo: "Pepinillo",
+  solennix: "Solennix",
+};
+
+const BRAND_STYLE: Record<ContentPackItem["brand"], string> = {
+  creapolis: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30",
+  pepinillo: "bg-lime-500/10 text-lime-300 border-lime-500/30",
+  solennix: "bg-violet-500/10 text-violet-300 border-violet-500/30",
 };
 
 const KindIcon: React.FC<{ kind: ContentPackItem["kind"] }> = ({ kind }) => {
@@ -73,6 +88,9 @@ const PackCard: React.FC<{
 
       <div className="p-4 flex flex-col gap-3 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
+          <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${BRAND_STYLE[pack.brand]}`}>
+            {BRAND_LABEL[pack.brand]}
+          </span>
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold rounded-md bg-zinc-800 text-zinc-300">
             <KindIcon kind={pack.kind} />
             {KIND_LABEL[pack.kind]}
@@ -80,6 +98,11 @@ const PackCard: React.FC<{
           <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${STATUS_STYLE[pack.status]}`}>
             {STATUS_LABEL[pack.status]}
           </span>
+          {pack.scheduledFor && (
+            <span className="text-[11px] text-zinc-500" title="Fecha para la que se planificó el post">
+              📅 {pack.scheduledFor}
+            </span>
+          )}
           {pack.downloadedAt && (
             <span className="text-[11px] text-zinc-500">descargado</span>
           )}
@@ -88,6 +111,16 @@ const PackCard: React.FC<{
         <div>
           <h3 className="text-sm font-semibold text-white leading-snug">{pack.topic}</h3>
           {pack.hook && <p className="text-xs text-cyan-400 mt-0.5">{pack.hook}</p>}
+          {pack.status === "published" && pack.externalPostUrl && (
+            <a
+              href={pack.externalPostUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-1 text-xs text-cyan-300 hover:underline"
+            >
+              Ver publicación en Instagram ↗
+            </a>
+          )}
         </div>
 
         <p className="text-xs text-zinc-400 leading-relaxed line-clamp-4 whitespace-pre-line">{pack.caption}</p>
@@ -162,6 +195,7 @@ export const ContentView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("pending_approval");
+  const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
 
   const loadPacks = useCallback(async () => {
     try {
@@ -242,9 +276,19 @@ export const ContentView: React.FC = () => {
   const FILTERS: Array<{ key: StatusFilter; label: string }> = [
     { key: "pending_approval", label: "Pendientes" },
     { key: "approved", label: "Aprobados" },
+    { key: "published", label: "Publicados" },
     { key: "rejected", label: "Rechazados" },
     { key: "all", label: "Todos" },
   ];
+
+  const BRAND_FILTERS: Array<{ key: BrandFilter; label: string }> = [
+    { key: "all", label: "Todas" },
+    { key: "creapolis", label: "Creapolis" },
+    { key: "pepinillo", label: "Pepinillo" },
+    { key: "solennix", label: "Solennix" },
+  ];
+
+  const visiblePacks = brandFilter === "all" ? packs : packs.filter((p) => p.brand === brandFilter);
 
   return (
     <div className="space-y-6">
@@ -252,10 +296,24 @@ export const ContentView: React.FC = () => {
         <div>
           <h2 className="text-lg font-bold text-white">Contenido</h2>
           <p className="text-xs text-zinc-500 mt-1">
-            Packs diarios del pipeline (video / carrusel / imagen): revisa, aprueba y descarga el ZIP para subirlo manualmente.
+            Packs diarios de las 3 marcas (carrusel / imagen / video): llegan a Telegram con botón
+            «Aprobar y publicar» en Instagram; aquí revisas el detalle, apruebas y descargas el ZIP.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
+            {BRAND_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setBrandFilter(f.key)}
+                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                  brandFilter === f.key ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
           <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
             {FILTERS.map((f) => (
               <button
@@ -283,13 +341,14 @@ export const ContentView: React.FC = () => {
         <div className="flex items-center justify-center py-16 text-zinc-500">
           <Loader2 className="w-6 h-6 animate-spin" />
         </div>
-      ) : packs.length === 0 ? (
+      ) : visiblePacks.length === 0 ? (
         <div className="text-center py-16 text-zinc-500 text-sm border border-dashed border-zinc-800 rounded-xl">
-          Sin packs {filter !== "all" ? "en este estado" : ""}. El pipeline de marketing los irá dejando aquí cada día.
+          Sin packs {filter !== "all" ? "en este estado" : ""}
+          {brandFilter !== "all" ? ` de ${BRAND_LABEL[brandFilter]}` : ""}. El pipeline los irá dejando aquí cada día.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {packs.map((pack) => (
+          {visiblePacks.map((pack) => (
             <PackCard
               key={pack.id}
               pack={pack}

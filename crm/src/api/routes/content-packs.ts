@@ -4,11 +4,13 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import {
+  PackPublishError,
   createContentPack,
   getPackCover,
   getPackZip,
   listContentPacks,
   markPackDownloaded,
+  publishContentPack,
   reviewContentPack,
 } from "../../domain/content-packs";
 
@@ -16,6 +18,7 @@ export const contentPacksRouter = new Hono<{ Variables: AuthContextVariables }>(
 
 const metaSchema = z.object({
   kind: z.enum(["video", "carousel", "image"]),
+  brand: z.enum(["creapolis", "pepinillo", "solennix"]).optional(),
   topic: z.string().min(3).max(200),
   hook: z.string().max(300).optional(),
   caption: z.string().min(1).max(8000),
@@ -35,11 +38,13 @@ const COVER_MIME_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
-// 1. List packs (optional ?status=pending_approval|approved|rejected)
+// 1. List packs (optional ?status=pending_approval|approved|rejected|published)
 contentPacksRouter.get("/", requireScope(["ops"]), async (c) => {
   const status = c.req.query("status");
   const packs = await listContentPacks(
-    status === "pending_approval" || status === "approved" || status === "rejected" ? status : undefined
+    status === "pending_approval" || status === "approved" || status === "rejected" || status === "published"
+      ? status
+      : undefined
   );
   return c.json({ packs });
 });
@@ -159,5 +164,21 @@ contentPacksRouter.get("/:id/cover", requireScope(["ops"]), async (c) => {
     });
   } catch {
     return c.json({ error: "Cover not found" }, 404);
+  }
+});
+
+// 6. Publish an approved pack to its brand's Instagram (the 1-click Telegram
+// button calls this same domain fn). Owner only.
+contentPacksRouter.post("/:id/publish", requireScope(["owner"]), async (c) => {
+  const id = c.req.param("id") ?? "";
+  try {
+    const result = await publishContentPack(id, c.get("actor"));
+    return c.json(result);
+  } catch (err) {
+    if (err instanceof PackPublishError) {
+      return c.json({ error: err.message }, err.status as 400 | 404 | 409 | 500);
+    }
+    // Meta/transport failures are upstream problems, not bad requests.
+    return c.json({ error: err instanceof Error ? err.message : "Publish failed" }, 502);
   }
 });

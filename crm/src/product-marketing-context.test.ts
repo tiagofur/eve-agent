@@ -18,11 +18,16 @@ describe("pickMarketingContext (grounding de marketing en docs de productos)", (
     expect(ctx?.markdown).toContain("## Ángulos de marketing");
   });
 
-  it("nunca devuelve docs tipo:pendiente", async () => {
-    // heapdeck/solennix solo aparecen en _pendientes.md (tipo: pendiente) —
-    // off-limits para marketing según docs/products/README.
-    const ctx = await pickMarketingContext("heapdeck solennix ordo");
+  it("nunca devuelve docs tipo:pendiente (y solennix ya es pública)", async () => {
+    // heapdeck/ordo siguen solo en _pendientes.md (tipo: pendiente) —
+    // off-limits para marketing según docs/products/README. Solennix tiene
+    // ficha propia desde 2026-11-11, así que ya debe ser detectable.
+    const ctx = await pickMarketingContext("heapdeck ordo");
     expect(ctx).toBeNull();
+
+    const solennix = await pickMarketingContext("solennix eventos cotizaciones");
+    expect(solennix?.slug).toBe("solennix");
+    expect(solennix?.markdown).toContain("## Ángulos de marketing");
   });
 
   it("devuelve null cuando ningún doc coincide (tema genérico)", async () => {

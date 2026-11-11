@@ -11,6 +11,7 @@ const pngDimensions = (png: Buffer) => ({
 
 const carouselSpec: PackRenderSpec = {
   topic: "Test carousel",
+  brand: "creapolis",
   slides: [
     { variant: "cover", kicker: "IA aplicada", title: "Portada de prueba", subtitle: "Subtítulo con acentos: páginas, solución" },
     {
@@ -59,14 +60,38 @@ describe("content-renderer (posts de imagen y carrusel)", () => {
     expect(withText.length).toBeGreaterThan(minimal.length);
   });
 
+  it("cada marca produce una identidad visual distinta (paletas + footer)", async () => {
+    const spec = { variant: "cover" as const, kicker: "marca", title: "Identidad de prueba" };
+    const pngs = await Promise.all(
+      (["creapolis", "pepinillo", "solennix"] as const).map((brand) => renderSlidePng(spec, 1, 1, brand))
+    );
+    for (const png of pngs) {
+      expect(png.subarray(0, 8).equals(PNG_MAGIC)).toBe(true);
+    }
+    // Distinct palettes/footer text → distinct bytes.
+    expect(new Set(pngs.map((p) => p.length)).size).toBe(3);
+    expect(new Set(pngs.map((p) => p.toString("hex"))).size).toBe(3);
+  });
+
+  it("marca desconocida cae al tema de creapolis", async () => {
+    const spec = { variant: "cover" as const, title: "Fallback" };
+    const fallback = await renderSlidePng(spec, 1, 1, "desconocida" as "creapolis");
+    const creapolis = await renderSlidePng(spec, 1, 1, "creapolis");
+    expect(fallback.equals(creapolis)).toBe(true);
+  });
+
   it("rechaza packs vacíos, >10 slides y slides inválidas", async () => {
-    await expect(renderPackPngs({ topic: "x", slides: [] })).rejects.toThrow(/at least 1/);
+    await expect(renderPackPngs({ topic: "x", brand: "creapolis", slides: [] })).rejects.toThrow(/at least 1/);
     await expect(
-      renderPackPngs({ topic: "x", slides: Array.from({ length: 11 }, () => ({ variant: "cover" as const, title: "t" })) })
+      renderPackPngs({
+        topic: "x",
+        brand: "creapolis",
+        slides: Array.from({ length: 11 }, () => ({ variant: "cover" as const, title: "t" })),
+      })
     ).rejects.toThrow(/10 slides/);
     await expect(
       // @ts-expect-error provocar slide sin title
-      renderPackPngs({ topic: "x", slides: [{ variant: "cover" }] })
+      renderPackPngs({ topic: "x", brand: "creapolis", slides: [{ variant: "cover" }] })
     ).rejects.toThrow(/invalid/);
   });
 });

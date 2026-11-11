@@ -132,7 +132,11 @@ export const contentPackStatusEnum = pgEnum("content_pack_status", [
   "pending_approval",
   "approved",
   "rejected",
+  "published",
 ]);
+
+/** Marcas con identidad propia y cuenta de Instagram de destino. */
+export const contentPackBrandEnum = pgEnum("content_pack_brand", ["creapolis", "pepinillo", "solennix"]);
 
 export type LeadStage = (typeof leadStageEnum.enumValues)[number];
 export type ChannelType = (typeof channelEnum.enumValues)[number];
@@ -152,6 +156,7 @@ export type SocialPlatform = (typeof socialPlatformEnum.enumValues)[number];
 export type SocialPostStatus = (typeof socialPostStatusEnum.enumValues)[number];
 export type ContentPackKind = (typeof contentPackKindEnum.enumValues)[number];
 export type ContentPackStatus = (typeof contentPackStatusEnum.enumValues)[number];
+export type ContentPackBrand = (typeof contentPackBrandEnum.enumValues)[number];
 export type ScheduleSource = (typeof scheduleSourceEnum.enumValues)[number];
 export type ScheduleRunStatus = (typeof scheduleRunStatusEnum.enumValues)[number];
 export type ScheduleRunTrigger = (typeof scheduleRunTriggerEnum.enumValues)[number];
@@ -581,6 +586,8 @@ export const contentPacks = pgTable(
   {
     id: id(),
     kind: contentPackKindEnum("kind").notNull(),
+    // Visual identity + destination Instagram account of the pack.
+    brand: contentPackBrandEnum("brand").notNull().default("creapolis"),
     topic: text("topic").notNull(),
     hook: text("hook"),
     caption: text("caption").notNull(),
@@ -591,15 +598,26 @@ export const contentPacks = pgTable(
     zipPath: text("zip_path").notNull(),
     coverPath: text("cover_path"),
     scheduledFor: date("scheduled_for"),
+    // Unguessable public identifier: Instagram fetches slide PNGs from
+    // /api/public/content/:publicId/slides/:index (no auth, by obscurity).
+    // The volatile default backfills existing rows with unique values.
+    publicId: text("public_id").notNull().default(sql`md5(random()::text)`),
     status: contentPackStatusEnum("status").notNull().default("pending_approval"),
     rejectedReason: text("rejected_reason"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     downloadedAt: timestamp("downloaded_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    externalPostId: text("external_post_id"),
+    externalPostUrl: text("external_post_url"),
     createdBy: text("created_by").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index("content_packs_status_idx").on(t.status), index("content_packs_created_idx").on(t.createdAt)],
+  (t) => [
+    index("content_packs_status_idx").on(t.status),
+    index("content_packs_created_idx").on(t.createdAt),
+    uniqueIndex("content_packs_public_id_uq").on(t.publicId),
+  ],
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
