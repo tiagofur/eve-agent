@@ -377,6 +377,8 @@ export interface TicketDetailsResponse {
 export interface ContentPackItem {
   id: string;
   kind: "video" | "carousel" | "image";
+  /** Identidad visual + cuenta de Instagram de destino del pack. */
+  brand: "creapolis" | "pepinillo" | "solennix";
   topic: string;
   hook: string | null;
   caption: string;
@@ -385,11 +387,13 @@ export interface ContentPackItem {
   platforms: string[];
   notes: string | null;
   scheduledFor: string | null;
-  status: "pending_approval" | "approved" | "rejected";
+  status: "pending_approval" | "approved" | "rejected" | "published";
   rejectedReason: string | null;
   hasCover: boolean;
   approvedAt: string | null;
   downloadedAt: string | null;
+  publishedAt: string | null;
+  externalPostUrl: string | null;
   createdBy: string;
   createdAt: string;
 }
@@ -732,7 +736,7 @@ export const crmApi = {
       method: "DELETE",
     }),
   getSocialPosts: () => request<{ posts: SocialPostItem[] }>("/api/marketing"),
-  getContentPacks: (status?: "pending_approval" | "approved" | "rejected") =>
+  getContentPacks: (status?: "pending_approval" | "approved" | "rejected" | "published") =>
     request<{ packs: ContentPackItem[] }>(
       `/api/content-packs${status ? `?status=${status}` : ""}`
     ),

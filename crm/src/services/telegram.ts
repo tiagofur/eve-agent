@@ -78,7 +78,8 @@ export async function sendTelegramMessage(
 export async function sendTelegramPhoto(
   photoBase64: string,
   caption: string,
-  inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>
+  inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>,
+  mime = "image/webp"
 ) {
   if (process.env.NODE_ENV !== "production") {
     console.log("[Telegram] photo send skipped (NODE_ENV !== production)");
@@ -88,10 +89,11 @@ export async function sendTelegramPhoto(
   if (!token || !adminChatId) return { ok: false };
 
   const buffer = Buffer.from(photoBase64, "base64");
-  const blob = new Blob([buffer], { type: "image/webp" });
+  const blob = new Blob([buffer], { type: mime });
   const formData = new FormData();
   formData.append("chat_id", adminChatId);
-  formData.append("photo", blob, "creative.webp");
+  const ext = mime.split("/")[1] ?? "webp";
+  formData.append("photo", blob, `creative.${ext}`);
   formData.append("caption", caption);
   formData.append("parse_mode", "HTML");
 
@@ -409,21 +411,52 @@ ${post.imagePrompt ? `<b>Prompt Visual (Nano Banana):</b>\n<code>${escapeHtml(po
 }
 
 /**
- * Nightly content-pipeline signal: a pack is waiting for review + manual
- * upload. Review/download happen in the Desktop "Contenido" tab (the ZIP
- * needs a human to upload it), so this is a plain notification — no buttons.
+ * Nightly content-pipeline signal: a pack is waiting for the owner's decision.
+ * One click on "Aprobar y publicar" reviews it AND publishes it to the
+ * brand's Instagram; "Aprobar solo" leaves it approved in the CRM (manual
+ * upload later, e.g. video packs or cross-posting).
  */
-export async function notifyContentPackCreated(packId: string, kind: string, topic: string) {
+export async function notifyContentPackCreated(
+  packId: string,
+  kind: string,
+  brand: string,
+  topic: string
+) {
   const kindLabel = kind === "video" ? "VIDEO" : kind === "carousel" ? "CARRUSEL" : "IMAGEN";
-  const text = `📦 <b>NUEVO PACK DE CONTENIDO (${kindLabel})</b>
-<i>Pipeline de marketing</i>
+  const brandLabel =
+    brand === "pepinillo" ? "Pepinillo" : brand === "solennix" ? "Solennix" : "Creapolis.Dev";
+  const publishable = kind !== "video";
+
+  const keyboard = publishable
+    ? [
+        [
+          { text: "✅ Aprobar y publicar (IG)", callback_data: `approve_publish_pack:${packId}` },
+          { text: "👁 Aprobar solo", callback_data: `approve_pack:${packId}` },
+        ],
+        [{ text: "❌ Rechazar", callback_data: `reject_pack:${packId}` }],
+      ]
+    : [[{ text: "👁 Aprobar solo", callback_data: `approve_pack:${packId}` }, { text: "❌ Rechazar", callback_data: `reject_pack:${packId}` }]];
+
+  const text = `📦 <b>NUEVO PACK (${kindLabel}) — ${escapeHtml(brandLabel)}</b>
+<i>Pipeline de contenido</i>
 
 <b>Tema:</b> ${escapeHtml(topic)}
+${publishable ? "Aprueba y publícalo en Instagram con un clic, o revisa los detalles en Desktop → Contenido." : "Los packs de video se descargan y suben manualmente (Desktop → Contenido)."}`;
 
-Listo para revisión en Desktop → pestaña <b>Contenido</b>:
-descarga el ZIP y súbelo manualmente a las plataformas.`;
+  // Cover preview when available (the designer renders slide 1 as cover).
+  try {
+    const { getPackCover } = await import("../domain/content-packs");
+    const { readFile } = await import("node:fs/promises");
+    const cover = await getPackCover(packId);
+    if (cover) {
+      const data = await readFile(cover.absolutePath);
+      return await sendTelegramPhoto(data.toString("base64"), text, keyboard, "image/png");
+    }
+  } catch (err) {
+    console.error("[Telegram] Cover preview failed, falling back to text:", err);
+  }
 
-  return await sendTelegramMessage(text, undefined, "HTML");
+  return await sendTelegramMessage(text, keyboard, "HTML");
 }
 
 let isPolling = false;
@@ -698,6 +731,88 @@ export async function startTelegramPolling() {
                   );
                 } else {
                   await answerCallbackQuery(cq.id, "Error al rechazar.");
+                }
+              } else if (cqData.startsWith("approve_publish_pack:")) {
+                const packId = cqData.replace("approve_publish_pack:", "");
+                const { reviewContentPack, publishContentPack } = await import("../domain/content-packs");
+                const originalContent = msg.text || msg.caption || "";
+                const hasPhoto = !!msg.photo;
+
+                // Approve first; a double click on the button must not fail
+                // the publish (reviewContentPack throws on "already reviewed").
+                try {
+                  await reviewContentPack({ packId, decision: "approved", actor: "telegram_admin" });
+                } catch (err) {
+                  if (!/already reviewed/.test(String((err as Error).message))) throw err;
+                }
+
+                await answerCallbackQuery(cq.id, "🚀 Publicando en Instagram...");
+                await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                try {
+                  const pub = await publishContentPack(packId, "telegram_admin");
+                  const url = pub.pack.externalPostUrl ?? "";
+                  await editTelegramMessage(
+                    msg.message_id,
+                    msg.chat.id,
+                    `${originalContent}\n\n🚀 <b>¡PUBLICADO EN INSTAGRAM!</b>${url ? `\n🔗 <a href="${url}">Ver publicación</a>` : ""}`,
+                    undefined,
+                    "HTML",
+                    hasPhoto
+                  );
+                } catch (publishErr: any) {
+                  console.error("Instagram pack publish error after approval:", publishErr);
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  await editTelegramMessage(
+                    msg.message_id,
+                    msg.chat.id,
+                    `${originalContent}\n\n⚠️ <b>Aprobado en CRM, pero falló la publicación en Instagram:</b> ${escapeHtml(publishErr.message)}`,
+                    undefined,
+                    "HTML",
+                    hasPhoto
+                  );
+                }
+              } else if (cqData.startsWith("approve_pack:")) {
+                const packId = cqData.replace("approve_pack:", "");
+                const { reviewContentPack } = await import("../domain/content-packs");
+                const originalContent = msg.text || msg.caption || "";
+                try {
+                  await reviewContentPack({ packId, decision: "approved", actor: "telegram_admin" });
+                  await answerCallbackQuery(cq.id, "👁 Aprobado (sin publicar).");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  await editTelegramMessage(
+                    msg.message_id,
+                    msg.chat.id,
+                    `${originalContent}\n\n👁 <b>Aprobado sin publicar a las ${new Date().toLocaleTimeString()}</b> — publique desde Desktop o el botón de otro dispositivo.`,
+                    undefined,
+                    "HTML",
+                    !!msg.photo
+                  );
+                } catch (err) {
+                  await answerCallbackQuery(cq.id, `⚠️ ${(err as Error).message.slice(0, 180)}`);
+                }
+              } else if (cqData.startsWith("reject_pack:")) {
+                const packId = cqData.replace("reject_pack:", "");
+                const { reviewContentPack } = await import("../domain/content-packs");
+                const originalContent = msg.text || msg.caption || "";
+                try {
+                  await reviewContentPack({
+                    packId,
+                    decision: "rejected",
+                    rejectedReason: "Rechazado desde Telegram",
+                    actor: "telegram_admin",
+                  });
+                  await answerCallbackQuery(cq.id, "❌ Pack rechazado.");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  await editTelegramMessage(
+                    msg.message_id,
+                    msg.chat.id,
+                    `${originalContent}\n\n❌ <b>Rechazado vía Telegram a las ${new Date().toLocaleTimeString()}</b>`,
+                    undefined,
+                    "HTML",
+                    !!msg.photo
+                  );
+                } catch (err) {
+                  await answerCallbackQuery(cq.id, `⚠️ ${(err as Error).message.slice(0, 180)}`);
                 }
               }
             }

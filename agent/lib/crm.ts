@@ -871,6 +871,8 @@ export async function crmGetProductDoc(slug: string): Promise<{ meta: CrmProduct
 export interface CrmContentPackUpload {
   meta: {
     kind: "video" | "carousel" | "image";
+    /** Visual identity + destination account of the pack. */
+    brand?: "creapolis" | "pepinillo" | "solennix";
     topic: string;
     hook?: string;
     caption: string;

@@ -5,6 +5,7 @@ import { crmUploadContentPack } from "../lib/crm";
 import {
   MAX_SLIDES,
   renderPackPngs,
+  type Brand,
   type PackRenderSpec,
   type SlideSpec,
 } from "../lib/content-renderer";
@@ -43,9 +44,13 @@ async function buildZip(entries: Array<{ name: string; data: Buffer }>): Promise
 
 export default defineTool({
   description:
-    "Render branded slides (1080x1350 PNG) for a content pack, bundle them with per-platform captions into a ZIP and upload it to the CRM. The pack lands as pending_approval for the owner — this never publishes anything. Use after writing the copy, grounded in search_product_docs and/or fetch_ai_news.",
+    "Render brand-themed slides (1080x1350 PNG) for a content pack, bundle them with per-platform captions into a ZIP and upload it to the CRM. The pack lands as pending_approval for the owner — this never publishes anything (the owner approves+publishes from Telegram). Use after writing the copy, grounded in search_product_docs and/or fetch_ai_news. Set `brand` so the visual identity matches the destination account.",
   inputSchema: z.object({
     kind: z.enum(["carousel", "image"]),
+    brand: z
+      .enum(["creapolis", "pepinillo", "solennix"])
+      .default("creapolis")
+      .describe("Visual identity + destination account of the pack"),
     topic: z.string().min(3).max(200),
     hook: z.string().max(300).optional().describe("The scroll-stopper line, shown in the desktop card"),
     caption: z.string().min(1).max(4000).describe("Main caption (Spanish, hook first, CTA at the end)"),
@@ -70,7 +75,11 @@ export default defineTool({
     }
 
     try {
-      const spec: PackRenderSpec = { topic: input.topic, slides: input.slides as SlideSpec[] };
+      const spec: PackRenderSpec = {
+        topic: input.topic,
+        brand: input.brand as Brand,
+        slides: input.slides as SlideSpec[],
+      };
       const pngs = await renderPackPngs(spec);
 
       const entries: Array<{ name: string; data: Buffer }> = pngs.map((png, i) => ({
@@ -100,6 +109,7 @@ export default defineTool({
       const result = await crmUploadContentPack({
         meta: {
           kind: input.kind,
+          brand: input.brand,
           topic: input.topic,
           hook: input.hook,
           caption: input.caption,

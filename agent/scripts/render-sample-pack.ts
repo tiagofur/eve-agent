@@ -32,6 +32,7 @@ async function buildZip(entries: Array<{ name: string; data: Buffer }>): Promise
 
 const newsPack: PackRenderSpec = {
   topic: "Agentes de IA que operan negocios reales (muestra QA)",
+  brand: "creapolis",
   slides: [
     {
       variant: "cover",
@@ -88,6 +89,8 @@ const newsPack: PackRenderSpec = {
 
 const servicePack: PackRenderSpec = {
   topic: "Automatización con aprobación humana (muestra QA)",
+  // Segunda marca a propósito: QA también ejercita la paleta pepinillo.
+  brand: "pepinillo",
   slides: [
     {
       variant: "cover",
@@ -139,6 +142,7 @@ async function produce(name: string, spec: PackRenderSpec, extra: Record<string,
   const result = await crmUploadContentPack({
     meta: {
       kind: "carousel",
+      brand: spec.brand,
       topic: spec.topic,
       hook: spec.slides[0]?.title,
       caption:

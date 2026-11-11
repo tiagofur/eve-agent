@@ -17,6 +17,7 @@ import { contentPacksRouter } from "./api/routes/content-packs";
 import { productsRouter } from "./api/routes/products";
 import { schedulesRouter } from "./api/routes/schedules";
 import { publicChatRouter } from "./api/routes/public-chat";
+import { publicContentRouter } from "./api/routes/public-content";
 
 export const app = new Hono();
 
@@ -62,4 +63,5 @@ app.route("/api/content-packs", contentPacksRouter);
 app.route("/api/products", productsRouter);
 app.route("/api/schedules", schedulesRouter);
 app.route("/api/public/chat", publicChatRouter);
+app.route("/api/public/content", publicContentRouter);
 
