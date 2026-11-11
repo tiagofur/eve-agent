@@ -27,6 +27,7 @@ const REPORT_TYPES: ReportType[] = [
   { key: "intel", label: "Brief IA", badgeClass: "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" },
   { key: "strategist", label: "Plan editorial", badgeClass: "bg-violet-500/10 text-violet-300 border-violet-500/30" },
   { key: "analyst", label: "Operación", badgeClass: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" },
+  { key: "metrics", label: "Métricas", badgeClass: "bg-sky-500/10 text-sky-300 border-sky-500/30" },
   { key: "other", label: "Otro", badgeClass: "bg-zinc-800 text-zinc-300 border-zinc-700" },
 ];
 

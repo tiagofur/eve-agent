@@ -7,6 +7,7 @@ import { ensureDefaultApiKeys } from "./auth/keys";
 import { startTelegramPolling } from "./services/telegram";
 import { startFollowupDigest } from "./services/followup-digest";
 import { startScheduleDispatcher } from "./services/schedule-dispatcher";
+import { startMetricsCollector } from "./services/metrics-collector";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -32,6 +33,7 @@ async function start() {
       startTelegramPolling();
       startFollowupDigest();
       startScheduleDispatcher();
+      startMetricsCollector();
     }
   );
 }

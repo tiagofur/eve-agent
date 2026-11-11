@@ -162,6 +162,13 @@
       "when": 1794415566069,
       "tag": "0022_absent_swarm",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794418238430,
+      "tag": "0023_small_mariko_yashida",
+      "breakpoints": true
     }
   ]
 }

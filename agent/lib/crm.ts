@@ -1035,3 +1035,30 @@ export async function crmDeleteSchedule(data: {
   }
   return (await res.json()) as { success: boolean };
 }
+
+/* ------------------------------------------------------------------ */
+/* Product metrics (daily collector snapshots)                         */
+/* ------------------------------------------------------------------ */
+
+export interface ProductMetricSnapshot {
+  app: string;
+  metricDate: string;
+  metrics: Record<string, unknown>;
+  collectedAt: string;
+}
+
+/** Latest snapshot per app (or one app with ?app=). */
+export async function crmGetProductMetrics(
+  app?: string
+): Promise<{ metrics: ProductMetricSnapshot[] }> {
+  const url = new URL(`${getCrmUrl()}/api/metrics/latest`);
+  if (app) url.searchParams.set("app", app);
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${getOpsKey()}` },
+  });
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM product metrics fetch failed (${res.status}): ${errorText}`);
+  }
+  return (await res.json()) as { metrics: ProductMetricSnapshot[] };
+}
