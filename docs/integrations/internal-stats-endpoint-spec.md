@@ -77,5 +77,15 @@ landings, el owner curá qué paths son públicos vía `METRICS_PUBLIC_KEYS`
   `backend/internal/handlers/internal_stats_handler.go`: shape exacto de esta spec, token con
   comparación constant-time, 404 si `METRICS_SOLENNIX_TOKEN` no está seteado, 405 a no-GET,
   counts con timeout 2s y cache de 5 min. Revisión cruzada: ✓ conforme. Falta: deploy del
-  backend y setear el token en su env del VPS.
-- **Pepinillo** — pendiente de backend (telemetría opt-in, fase 2).
+  backend y setear el token en su env del VPS. URL: `https://api.solennix.com/internal/stats`.
+- **Pepinillo** — implementado (2026-11-12, trabajo sin commitear al momento de la revisión)
+  en `pepinillo_nativo/backend` (Fiber): opt-in real por usuario (`users.metrics_opt_in`,
+  migración 000016, default false), middleware fail-closed (token vacío = siempre 401),
+  actividad = sesión iniciada o tarea tocada en la ventana, minutos = segundos de fases
+  no-break / 60. Revisión cruzada: ✓ conforme. **Decisión de conteo ratificada:** conteos de
+  CUENTA (`users.total`, `new30d`) sobre TODAS las cuentas (hechos de negocio, como
+  events/clients en Solennix); telemetría de USO (`active7d/30d`, `sessions`, `focusMinutes`,
+  `breakMinutes`, `tasks`) solo opt-in hasta que exista la UI de consentimiento (fase 2).
+  Falta: judgment-day (obligatorio por su AGENTS.md: toca auth/migraciones/contracts),
+  resolver la suite completa colgada, commitar/PR, deploy y token en el VPS.
+  URL: `https://api.ppn.creapolis.dev/internal/stats`.
