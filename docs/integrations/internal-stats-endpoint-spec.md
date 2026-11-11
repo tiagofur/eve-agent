@@ -60,10 +60,22 @@ Authorization: Bearer <METRICS_<APP>_TOKEN>
 ## Configuración (lado CRM, se setea cuando el endpoint exista)
 
 ```bash
-METRICS_SOLENNIX_URL=https://solennix.com/internal/stats
+METRICS_SOLENNIX_URL=https://api.solennix.com/internal/stats
 METRICS_SOLENNIX_TOKEN=<token-opaco-generado>
 ```
 
-El token se genera una vez y se comparte solo por canal seguro. Para exponer números en
+**Usar el host del backend** (`api.solennix.com` — apunta directo al backend:8080), NO el
+dominio del SPA: `solennix.com/internal/stats` cae al `index.html` del frontend (nginx del
+SPA sin ruta `/internal/`) y el collector recibiría HTML, no JSON. El token se genera una vez
+(`openssl rand -hex 32`) y se comparte solo por canal seguro. Para exponer números en
 landings, el owner curá qué paths son públicos vía `METRICS_PUBLIC_KEYS`
 (p. ej. `solennix.users.total`) — **nada es público por defecto**.
+
+### Estado de implementación por app
+
+- **Solennix** — implementado (2026-11-12) por el agente de la app en
+  `backend/internal/handlers/internal_stats_handler.go`: shape exacto de esta spec, token con
+  comparación constant-time, 404 si `METRICS_SOLENNIX_TOKEN` no está seteado, 405 a no-GET,
+  counts con timeout 2s y cache de 5 min. Revisión cruzada: ✓ conforme. Falta: deploy del
+  backend y setear el token en su env del VPS.
+- **Pepinillo** — pendiente de backend (telemetría opt-in, fase 2).
