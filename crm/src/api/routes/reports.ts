@@ -59,6 +59,36 @@ reportsRouter.get("/analyst", requireScope(["ops"]), async (c) => {
   return c.json({ reports });
 });
 
+// Owner triage (Mission Control "Reportes"): unread count for the sidebar
+// badge. A report is unread while read_at is NULL.
+reportsRouter.get("/analyst/unread-count", requireScope(["ops"]), async (c) => {
+  const [row] = await db
+    .select({ unread: count() })
+    .from(analystReports)
+    .where(sql`${analystReports.readAt} IS NULL`);
+  return c.json({ unread: row?.unread ?? 0 });
+});
+
+// Mark one report read/unread (the desktop auto-marks on open).
+reportsRouter.post(
+  "/analyst/:id/read",
+  requireScope(["ops"]),
+  zValidator("json", z.object({ read: z.boolean() })),
+  async (c) => {
+    const id = c.req.param("id");
+    const { read } = c.req.valid("json");
+
+    const [updated] = await db
+      .update(analystReports)
+      .set({ readAt: read ? new Date() : null })
+      .where(eq(analystReports.id, id))
+      .returning();
+    if (!updated) return c.json({ error: "Report not found" }, 404);
+
+    return c.json({ success: true, readAt: updated.readAt?.toISOString() ?? null });
+  }
+);
+
 reportsRouter.get("/funnel", requireScope(["ops"]), async (c) => {
   // Aggregate count of leads grouped by stage
   const rows = await db

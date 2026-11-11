@@ -849,6 +849,17 @@ export const crmApi = {
     }),
   getScheduleRuns: (id: string) =>
     request<{ runs: ScheduleRunItem[] }>(`/api/schedules/${id}/runs`),
+  /* ---- Reportes (analyst reports) ---- */
+  getAnalystReports: (limit = 100) =>
+    request<{ reports: AnalystReportItem[] }>(`/api/reports/analyst?limit=${limit}`),
+  getUnreadReportCount: () =>
+    request<{ unread: number }>("/api/reports/analyst/unread-count"),
+  /** Marca leído/no leído (la vista auto-marca al abrir). */
+  markReportRead: (id: string, read: boolean) =>
+    request<{ success: boolean; readAt: string | null }>(`/api/reports/analyst/${id}/read`, {
+      method: "POST",
+      body: JSON.stringify({ read }),
+    }),
 };
 
 export interface ChatMessage {
@@ -925,6 +936,19 @@ export interface ScheduleItem {
   createdAt: string;
   updatedAt: string;
   lastRun: ScheduleRunItem | null;
+}
+
+/** Reporte markdown del agente (brief de IA, plan editorial, operación…). */
+export interface AnalystReportItem {
+  id: string;
+  periodStart: string | null;
+  periodEnd: string | null;
+  summary: string;
+  metrics: Record<string, unknown>;
+  createdBy: string;
+  /** Null = sin leer (triage del owner en la vista Reportes). */
+  readAt: string | null;
+  createdAt: string;
 }
 
 
