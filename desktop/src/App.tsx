@@ -14,6 +14,7 @@ import {
   Layers,
   HandCoins,
   CalendarClock,
+  Newspaper,
   Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
@@ -27,10 +28,11 @@ import { ChatView } from "./views/ChatView";
 import { MarketingView } from "./views/MarketingView";
 import { ContentView } from "./views/ContentView";
 import { SchedulesView } from "./views/SchedulesView";
+import { ReportsView } from "./views/ReportsView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "programadas" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "programadas" | "reportes" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
 
 const apiHost = (() => {
   try {
@@ -44,6 +46,7 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
+  const [unreadReportsCount, setUnreadReportsCount] = useState<number>(0);
   const [chatPrompt, setChatPrompt] = useState<{ id: number; text: string } | null>(null);
   const [showConnection, setShowConnection] = useState(false);
 
@@ -56,8 +59,12 @@ export const App: React.FC = () => {
     try {
       await crmApi.getHealth();
       setBackendOnline(true);
-      const draftsRes = await crmApi.getPendingDrafts();
+      const [draftsRes, unreadRes] = await Promise.all([
+        crmApi.getPendingDrafts(),
+        crmApi.getUnreadReportCount().catch(() => null),
+      ]);
       setPendingDraftsCount(draftsRes.drafts.length);
+      if (unreadRes) setUnreadReportsCount(unreadRes.unread);
     } catch {
       setBackendOnline(false);
     }
@@ -127,6 +134,25 @@ export const App: React.FC = () => {
             >
               <CalendarClock className="w-4 h-4 text-violet-400" />
               <span>Programadas</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("reportes")}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "reportes"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Newspaper className="w-4 h-4 text-amber-400" />
+                <span>Reportes</span>
+              </div>
+              {unreadReportsCount > 0 && (
+                <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-sky-500 text-black">
+                  {unreadReportsCount}
+                </span>
+              )}
             </button>
 
             <button
@@ -290,6 +316,7 @@ export const App: React.FC = () => {
             <ChatView externalPrompt={chatPrompt} onPromptConsumed={() => setChatPrompt(null)} />
           )}
           {activeTab === "programadas" && <SchedulesView onAskOrchestrator={askOrchestrator} />}
+          {activeTab === "reportes" && <ReportsView />}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}

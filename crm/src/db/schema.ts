@@ -652,6 +652,8 @@ export const analystReports = pgTable("analyst_reports", {
   // Frozen metrics snapshot the briefing was grounded in (conversions, stocks).
   metrics: jsonb("metrics").notNull().default({}),
   createdBy: text("created_by").notNull(),
+  // Owner triage (Mission Control "Reportes"): when the owner read it.
+  readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
