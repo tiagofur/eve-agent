@@ -642,6 +642,27 @@ export const estimates = pgTable("estimates", {
   createdAt: createdAt(),
 });
 
+/**
+ * Daily product/VPS metrics snapshots collected by the CRM (metrics-collector).
+ * One row per app per day (upsert idempotente): apps externas (solennix,
+ * pepinillo) via their internal-stats endpoints, and VPS health measured from
+ * the container. The landing/public surface exposes only curated keys.
+ */
+export const productMetricsDaily = pgTable(
+  "product_metrics_daily",
+  {
+    id: id(),
+    metricDate: date("metric_date").notNull(),
+    // solennix | pepinillo | vps | <future apps>
+    app: text("app").notNull(),
+    // Aggregate-only snapshot as returned by the app's internal stats (or the
+    // VPS collector); no PII per docs/integrations/internal-stats-endpoint-spec.
+    metrics: jsonb("metrics").notNull(),
+    collectedAt: timestamp("collected_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("product_metrics_date_app_uq").on(t.metricDate, t.app)],
+);
+
 export const analystReports = pgTable("analyst_reports", {
   id: id(),
   // Optional analysis window the report covers; null = snapshot "as of now".
