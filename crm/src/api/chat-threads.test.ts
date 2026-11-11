@@ -63,7 +63,14 @@ describe("Chat threads API", () => {
     expect(list.status).toBe(200);
     const { threads } = await list.json();
     expect(threads.length).toBeGreaterThanOrEqual(2);
-    expect(threads[0].id).toBe(createdThreadIds[createdThreadIds.length - 1]);
+    // Orden RELATIVO entre los dos threads de este test: el listado es global
+    // (DB compartida con workers paralelos) y otro test puede tocar
+    // updated_at entre el create y el list — el orden absoluto de la posición
+    // 0 es flaky, el relativo no.
+    const newestIdx = threads.findIndex((t: { id: string }) => t.id === createdThreadIds[createdThreadIds.length - 1]);
+    const oldestIdx = threads.findIndex((t: { id: string }) => t.id === createdThreadIds[0]);
+    expect(newestIdx).toBeGreaterThanOrEqual(0);
+    expect(oldestIdx).toBeGreaterThan(newestIdx);
 
     const one = await app.request(`/api/chat/threads/${createdThreadIds[0]}`, { headers: auth });
     expect(one.status).toBe(200);
