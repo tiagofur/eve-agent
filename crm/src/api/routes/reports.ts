@@ -7,6 +7,7 @@ import { leads, tickets, outbox, organizations, contacts, analystReports } from 
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { FUNNEL_STAGES } from "../../domain/lead-stages";
 import { getConversions } from "../../domain/conversions";
+import { getUnansweredReplies } from "../../domain/inbound-email";
 
 export const reportsRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -254,10 +255,20 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
     .where(sql`${leads.nextFollowUpAt} IS NOT NULL AND ${leads.nextFollowUpAt} > ${now} AND ${leads.stage} != 'lost'`)
     .orderBy(asc(leads.nextFollowUpAt));
 
+  // Who is waiting on US: an unanswered inbound message changes the right
+  // move from "nudge" to "answer what they said".
+  const replies = await getUnansweredReplies([
+    ...overdueLeads.map((l) => l.contactId ?? ""),
+    ...overdueTickets.map((t) => t.contactId ?? ""),
+    ...overdueContacts.map((ct) => ct.id),
+    ...upcomingLeads.map((l) => l.contactId ?? ""),
+  ]);
+  const replyOf = (contactId: string | null) => (contactId ? (replies.get(contactId) ?? null) : null);
+
   return c.json({
     overdue: [
-      ...overdueLeads.map((l) => ({ kind: "lead" as const, ...l })),
-      ...overdueTickets.map((t) => ({ kind: "ticket" as const, ...t })),
+      ...overdueLeads.map((l) => ({ kind: "lead" as const, ...l, unansweredReply: replyOf(l.contactId) })),
+      ...overdueTickets.map((t) => ({ kind: "ticket" as const, ...t, unansweredReply: replyOf(t.contactId) })),
       ...overdueOrgs.map((o) => ({
         kind: "organization" as const,
         id: o.id,
@@ -267,6 +278,7 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
         nextFollowUpAt: o.nextFollowUpAt,
         followUpNote: o.followUpNote,
         stage: null as string | null,
+        unansweredReply: null,
       })),
       ...overdueContacts.map((ct) => ({
         kind: "contact" as const,
@@ -277,8 +289,9 @@ reportsRouter.get("/followups", requireScope(["ops"]), async (c) => {
         nextFollowUpAt: ct.nextFollowUpAt,
         followUpNote: ct.followUpNote,
         stage: null as string | null,
+        unansweredReply: replyOf(ct.id),
       })),
     ],
-    upcoming: upcomingLeads.map((l) => ({ kind: "lead" as const, ...l })),
+    upcoming: upcomingLeads.map((l) => ({ kind: "lead" as const, ...l, unansweredReply: replyOf(l.contactId) })),
   });
 });

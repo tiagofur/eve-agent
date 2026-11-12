@@ -271,6 +271,11 @@ export interface FollowUpQueueItem {
   nextFollowUpAt: string;
   followUpNote: string | null;
   stage: string | null;
+  /**
+   * Set when this person's latest message is an inbound one we have not
+   * answered: they are waiting on us. Untrusted external text.
+   */
+  unansweredReply?: { at: string; channel: string; excerpt: string } | null;
 }
 
 export async function crmGetFollowups() {
