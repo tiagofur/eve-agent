@@ -1,15 +1,161 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { sql, eq, count, asc, desc } from "drizzle-orm";
+import { and, inArray, sql, eq, count, asc, desc, gte, isNull, isNotNull } from "drizzle-orm";
 import { db } from "../../db/client";
-import { leads, tickets, outbox, organizations, contacts, analystReports } from "../../db/schema";
+import {
+  leads,
+  tickets,
+  outbox,
+  organizations,
+  contacts,
+  analystReports,
+  projects,
+  tasks,
+  milestones,
+} from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { FUNNEL_STAGES } from "../../domain/lead-stages";
 import { getConversions } from "../../domain/conversions";
 import { getUnansweredReplies } from "../../domain/inbound-email";
+import { getContactsForOrganizations } from "../../domain/billing";
 
 export const reportsRouter = new Hono<{ Variables: AuthContextVariables }>();
+
+/** ISO-8601 week tag ("2026-W46"): the weekly report's dedup key. */
+export function isoWeekTag(date: Date = new Date()): string {
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// Per-project activity for the reporter subagent: only CRM facts from the
+// window, with evidence. The report draft (and its approval) happens in the
+// agent; this endpoint never writes anything.
+reportsRouter.get("/weekly", requireScope(["ops"]), async (c) => {
+  const days = Math.min(Math.max(Number.parseInt(c.req.query("days") ?? "7", 10) || 7, 1), 31);
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  const openProjects = await db
+    .select({
+      id: projects.id,
+      name: projects.name,
+      status: projects.status,
+      organizationId: projects.organizationId,
+      organizationName: organizations.name,
+    })
+    .from(projects)
+    .leftJoin(organizations, eq(projects.organizationId, organizations.id))
+    .where(
+      sql`${projects.status} IN ('onboarding', 'active', 'paused', 'delivered')`
+    )
+    .orderBy(asc(projects.name));
+
+  const ids = openProjects.map((p) => p.id);
+
+  const [doneTasks, inFlightTasks, doneMilestones, upcomingMilestones, resolvedTickets, openTickets] =
+    ids.length > 0
+      ? await Promise.all([
+          db
+            .select({
+              projectId: tasks.projectId,
+              title: tasks.title,
+              prUrl: tasks.prUrl,
+              resultSummary: tasks.resultSummary,
+              updatedAt: tasks.updatedAt,
+            })
+            .from(tasks)
+            .where(and(inArray(tasks.projectId, ids), eq(tasks.status, "done"), gte(tasks.updatedAt, since)))
+            .orderBy(desc(tasks.updatedAt))
+            .limit(100),
+          db
+            .select({ projectId: tasks.projectId, title: tasks.title, status: tasks.status, updatedAt: tasks.updatedAt })
+            .from(tasks)
+            .where(
+              and(inArray(tasks.projectId, ids), inArray(tasks.status, ["ready", "dispatched", "in_progress", "in_review", "blocked"]))
+            )
+            .orderBy(desc(tasks.updatedAt))
+            .limit(100),
+          db
+            .select({ projectId: milestones.projectId, title: milestones.title, doneAt: milestones.doneAt })
+            .from(milestones)
+            .where(and(inArray(milestones.projectId, ids), isNotNull(milestones.doneAt), gte(milestones.doneAt, since))),
+          db
+            .select({ projectId: milestones.projectId, title: milestones.title, dueDate: milestones.dueDate })
+            .from(milestones)
+            .where(and(inArray(milestones.projectId, ids), isNull(milestones.doneAt), isNotNull(milestones.dueDate)))
+            .orderBy(asc(milestones.dueDate))
+            .limit(60),
+          db
+            .select({
+              projectId: tickets.projectId,
+              system: tickets.system,
+              severity: tickets.severity,
+              description: tickets.description,
+              resolvedAt: tickets.resolvedAt,
+            })
+            .from(tickets)
+            .where(and(inArray(tickets.projectId, ids), eq(tickets.status, "resolved"), gte(tickets.resolvedAt, since)))
+            .orderBy(desc(tickets.resolvedAt)),
+          db
+            .select({ projectId: tickets.projectId, value: count(tickets.id) })
+            .from(tickets)
+            .where(and(inArray(tickets.projectId, ids), inArray(tickets.status, ["open", "in_progress", "waiting_client"])))
+            .groupBy(tickets.projectId),
+        ])
+      : [[], [], [], [], [], []];
+
+  const openTicketCount = new Map(openTickets.map((r) => [r.projectId, Number(r.value)]));
+
+  const weekTag = isoWeekTag();
+  // Projects whose THIS-week report draft already awaits approval: the tool
+  // refuses a second one mechanically, the owner reviews the pending draft.
+  const pendingReportRows = await db
+    .select({ projectId: sql<string>`${outbox.metadata}->>'projectId'` })
+    .from(outbox)
+    .where(and(eq(outbox.status, "pending_approval"), sql`${outbox.metadata}->>'reportWeek' = ${weekTag}`));
+  const pendingReportProjects = new Set(pendingReportRows.map((r) => r.projectId));
+
+  const projectReports = openProjects.map((p) => ({
+    projectId: p.id,
+    projectName: p.name,
+    status: p.status,
+    organizationId: p.organizationId,
+    organizationName: p.organizationName,
+    pendingReport: pendingReportProjects.has(p.id),
+    completedTasks: doneTasks
+      .filter((t) => t.projectId === p.id)
+      .map((t) => ({ title: t.title, prUrl: t.prUrl, resultSummary: t.resultSummary, completedAt: t.updatedAt.toISOString() })),
+    inFlightTasks: inFlightTasks
+      .filter((t) => t.projectId === p.id)
+      .map((t) => ({ title: t.title, status: t.status })),
+    milestonesCompleted: doneMilestones
+      .filter((m) => m.projectId === p.id)
+      .map((m) => ({ title: m.title, doneAt: m.doneAt!.toISOString() })),
+    milestonesUpcoming: upcomingMilestones
+      .filter((m) => m.projectId === p.id)
+      .slice(0, 3)
+      .map((m) => ({ title: m.title, dueDate: m.dueDate! })),
+    resolvedTickets: resolvedTickets
+      .filter((t) => t.projectId === p.id)
+      .map((t) => ({ system: t.system, severity: t.severity, description: t.description, resolvedAt: t.resolvedAt!.toISOString() })),
+    openTickets: openTicketCount.get(p.id) ?? 0,
+  }));
+
+  const contactsByOrganization = await getContactsForOrganizations(
+    projectReports.map((p) => p.organizationId)
+  );
+
+  return c.json({
+    weekTag,
+    window: { days, since: since.toISOString(), until: new Date().toISOString() },
+    projects: projectReports,
+    contactsByOrganization,
+  });
+});
 
 // Honest funnel analytics (S1): edges, rates, time-in-stage and loss
 // reasons computed from the transition history of live leads — never from
