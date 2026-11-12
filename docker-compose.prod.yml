@@ -84,6 +84,10 @@ services:
       - META_INSTAGRAM_ACCOUNT_ID=${META_INSTAGRAM_ACCOUNT_ID}
       - SEARCH_PROVIDER=${SEARCH_PROVIDER}
       - SEARCH_API_KEY=${SEARCH_API_KEY}
+      # Envío real del outbox por email: vacío = cola manual (no se envía nada).
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - OUTBOX_EMAIL_FROM=${OUTBOX_EMAIL_FROM:-}
+      - OUTBOX_EMAIL_REPLY_TO=${OUTBOX_EMAIL_REPLY_TO:-}
       - WORKER_LOG_ROOT=/data/worker/runs
       - CONTENT_DIR=/data/content-packs
     volumes:

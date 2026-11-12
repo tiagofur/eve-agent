@@ -1,11 +1,16 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { db } from "../../db/client";
 import { outbox, contacts, leads, organizations } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
-import { createOutreachDraft, reviewOutreachDraft, markDraftSent } from "../../domain/outbox";
+import {
+  createOutreachDraft,
+  reviewOutreachDraft,
+  markDraftSent,
+  deliverApprovedDraft,
+} from "../../domain/outbox";
 
 export const outboxRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -75,8 +80,9 @@ outboxRouter.get("/pending", requireScope(["ops"]), async (c) => {
   return c.json({ drafts: pending });
 });
 
-// List approved drafts awaiting manual send (the copy-paste queue): includes
-// the originating ticket so the owner knows what each notification closes.
+// List approved drafts awaiting manual send (the copy-paste queue) plus the
+// ones whose automated delivery failed: includes the originating ticket so
+// the owner knows what each notification closes.
 outboxRouter.get("/approved", requireScope(["ops"]), async (c) => {
   const approved = await db
     .select({
@@ -97,7 +103,7 @@ outboxRouter.get("/approved", requireScope(["ops"]), async (c) => {
     .from(outbox)
     .leftJoin(contacts, eq(outbox.contactId, contacts.id))
     .leftJoin(organizations, eq(outbox.organizationId, organizations.id))
-    .where(eq(outbox.status, "approved"))
+    .where(inArray(outbox.status, ["approved", "failed"]))
     .orderBy(desc(outbox.approvedAt));
 
   return c.json({ drafts: approved });
@@ -130,9 +136,28 @@ outboxRouter.post(
       return c.json({ error: result.message, code: result.code }, 400);
     }
 
-    return c.json({ success: true, draft: result.draft });
+    return c.json({
+      success: true,
+      draft: result.draft,
+      ...("delivery" in result ? { delivery: result.delivery } : {}),
+    });
   }
 );
+
+// Send (or retry) an approved/failed draft through its automated channel.
+// The outcome says whether it was sent, failed, or must be sent by hand.
+outboxRouter.post("/:id/send", requireScope(["owner"]), async (c) => {
+  const draftId = c.req.param("id")!;
+  const actor = c.get("actor")!;
+
+  const delivery = await deliverApprovedDraft({ draftId, actor });
+
+  if (delivery.status === "skipped") {
+    const status = delivery.reason === "draft_not_found" ? 404 : 409;
+    return c.json({ error: `Cannot send draft: ${delivery.reason}`, code: delivery.reason }, status);
+  }
+  return c.json({ success: delivery.status === "sent", delivery });
+});
 
 // Confirm an approved draft was physically sent (owner). Logs the outbound
 // interaction automatically; ticket-linked drafts move their ticket to

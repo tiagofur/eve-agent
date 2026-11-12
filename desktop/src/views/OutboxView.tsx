@@ -1,5 +1,11 @@
 import { useState, useEffect } from "react";
-import { crmApi, type OutboxDraft, type OrganizationItem, type OrganizationSummary } from "../api";
+import {
+  crmApi,
+  type OutboxDraft,
+  type OutboxDelivery,
+  type OrganizationItem,
+  type OrganizationSummary,
+} from "../api";
 import { Check, X, Send, Clock, User, Plus, Building2, Copy, CheckCheck } from "lucide-react";
 
 interface ApprovedDraft {
@@ -8,6 +14,7 @@ interface ApprovedDraft {
   channel: string;
   subject: string | null;
   body: string;
+  status: "approved" | "failed";
   approvedAt: string | null;
   createdBy: string;
   contactName: string | null;
@@ -110,13 +117,45 @@ export function OutboxView() {
   const handleDecision = async (draftId: string, decision: "approved" | "rejected") => {
     try {
       setActioningId(draftId);
-      await crmApi.reviewDraft(draftId, decision);
+      const res = await crmApi.reviewDraft(draftId, decision);
       // Remove reviewed draft from pending list
       setDrafts((prev) => prev.filter((d) => d.id !== draftId));
       // Approved drafts move to the to-send queue instead of vanishing.
       await loadDrafts();
+      if (res.delivery) reportDelivery(res.delivery);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error al revisar borrador");
+    } finally {
+      setActioningId(null);
+    }
+  };
+
+  // Only surprises interrupt: a silent "manual" keeps today's flow unchanged.
+  const reportDelivery = (delivery: OutboxDelivery) => {
+    if (delivery.status === "sent") alert("Enviado por email.");
+    else if (delivery.status === "failed") alert(`El envío por email falló: ${delivery.error}`);
+  };
+
+  const MANUAL_REASONS: Record<string, string> = {
+    channel_not_automated: "este canal se envía a mano",
+    email_not_configured: "el envío por email no está configurado en el CRM",
+    contact_email_missing: "el contacto no tiene email",
+    subject_missing: "el borrador no tiene asunto",
+    contact_opted_out: "el contacto pidió no ser contactado",
+  };
+
+  const handleSend = async (draftId: string) => {
+    try {
+      setActioningId(draftId);
+      const { delivery } = await crmApi.sendOutboxDraft(draftId);
+      await loadDrafts();
+      if (delivery.status === "manual") {
+        alert(`No se envió: ${MANUAL_REASONS[delivery.reason] ?? delivery.reason}.`);
+      } else {
+        reportDelivery(delivery);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudo enviar");
     } finally {
       setActioningId(null);
     }
@@ -327,8 +366,9 @@ export function OutboxView() {
         </div>
       )}
 
-      {/* Approved — manual send queue: copy the message, send it through the
-          channel, then mark it sent (logs the interaction; ticket-linked
+      {/* Approved — to-send queue: email drafts normally leave on approval and
+          only land here when delivery is unconfigured or failed. For the rest:
+          copy the message, send it through the channel, then mark it sent (logs the interaction; ticket-linked
           drafts move their ticket to waiting_client). */}
       {approved.length > 0 && (
         <div className="space-y-3">
@@ -353,8 +393,23 @@ export function OutboxView() {
                       ticket {draft.ticketId.slice(0, 8)}
                     </span>
                   )}
+                  {draft.status === "failed" && (
+                    <span className="ml-2 rounded bg-rose-950 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300">
+                      envío falló
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {draft.channel === "email" && (
+                    <button
+                      onClick={() => void handleSend(draft.id)}
+                      disabled={actioningId === draft.id}
+                      className="flex items-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-cyan-500 disabled:opacity-50"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      {draft.status === "failed" ? "Reintentar envío" : "Enviar por email"}
+                    </button>
+                  )}
                   <button
                     onClick={() => void handleCopy(draft)}
                     className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition hover:bg-slate-700"

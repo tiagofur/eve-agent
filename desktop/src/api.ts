@@ -421,6 +421,12 @@ export async function fetchContentPackCoverUrl(id: string): Promise<string | nul
   return URL.createObjectURL(await res.blob());
 }
 
+/** Resultado del envío automático tras aprobar (ver crm/src/domain/outbox.ts). */
+export type OutboxDelivery =
+  | { status: "sent"; providerId: string | null }
+  | { status: "manual"; reason: string }
+  | { status: "failed"; error: string };
+
 export const crmApi = {
   getHealth: () => request<{ status: string }>("/health"),
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
@@ -542,9 +548,14 @@ export const crmApi = {
       body: JSON.stringify(data),
     }),
   reviewDraft: (draftId: string, decision: "approved" | "rejected", rejectedReason?: string) =>
-    request<{ success: boolean }>(`/api/outbox/${draftId}/review`, {
+    request<{ success: boolean; delivery?: OutboxDelivery }>(`/api/outbox/${draftId}/review`, {
       method: "POST",
       body: JSON.stringify({ decision, rejectedReason }),
+    }),
+  /** Envía (o reintenta) un borrador aprobado/fallido por su canal automático. */
+  sendOutboxDraft: (draftId: string) =>
+    request<{ success: boolean; delivery: OutboxDelivery }>(`/api/outbox/${draftId}/send`, {
+      method: "POST",
     }),
   getTickets: (status?: string) =>
     request<{ tickets: TicketItem[] }>(
@@ -583,6 +594,7 @@ export const crmApi = {
         channel: string;
         subject: string | null;
         body: string;
+        status: "approved" | "failed";
         approvedAt: string | null;
         createdBy: string;
         contactName: string | null;

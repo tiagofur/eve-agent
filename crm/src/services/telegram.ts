@@ -579,12 +579,22 @@ export async function startTelegramPolling() {
                 });
 
                 if (result.success) {
-                  await answerCallbackQuery(cq.id, "✅ Borrador aprobado. El envío es manual.");
+                  const delivery = "delivery" in result ? result.delivery : undefined;
+                  const outcome =
+                    delivery?.status === "sent"
+                      ? { toast: "✅ Aprobado y enviado por email.", line: "📤 Enviado por email" }
+                      : delivery?.status === "failed"
+                        ? {
+                            toast: "⚠️ Aprobado, pero el envío falló. Reintenta desde Desktop.",
+                            line: `⚠️ El envío falló: ${delivery.error}`,
+                          }
+                        : { toast: "✅ Borrador aprobado. El envío es manual.", line: "✋ Envío manual pendiente" };
+                  await answerCallbackQuery(cq.id, outcome.toast);
                   await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
-                    `${msg.text}\n\n✅ *Aprobado por Administrador vía Telegram a las ${new Date().toLocaleTimeString()}*`
+                    `${msg.text}\n\n✅ *Aprobado por Administrador vía Telegram a las ${new Date().toLocaleTimeString()}*\n${outcome.line}`
                   );
                 } else {
                   await answerCallbackQuery(cq.id, `⚠️ ${result.message}`);
