@@ -1,0 +1,36 @@
+name: CI failure notify
+
+# A red main is an incident: it opens a ticket in the CRM automatically.
+# PR failures are intentionally ignored — they block merge and are already
+# visible; only main (deployed code) pages the owner.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+jobs:
+  notify:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open incident ticket in CRM
+        env:
+          CRM_URL: https://crm.creapolis.dev
+          SECRET: ${{ secrets.INCIDENT_WEBHOOK_SECRET }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          curl -sf -X POST "$CRM_URL/api/webhooks/incidents" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $SECRET" \
+            -d "{
+              \"source\": \"github_ci\",
+              \"key\": \"ci-run-$RUN_ID\",
+              \"title\": \"CI falló en main ($SHA)\",
+              \"description\": \"La corrida $RUN_ID de CI falló en main. Revisar logs y re-medar antes del siguiente deploy.\",
+              \"url\": \"$RUN_URL\",
+              \"severity\": \"minor\"
+            }" || echo "CRM unreachable; CI failure notification skipped"

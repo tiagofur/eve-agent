@@ -25,7 +25,7 @@ detail of shipped work lives in git history and PR descriptions.
 | **Outbound WhatsApp** | ⏳ Pending | WhatsApp Cloud API delivery for approved drafts (email already live) |
 | **Store Releases & Reviews** | ⏳ Pending | Release pipeline + store review monitoring for Solennix/Pepinillo |
 | **Batch Prospecting** | ⏳ Pending | Lote de prospectos + secuencias multi-toque |
-| **Uptime/CI Webhooks → Tickets** | ⏳ Pending | Caída o CI roto abre ticket automático |
+| **Uptime/CI Webhooks → Tickets** | ✅ Complete | CI rojo en main abre ticket solo (#56) + endpoint de uptime con auto-resolve; pending secret en GitHub + VPS |
 
 ---
 

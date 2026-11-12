@@ -579,6 +579,9 @@ export const tickets = pgTable(
     description: text("description").notNull(),
     slaDueAt: timestamp("sla_due_at", { withTimezone: true }).notNull(),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    // Structured link for machine-created tickets — e.g. { incidentKey } from
+    // the uptime/CI webhook — so dedup and auto-resolve stay mechanical.
+    metadata: jsonb("metadata"),
     // T3 follow-up: when to ping the client about this ticket + why.
     nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
     followUpNote: text("follow_up_note"),
