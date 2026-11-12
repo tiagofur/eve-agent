@@ -22,6 +22,7 @@ import { publicChatRouter } from "./api/routes/public-chat";
 import { publicContentRouter } from "./api/routes/public-content";
 import { publicMetricsRouter } from "./api/routes/public-metrics";
 import { inboundRouter } from "./api/routes/inbound";
+import { webhooksRouter } from "./api/routes/webhooks";
 
 export const app = new Hono();
 
@@ -73,4 +74,6 @@ app.route("/api/public/content", publicContentRouter);
 app.route("/api/public/metrics", publicMetricsRouter);
 // Provider webhooks: authenticated by signature, not by API key.
 app.route("/api/inbound", inboundRouter);
+// Infrastructure incident webhooks (own CI, uptime monitors): shared secret.
+app.route("/api/webhooks", webhooksRouter);
 

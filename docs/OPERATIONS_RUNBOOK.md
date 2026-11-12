@@ -152,6 +152,25 @@ producción (hoy `RESEND_WEBHOOK_SECRET` está vacío y el endpoint responde 503
    📩 a Telegram, la interacción en la ficha 360 y el seguimiento movido a hoy. Con remitente
    desconocido: aviso en Telegram y registro en auditoría, sin crear contacto.
 
+### Incidentes automáticos: CI roto y uptime (PR #56)
+
+Un CI rojo en `main` abre ticket solo: el workflow `ci-failure-notify.yml` llama
+`POST https://crm.creapolis.dev/api/webhooks/incidents`. Para activarlo:
+
+1. Genera una clave larga y ponla en **dos sitios**: GitHub Secrets como
+   `INCIDENT_WEBHOOK_SECRET` (repo → Settings → Secrets → Actions) y en el `.env`
+   del VPS como `INCIDENT_WEBHOOK_SECRET` (reinicia el contenedor del CRM).
+2. Smoke: `curl -X POST https://crm.creapolis.dev/api/webhooks/incidents -H "Content-Type: application/json" -H "Authorization: Bearer <clave>" -d '{"source":"manual","key":"smoke-1","title":"Prueba de incidente"}'` → ticket abierto + 🚨 en Telegram; un segundo POST con la misma `key` responde `duplicate`.
+3. **Uptime** (opcional, un solo proveedor: Healthchecks.io): crea un check por
+   servicio y en Integrations → Webhook usa
+   `https://crm.creapolis.dev/api/webhooks/incidents?secret=<clave>&source=uptime&key=<check-id>&name=<nombre>&status={STATUS}`.
+   `down` abre ticket (severidad major), `up` lo resuelve automáticamente.
+
+Notas: el dedup es mecánico por `source`+`key` (metadata del ticket); los
+incidentes no llevan contacto de cliente — el canal de seguimiento es Telegram;
+GATE 1 del pipeline de correcciones sigue siendo tuyo si decide convertir el
+ticket en corrección.
+
 ### CRM Local `.env` (Database & Server Ports)
 Copy `crm/.env.example` to `crm/.env` (git-ignored) and fill in real values. Generate or rotate keys with `npx tsx src/seed-keys.ts`:
 ```bash
