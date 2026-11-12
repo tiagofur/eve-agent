@@ -1,4 +1,5 @@
 import { eq, and } from "drizzle-orm";
+import { getEmailConfig, sendEmail } from "../services/email";
 import { db } from "../db/client";
 import { outbox, contacts, leads, interactions, type ChannelType } from "../db/schema";
 import { logEvent } from "./events";
@@ -299,10 +300,111 @@ export async function reviewOutreachDraft(input: ReviewDraftInput) {
     reason: input.rejectedReason ?? "Owner review decision",
   });
 
+  if (input.decision !== "approved") {
+    return { success: true as const, draft: updated };
+  }
+
+  // The owner's approval IS the send order for channels with automated
+  // delivery; everything else stays in the manual queue as `approved`.
+  const delivery = await deliverApprovedDraft({ draftId: input.draftId, actor: input.actor });
+  const [current] = await db.select().from(outbox).where(eq(outbox.id, input.draftId)).limit(1);
+
   return {
-    success: true,
-    draft: updated,
+    success: true as const,
+    draft: current ?? updated,
+    delivery,
   };
+}
+
+/** What happened to an approved draft after trying automated delivery. */
+export type DeliveryOutcome =
+  | { status: "sent"; providerId: string | null }
+  /** Not sent automatically: the owner sends it by hand and marks it sent. */
+  | {
+      status: "manual";
+      reason:
+        | "channel_not_automated"
+        | "email_not_configured"
+        | "contact_email_missing"
+        | "subject_missing"
+        | "contact_opted_out";
+    }
+  | { status: "failed"; error: string }
+  | { status: "skipped"; reason: "draft_not_found" | "invalid_status" | "already_sending" };
+
+// Guards against two concurrent sends of the same draft inside this daemon
+// (double click, Telegram + Desktop at once). The provider idempotency key
+// covers the cross-restart case.
+const inFlight = new Set<string>();
+
+/**
+ * Sends an `approved` (or previously `failed`) draft through its channel when
+ * that channel has automated delivery — today: email via Resend. Success runs
+ * the same side effects as a manual "mark sent"; failure parks the draft in
+ * `failed` with the provider error in the audit log, never silently.
+ */
+export async function deliverApprovedDraft(input: {
+  draftId: string;
+  actor: string;
+}): Promise<DeliveryOutcome> {
+  if (inFlight.has(input.draftId)) return { status: "skipped", reason: "already_sending" };
+  inFlight.add(input.draftId);
+  try {
+    const [draft] = await db.select().from(outbox).where(eq(outbox.id, input.draftId)).limit(1);
+    if (!draft) return { status: "skipped", reason: "draft_not_found" };
+    if (draft.status !== "approved" && draft.status !== "failed") {
+      return { status: "skipped", reason: "invalid_status" };
+    }
+
+    if (draft.channel !== "email") return { status: "manual", reason: "channel_not_automated" };
+
+    const config = getEmailConfig();
+    if (!config) return { status: "manual", reason: "email_not_configured" };
+
+    const [contact] = draft.contactId
+      ? await db.select().from(contacts).where(eq(contacts.id, draft.contactId)).limit(1)
+      : [];
+    // Re-checked here because a retry can happen long after the approval.
+    if (contact?.optOut) return { status: "manual", reason: "contact_opted_out" };
+    const to = contact?.email?.trim();
+    if (!to) return { status: "manual", reason: "contact_email_missing" };
+
+    const subject = draft.subject?.trim();
+    if (!subject) return { status: "manual", reason: "subject_missing" };
+
+    const result = await sendEmail(config, {
+      to,
+      subject,
+      text: draft.body,
+      idempotencyKey: `outbox-${draft.id}`,
+    });
+
+    if (!result.ok) {
+      await db
+        .update(outbox)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(eq(outbox.id, draft.id));
+      await logEvent({
+        entity: "outbox",
+        entityId: draft.id,
+        action: "draft_send_failed",
+        actor: input.actor,
+        before: { status: draft.status },
+        after: { status: "failed", channel: draft.channel, error: result.error },
+        reason: "Automated email delivery failed",
+      });
+      return { status: "failed", error: result.error };
+    }
+
+    await finalizeSent(draft, {
+      actor: input.actor,
+      reason: "Sent automatically via Resend after owner approval",
+      delivery: { provider: "resend", providerId: result.providerId, to },
+    });
+    return { status: "sent", providerId: result.providerId };
+  } finally {
+    inFlight.delete(input.draftId);
+  }
 }
 
 export interface MarkDraftSentInput {
@@ -316,8 +418,8 @@ export type MarkDraftSentResult =
   | { success: false; code: string; message: string };
 
 /**
- * Owner confirms an approved draft was actually sent (sending itself stays
- * manual copy-paste for now). Side effects: the outbound interaction is
+ * Owner confirms an approved draft was actually sent by hand (channels
+ * without automated delivery, or after a failed automated send). Side effects: the outbound interaction is
  * logged automatically, and a ticket-linked draft moves its ticket to
  * `waiting_client` — the ITIL state between resolution and confirmation.
  */
@@ -329,28 +431,49 @@ export async function markDraftSent(input: MarkDraftSentInput): Promise<MarkDraf
   if (draft.status === "sent") {
     return { success: true, draft };
   }
-  if (draft.status !== "approved") {
+  // `failed` is allowed: after a delivery error the owner may send by hand.
+  if (draft.status !== "approved" && draft.status !== "failed") {
     return {
       success: false,
       code: "invalid_status",
-      message: `Draft is in status "${draft.status}"; only approved drafts can be marked as sent.`,
+      message: `Draft is in status "${draft.status}"; only approved or failed drafts can be marked as sent.`,
     };
   }
 
+  const updated = await finalizeSent(draft, {
+    actor: input.actor,
+    reason: "Owner confirmed manual send",
+  });
+  return { success: true, draft: updated };
+}
+
+/**
+ * Shared "the message left" side effects for manual and automated sends:
+ * status → sent, audit event, outbound interaction on the unified thread,
+ * and the ticket transition for ticket-linked notifications.
+ */
+async function finalizeSent(
+  draft: typeof outbox.$inferSelect,
+  opts: {
+    actor: string;
+    reason: string;
+    delivery?: { provider: string; providerId: string | null; to: string };
+  }
+): Promise<typeof outbox.$inferSelect> {
   const [updated] = await db
     .update(outbox)
     .set({ status: "sent", sentAt: new Date(), updatedAt: new Date() })
-    .where(eq(outbox.id, input.draftId))
+    .where(eq(outbox.id, draft.id))
     .returning();
 
   await logEvent({
     entity: "outbox",
-    entityId: input.draftId,
+    entityId: draft.id,
     action: "draft_sent",
-    actor: input.actor,
+    actor: opts.actor,
     before: { status: draft.status },
-    after: { status: "sent", channel: draft.channel },
-    reason: "Owner confirmed manual send",
+    after: { status: "sent", channel: draft.channel, ...(opts.delivery ?? {}) },
+    reason: opts.reason,
   });
 
   // The client-facing record of what was communicated, on the unified thread.
@@ -362,7 +485,11 @@ export async function markDraftSent(input: MarkDraftSentInput): Promise<MarkDraf
     channel: draft.channel,
     direction: "outbound",
     content: draft.body,
-    metadata: { outboxDraftId: draft.id, subject: draft.subject ?? null },
+    metadata: {
+      outboxDraftId: draft.id,
+      subject: draft.subject ?? null,
+      ...(opts.delivery ? { delivery: opts.delivery } : {}),
+    },
   });
 
   // Ticket-linked notification: the client now has the answer in flight. A
@@ -373,21 +500,21 @@ export async function markDraftSent(input: MarkDraftSentInput): Promise<MarkDraf
     const transition = await updateTicketStatus({
       ticketId: draft.ticketId,
       status: "waiting_client",
-      actor: input.actor,
+      actor: opts.actor,
       reason: "Resolution notification sent to the client",
     });
 
     if (!transition.success) {
       await logEvent({
         entity: "outbox",
-        entityId: input.draftId,
+        entityId: draft.id,
         action: "draft_sent_ticket_sync_failed",
-        actor: input.actor,
+        actor: opts.actor,
         after: { ticketId: draft.ticketId, code: transition.code, error: transition.message },
         reason: "Draft marked sent but the ticket could not move to waiting_client",
       });
     }
   }
 
-  return { success: true, draft: updated! };
+  return updated!;
 }
