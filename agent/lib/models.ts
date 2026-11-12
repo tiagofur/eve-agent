@@ -56,3 +56,21 @@ export function getAgentModel() {
 }
 
 export const agentModel = getAgentModel();
+
+/**
+ * Cheaper model for high-volume, low-judgment subagents (intel, analyst,
+ * biller): a Gemini Flash/Lite alias when a Gemini key exists — the same
+ * family as the primary — and the main model otherwise. A missing key never
+ * silently routes work to an unknown provider; it just keeps today's cost.
+ * Override the tier with ECONOMY_MODEL_ID (e.g. gemini-3-flash-lite).
+ */
+export function getEconomyModel() {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const google = createGoogleGenerativeAI({ apiKey: geminiKey });
+    return google(process.env.ECONOMY_MODEL_ID || GEMINI_MODEL_ID);
+  }
+  return getAgentModel();
+}
+
+export const economyModel = getEconomyModel();

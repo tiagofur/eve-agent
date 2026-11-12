@@ -6,7 +6,7 @@ Welcome to the **Creapolis.Dev** Autonomous Multi-Agent Operations System docume
 
 1. **[System Architecture](ARCHITECTURE.md)**
    - Complete technical overview of the platform.
-   - Multi-agent topology (Eve framework + 7 specialist subagents).
+   - Multi-agent topology (Eve framework + 13 specialist subagents).
    - PostgreSQL 17 CRM schema (16 tables, audit logging, scoped keys).
    - Meta Model API integration (`muse-spark-1.3-contributor` and `muse-image-1.0`).
    - macOS Desktop App (Tauri v2 + React 18) and Telegram Bot (@creapolis_cm_bot).

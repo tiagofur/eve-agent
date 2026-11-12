@@ -97,7 +97,7 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
 ### A. AI Engine: Meta Model API (Muse Suite)
 - **Base URL:** `https://api.meta.ai/v1`
 - **Text & Reasoning Model:** `muse-spark-1.3-contributor`
-  - Used by Eve Orchestrator and all 7 subagents — the single brain behind every channel (CRM `/api/chat` proxies to it; no inline LLM loop remains there).
+  - Used by Eve Orchestrator and all declared subagents (13 as of 2026-11: analyst, biller, closer, designer, intel, legal, marketing, pm, prospector, reporter, solutions, strategist, support) — the single brain behind every channel (CRM `/api/chat` proxies to it; no inline LLM loop remains there).
   - Configured via `@ai-sdk/openai` compatibility layer in `agent/lib/models.ts`.
 - **Image Generation Model:** `muse-image-1.0`
   - Generates native 1024x1024 WebP renders via `POST https://api.meta.ai/v1/images/generations`.
