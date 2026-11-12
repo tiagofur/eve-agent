@@ -88,6 +88,8 @@ services:
       - RESEND_API_KEY=${RESEND_API_KEY:-}
       - OUTBOX_EMAIL_FROM=${OUTBOX_EMAIL_FROM:-}
       - OUTBOX_EMAIL_REPLY_TO=${OUTBOX_EMAIL_REPLY_TO:-}
+      - RESEND_WEBHOOK_SECRET=${RESEND_WEBHOOK_SECRET:-}
+      - RESEND_INBOUND_API_KEY=${RESEND_INBOUND_API_KEY:-}
       - WORKER_LOG_ROOT=/data/worker/runs
       - CONTENT_DIR=/data/content-packs
     volumes:

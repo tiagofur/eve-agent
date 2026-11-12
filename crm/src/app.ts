@@ -20,6 +20,7 @@ import { metricsRouter } from "./api/routes/metrics";
 import { publicChatRouter } from "./api/routes/public-chat";
 import { publicContentRouter } from "./api/routes/public-content";
 import { publicMetricsRouter } from "./api/routes/public-metrics";
+import { inboundRouter } from "./api/routes/inbound";
 
 export const app = new Hono();
 
@@ -68,4 +69,6 @@ app.route("/api/metrics", metricsRouter);
 app.route("/api/public/chat", publicChatRouter);
 app.route("/api/public/content", publicContentRouter);
 app.route("/api/public/metrics", publicMetricsRouter);
+// Provider webhooks: authenticated by signature, not by API key.
+app.route("/api/inbound", inboundRouter);
 

@@ -12,6 +12,7 @@ Work the follow-up queue so every lead, ticket, and client gets nudged on time �
      - `kind: "lead"` → draft by `leadId`. A null `contactId` is fine: the draft is queued contact-gated for the lead, exactly like a first-touch message.
      - `kind: "ticket"` → draft by `organizationId` + `contactId` when both are present; otherwise report the item as undraftable.
      - `kind: "organization"` / `"contact"` → draft by `organizationId` + `contactId` when both are present; otherwise report.
+   - Replies come first: when an item carries `unansweredReply`, that person already answered and is waiting on us. Do NOT write a nudge ("¿pudiste ver mi mensaje?"): draft a direct answer to what they said in the excerpt, on the same channel, and say in the `rationale` that it answers their reply of that date. If the excerpt is not enough to answer responsibly (they ask for a price, a date, or a decision only the owner can make), do not improvise: report the item with their question quoted and keep the follow-up for today.
    - Reference the real history (last message, open ticket, saved estimates via `get_estimates` by lead — a pending proposal counts only if it is saved).
    - One clear next step (call, reply, approve, pay).
    - Spanish by default, professional and warm, never pushy.
