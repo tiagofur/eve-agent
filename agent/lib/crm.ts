@@ -304,6 +304,8 @@ export interface CreateDraftParams {
   subject?: string;
   body: string;
   rationale?: string;
+  /** Structured link for specialized drafts, e.g. { invoiceId } on a reminder. */
+  metadata?: Record<string, string>;
 }
 
 export async function crmCreateDraft(data: CreateDraftParams) {
@@ -326,6 +328,58 @@ export async function crmCreateDraft(data: CreateDraftParams) {
     draft: { id: string; status: string; contactId: string | null };
     contactResolution?: "explicit" | "lead" | "missing";
   };
+}
+
+export interface CollectionsOverview {
+  invoices: Array<{
+    id: string;
+    number: string;
+    organizationId: string;
+    organizationName: string | null;
+    projectName: string | null;
+    milestoneTitle: string | null;
+    status: "draft" | "sent" | "overdue" | "paid" | "cancelled";
+    amountCents: number;
+    paidCents: number;
+    currency: string;
+    issuedAt: string | null;
+    dueAt: string | null;
+    pendingReminder: boolean;
+    lastReminderAt: string | null;
+  }>;
+  subscriptions: Array<{
+    id: string;
+    organizationId: string;
+    organizationName: string | null;
+    name: string;
+    amountCents: number;
+    currency: string;
+    cadence: "monthly" | "quarterly" | "yearly";
+    nextRenewalAt: string | null;
+    status: "active" | "paused" | "cancelled";
+    dueInDays: number | null;
+    pendingReminder: boolean;
+    lastReminderAt: string | null;
+  }>;
+  outstandingCents: Record<string, number>;
+  overdueCents: Record<string, number>;
+  mrrCents: Record<string, number>;
+  contactsByOrganization: Record<string, Array<{ id: string; name: string; email: string | null }>>;
+}
+
+export async function crmGetCollections() {
+  const res = await fetch(`${getCrmUrl()}/api/billing/overview`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM collections report failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as CollectionsOverview;
 }
 
 export async function crmGetBilling() {

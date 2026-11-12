@@ -93,6 +93,33 @@ export const taskStatusEnum = pgEnum("task_status", [
   "rejected",
 ]);
 
+export const invoiceStatusEnum = pgEnum("invoice_status", [
+  "draft",
+  "sent",
+  "paid",
+  "cancelled",
+]);
+
+export const paymentMethodEnum = pgEnum("payment_method", [
+  "transfer",
+  "card",
+  "cash",
+  "crypto",
+  "other",
+]);
+
+export const subscriptionCadenceEnum = pgEnum("subscription_cadence", [
+  "monthly",
+  "quarterly",
+  "yearly",
+]);
+
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "active",
+  "paused",
+  "cancelled",
+]);
+
 export const taskKindEnum = pgEnum("task_kind", ["feature", "correction"]);
 
 export const taskRunStatusEnum = pgEnum("task_run_status", ["running", "succeeded", "failed"]);
@@ -332,6 +359,10 @@ export const outbox = pgTable(
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     rejectedReason: text("rejected_reason"),
+    // Structured link for specialized drafts — e.g. { invoiceId } on a
+    // payment reminder or { subscriptionId } on a renewal notice — so dedup
+    // and views can query the link mechanically instead of string matching.
+    metadata: jsonb("metadata"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -380,6 +411,85 @@ export const milestones = pgTable("milestones", {
   currency: text("currency").notNull().default("USD"),
   createdAt: createdAt(),
 });
+
+/* ------------------------------------------------------------------ */
+/* Money: invoices, payments, recurring subscriptions                  */
+/* ------------------------------------------------------------------ */
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    milestoneId: uuid("milestone_id").references(() => milestones.id, { onDelete: "set null" }),
+    // Human-facing number, unique: INV-2026-001.
+    number: text("number").notNull(),
+    status: invoiceStatusEnum("status").notNull().default("draft"),
+    // Total agreed, in minor units. "Overdue" is derived (sent + past due +
+    // unpaid balance), never stored: it cannot drift from reality.
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    issuedAt: date("issued_at"),
+    dueAt: date("due_at"),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    notes: text("notes"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("invoices_number_uq").on(t.number),
+    index("invoices_org_idx").on(t.organizationId),
+    index("invoices_status_idx").on(t.status),
+  ],
+);
+
+// Payments are immutable facts: a mistake is deleted (and the invoice status
+// recomputes mechanically), never edited in place.
+export const payments = pgTable(
+  "payments",
+  {
+    id: id(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    method: paymentMethodEnum("method").notNull().default("transfer"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    note: text("note"),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("payments_invoice_idx").on(t.invoiceId)],
+);
+
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: id(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    // e.g. "Hosting + mantenimiento Solennix".
+    name: text("name").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    cadence: subscriptionCadenceEnum("cadence").notNull().default("monthly"),
+    // Next renewal date: the biller watches this the way invoices watch dueAt.
+    nextRenewalAt: date("next_renewal_at"),
+    status: subscriptionStatusEnum("status").notNull().default("active"),
+    notes: text("notes"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("subscriptions_org_idx").on(t.organizationId),
+    index("subscriptions_status_idx").on(t.status),
+  ],
+);
 
 /** Agent-agnostic on purpose: any coding agent can consume a task through the `dev` scope. */
 export const tasks = pgTable(
