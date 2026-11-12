@@ -17,6 +17,8 @@ export interface CreateDraftInput {
   contactId?: string;
   /** Support-ticket notification (e.g. automatic resolution notice). */
   ticketId?: string;
+  /** Structured link for specialized drafts, e.g. { invoiceId } on a reminder. */
+  metadata?: Record<string, string> | null;
   channel: ChannelType;
   subject?: string;
   body: string;
@@ -181,6 +183,7 @@ export async function createOutreachDraft(
       organizationId: input.organizationId,
       contactId: resolved.contactId,
       ticketId: input.ticketId,
+      metadata: input.metadata ?? null,
       channel: input.channel,
       subject: input.subject,
       body: input.body,

@@ -1,5 +1,13 @@
 import React, { useState } from "react";
-import { crmApi, type LeadItem, type MilestoneItem, type OrganizationItem, type ProjectItem } from "../api";
+import {
+  crmApi,
+  type InvoiceItem,
+  type LeadItem,
+  type MilestoneItem,
+  type OrganizationItem,
+  type ProjectItem,
+  type SubscriptionItem,
+} from "../api";
 import { Modal } from "../components/ui";
 import { FormButtons, FormError, inputClass, labelClass } from "./CrmForms";
 
@@ -436,6 +444,401 @@ export const MilestoneModal: React.FC<{
 
         <FormError message={error} />
         <FormButtons onClose={onClose} busy={saving} disabled={!title.trim() || cents === "invalid"} label="Guardar hito" />
+      </form>
+    </Modal>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Cobros: facturas, pagos, suscripciones                              */
+/* ------------------------------------------------------------------ */
+
+const fmtMoneyShort = (cents: number, currency: string) =>
+  (cents / 100).toLocaleString("es-MX", { style: "currency", currency, maximumFractionDigits: 2 });
+
+export type InvoiceModalTarget =
+  | { mode: "new" }
+  | { mode: "edit"; invoice: InvoiceItem };
+
+/** Alta/edición de factura. "paid" no existe aquí a mano: se llega pagando. */
+export const InvoiceModal: React.FC<{
+  target: InvoiceModalTarget;
+  orgs: OrganizationItem[];
+  projects: ProjectItem[];
+  onSaved: () => void;
+  onClose: () => void;
+}> = ({ target, orgs, projects, onSaved, onClose }) => {
+  const initial = target.mode === "edit" ? target.invoice : null;
+  const [organizationId, setOrganizationId] = useState(initial?.organizationId ?? "");
+  const [projectId, setProjectId] = useState(initial?.projectId ?? "");
+  const [value, setValue] = useState(
+    initial ? String(Math.round(initial.amountCents / 100)) : ""
+  );
+  const [currency, setCurrency] = useState(initial?.currency ?? "USD");
+  const [issuedAt, setIssuedAt] = useState(initial?.issuedAt ?? new Date().toISOString().slice(0, 10));
+  const [dueAt, setDueAt] = useState(initial?.dueAt ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const cents = parseCents(value);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving || !organizationId || cents === "invalid" || cents == null) return;
+    try {
+      setSaving(true);
+      setError(null);
+      if (target.mode === "new") {
+        await crmApi.createInvoice({
+          organizationId,
+          projectId: projectId || undefined,
+          amountCents: cents,
+          currency: currency.trim() || "USD",
+          issuedAt: issuedAt || undefined,
+          dueAt: dueAt || undefined,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await crmApi.updateInvoice(initial!.id, {
+          amountCents: cents,
+          currency: currency.trim() || "USD",
+          issuedAt: issuedAt || null,
+          dueAt: dueAt || null,
+          notes: notes.trim() || null,
+          projectId: projectId || null,
+        });
+      }
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || "No se pudo guardar la factura.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={target.mode === "new" ? "Nueva factura" : `Editar ${initial!.number}`}
+      description="El biller redacta recordatorios de estas facturas; el monto y la fecha de vencimiento son los datos que usa."
+      width="max-w-md"
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <label className={labelClass} htmlFor="inv-org">Cliente *</label>
+          <select
+            id="inv-org"
+            required
+            value={organizationId}
+            onChange={(e) => setOrganizationId(e.target.value)}
+            disabled={target.mode === "edit"}
+            className={inputClass}
+          >
+            <option value="" disabled>Elige organización…</option>
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="inv-project">Proyecto (opcional)</label>
+          <select
+            id="inv-project"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">Sin proyecto</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="sm:col-span-2">
+            <label className={labelClass} htmlFor="inv-value">Monto (unidades) *</label>
+            <input
+              id="inv-value"
+              type="number"
+              min={1}
+              step="1"
+              required
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="inv-currency">Moneda</label>
+            <input
+              id="inv-currency"
+              type="text"
+              maxLength={8}
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="inv-issued">Fecha de emisión</label>
+            <input id="inv-issued" type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="inv-due">Vencimiento</label>
+            <input id="inv-due" type="date" value={dueAt} onChange={(e) => setDueAt(e.target.value)} className={inputClass} />
+          </div>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="inv-notes">Notas</label>
+          <textarea
+            id="inv-notes"
+            rows={2}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Ej: incluye hosting hasta dic 2026"
+            className={inputClass}
+          />
+        </div>
+
+        <FormError message={error} />
+        <FormButtons
+          onClose={onClose}
+          busy={saving}
+          disabled={!organizationId || cents === "invalid" || cents == null}
+          label="Guardar factura"
+        />
+      </form>
+    </Modal>
+  );
+};
+
+/** Registrar pago: el status de la factura se recalcula en el servidor. */
+export const PaymentModal: React.FC<{
+  invoice: InvoiceItem;
+  onSaved: () => void;
+  onClose: () => void;
+}> = ({ invoice, onSaved, onClose }) => {
+  const balance = invoice.amountCents - invoice.paidCents;
+  const [value, setValue] = useState(String(Math.round(balance / 100)));
+  const [method, setMethod] = useState<string>("transfer");
+  const [receivedAt, setReceivedAt] = useState(new Date().toISOString().slice(0, 10));
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const cents = parseCents(value);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving || cents === "invalid" || cents == null || cents <= 0) return;
+    try {
+      setSaving(true);
+      setError(null);
+      await crmApi.registerPayment(invoice.id, {
+        amountCents: cents,
+        method,
+        receivedAt: receivedAt ? new Date(`${receivedAt}T12:00:00`).toISOString() : undefined,
+        note: note.trim() || undefined,
+      });
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || "No se pudo registrar el pago.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={`Registrar pago — ${invoice.number}`}
+      description={`Saldo pendiente: ${fmtMoneyShort(balance, invoice.currency)} de ${fmtMoneyShort(invoice.amountCents, invoice.currency)}. Al cubrir el saldo la factura pasa a pagada.`}
+      width="max-w-sm"
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <label className={labelClass} htmlFor="pay-value">Monto recibido (unidades) *</label>
+          <input
+            id="pay-value"
+            type="number"
+            min={1}
+            step="1"
+            required
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="pay-method">Método</label>
+            <select id="pay-method" value={method} onChange={(e) => setMethod(e.target.value)} className={inputClass}>
+              <option value="transfer">Transferencia</option>
+              <option value="card">Tarjeta</option>
+              <option value="cash">Efectivo</option>
+              <option value="crypto">Cripto</option>
+              <option value="other">Otro</option>
+            </select>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="pay-date">Fecha recibido</label>
+            <input id="pay-date" type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} className={inputClass} />
+          </div>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="pay-note">Nota</label>
+          <input id="pay-note" type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ej: habla SPEI 1234" className={inputClass} />
+        </div>
+
+        <FormError message={error} />
+        <FormButtons onClose={onClose} busy={saving} disabled={cents === "invalid" || cents == null || cents <= 0} label="Registrar pago" />
+      </form>
+    </Modal>
+  );
+};
+
+export type SubscriptionModalTarget =
+  | { mode: "new" }
+  | { mode: "edit"; subscription: SubscriptionItem };
+
+/** Alta/edición de suscripción recurrente (hosting, mantenimiento, SaaS). */
+export const SubscriptionModal: React.FC<{
+  target: SubscriptionModalTarget;
+  orgs: OrganizationItem[];
+  onSaved: () => void;
+  onClose: () => void;
+}> = ({ target, orgs, onSaved, onClose }) => {
+  const initial = target.mode === "edit" ? target.subscription : null;
+  const [organizationId, setOrganizationId] = useState(initial?.organizationId ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [value, setValue] = useState(initial ? String(Math.round(initial.amountCents / 100)) : "");
+  const [currency, setCurrency] = useState(initial?.currency ?? "USD");
+  const [cadence, setCadence] = useState<string>(initial?.cadence ?? "monthly");
+  const [nextRenewalAt, setNextRenewalAt] = useState(initial?.nextRenewalAt ?? "");
+  const [status, setStatus] = useState<string>(initial?.status ?? "active");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const cents = parseCents(value);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving || !organizationId || !name.trim() || cents === "invalid" || cents == null) return;
+    try {
+      setSaving(true);
+      setError(null);
+      if (target.mode === "new") {
+        await crmApi.createSubscription({
+          organizationId,
+          name: name.trim(),
+          amountCents: cents,
+          currency: currency.trim() || "USD",
+          cadence: cadence as "monthly" | "quarterly" | "yearly",
+          nextRenewalAt: nextRenewalAt || undefined,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await crmApi.updateSubscription(initial!.id, {
+          name: name.trim(),
+          amountCents: cents,
+          currency: currency.trim() || "USD",
+          cadence: cadence as "monthly" | "quarterly" | "yearly",
+          nextRenewalAt: nextRenewalAt || null,
+          status: status as "active" | "paused" | "cancelled",
+          notes: notes.trim() || null,
+        });
+      }
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || "No se pudo guardar la suscripción.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={target.mode === "new" ? "Nueva suscripción" : `Editar ${initial!.name}`}
+      description="Ingreso recurrente: el biller avisa cuando la renovación se acerca. Renovar avanza una cadencia completa."
+      width="max-w-md"
+    >
+      <form onSubmit={submit} className="space-y-3">
+        <div>
+          <label className={labelClass} htmlFor="sub-org">Cliente *</label>
+          <select
+            id="sub-org"
+            required
+            value={organizationId}
+            onChange={(e) => setOrganizationId(e.target.value)}
+            disabled={target.mode === "edit"}
+            className={inputClass}
+          >
+            <option value="" disabled>Elige organización…</option>
+            {orgs.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="sub-name">Nombre *</label>
+          <input
+            id="sub-name"
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Ej: Hosting + mantenimiento Solennix"
+            className={inputClass}
+          />
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="col-span-2">
+            <label className={labelClass} htmlFor="sub-value">Monto (unidades) *</label>
+            <input id="sub-value" type="number" min={1} step="1" required value={value} onChange={(e) => setValue(e.target.value)} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="sub-currency">Moneda</label>
+            <input id="sub-currency" type="text" maxLength={8} value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputClass} />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="sub-cadence">Cadencia</label>
+            <select id="sub-cadence" value={cadence} onChange={(e) => setCadence(e.target.value)} className={inputClass}>
+              <option value="monthly">Mensual</option>
+              <option value="quarterly">Trimestral</option>
+              <option value="yearly">Anual</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="sub-renewal">Próxima renovación</label>
+            <input id="sub-renewal" type="date" value={nextRenewalAt} onChange={(e) => setNextRenewalAt(e.target.value)} className={inputClass} />
+          </div>
+          {target.mode === "edit" && (
+            <div>
+              <label className={labelClass} htmlFor="sub-status">Estado</label>
+              <select id="sub-status" value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass}>
+                <option value="active">Activa</option>
+                <option value="paused">Pausada</option>
+                <option value="cancelled">Cancelada</option>
+              </select>
+            </div>
+          )}
+        </div>
+        <div>
+          <label className={labelClass} htmlFor="sub-notes">Notas</label>
+          <textarea id="sub-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} className={inputClass} />
+        </div>
+
+        <FormError message={error} />
+        <FormButtons
+          onClose={onClose}
+          busy={saving}
+          disabled={!organizationId || !name.trim() || cents === "invalid" || cents == null}
+          label="Guardar suscripción"
+        />
       </form>
     </Modal>
   );

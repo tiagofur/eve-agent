@@ -427,6 +427,58 @@ export type OutboxDelivery =
   | { status: "manual"; reason: string }
   | { status: "failed"; error: string };
 
+/* ---- Cobros: facturas, pagos y suscripciones ---- */
+
+export type InvoiceStatus = "draft" | "sent" | "overdue" | "paid" | "cancelled";
+
+export interface InvoiceItem {
+  id: string;
+  number: string;
+  organizationId: string;
+  organizationName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  milestoneId: string | null;
+  milestoneTitle: string | null;
+  status: InvoiceStatus;
+  amountCents: number;
+  paidCents: number;
+  currency: string;
+  issuedAt: string | null;
+  dueAt: string | null;
+  paidAt: string | null;
+  notes: string | null;
+  /** Hay un recordatorio pending_approval ligado a esta factura. */
+  pendingReminder: boolean;
+  lastReminderAt: string | null;
+}
+
+export interface SubscriptionItem {
+  id: string;
+  organizationId: string;
+  organizationName: string | null;
+  name: string;
+  amountCents: number;
+  currency: string;
+  cadence: "monthly" | "quarterly" | "yearly";
+  nextRenewalAt: string | null;
+  status: "active" | "paused" | "cancelled";
+  /** Días hasta la renovación; negativo = vencida. */
+  dueInDays: number | null;
+  pendingReminder: boolean;
+  lastReminderAt: string | null;
+  notes: string | null;
+}
+
+export interface CollectionsData {
+  invoices: InvoiceItem[];
+  subscriptions: SubscriptionItem[];
+  outstandingCents: Record<string, number>;
+  overdueCents: Record<string, number>;
+  mrrCents: Record<string, number>;
+  contactsByOrganization: Record<string, Array<{ id: string; name: string; email: string | null }>>;
+}
+
 export const crmApi = {
   getHealth: () => request<{ status: string }>("/health"),
   getDailyMetrics: () => request<{ metrics: DailyMetrics }>("/api/reports/daily"),
@@ -833,6 +885,81 @@ export const crmApi = {
   deleteMilestone: (milestoneId: string) =>
     request<{ success: boolean }>(`/api/projects/milestones/${milestoneId}`, {
       method: "DELETE",
+    }),
+  /* ---- Cobros (facturas / pagos / suscripciones) ---- */
+  getCollections: () => request<CollectionsData>("/api/billing/overview"),
+  createInvoice: (data: {
+    organizationId: string;
+    projectId?: string;
+    milestoneId?: string;
+    amountCents: number;
+    currency?: string;
+    issuedAt?: string;
+    dueAt?: string;
+    notes?: string;
+  }) =>
+    request<{ invoice: InvoiceItem }>("/api/billing/invoices", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  /** "paid" NO es editable a mano: se llega pagando (ver domain/billing.ts). */
+  updateInvoice: (
+    invoiceId: string,
+    data: {
+      status?: Exclude<InvoiceStatus, "overdue" | "paid">;
+      amountCents?: number;
+      currency?: string;
+      issuedAt?: string | null;
+      dueAt?: string | null;
+      notes?: string | null;
+      projectId?: string | null;
+      milestoneId?: string | null;
+    }
+  ) =>
+    request<{ invoice: InvoiceItem }>(`/api/billing/invoices/${invoiceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  registerPayment: (invoiceId: string, data: { amountCents: number; method?: string; receivedAt?: string; note?: string }) =>
+    request<{ payment: unknown; invoice: InvoiceItem }>(`/api/billing/invoices/${invoiceId}/payments`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deletePayment: (paymentId: string) =>
+    request<{ invoice: InvoiceItem }>(`/api/billing/payments/${paymentId}`, { method: "DELETE" }),
+  createSubscription: (data: {
+    organizationId: string;
+    name: string;
+    amountCents: number;
+    currency?: string;
+    cadence: "monthly" | "quarterly" | "yearly";
+    nextRenewalAt?: string;
+    notes?: string;
+  }) =>
+    request<{ subscription: SubscriptionItem }>("/api/billing/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateSubscription: (
+    subscriptionId: string,
+    data: {
+      name?: string;
+      amountCents?: number;
+      currency?: string;
+      cadence?: "monthly" | "quarterly" | "yearly";
+      nextRenewalAt?: string | null;
+      status?: "active" | "paused" | "cancelled";
+      notes?: string | null;
+    }
+  ) =>
+    request<{ subscription: SubscriptionItem }>(`/api/billing/subscriptions/${subscriptionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  /** Avanza una cadencia completa; los periodos vencidos se alcanzan, no se saltan. */
+  renewSubscription: (subscriptionId: string) =>
+    request<{ subscription: SubscriptionItem }>(`/api/billing/subscriptions/${subscriptionId}/renew`, {
+      method: "POST",
     }),
   /* ---- Programadas (agent cronjobs) ---- */
   /** Lista con próxima/última ejecución y el reloj del servidor (hint de zona horaria). */

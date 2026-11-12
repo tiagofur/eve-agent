@@ -1,30 +1,48 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Banknote,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   CircleDashed,
+  CreditCard,
   FileSignature,
   FileText,
   HandCoins,
   Pencil,
   Plus,
+  Receipt,
   RefreshCw,
+  Repeat,
   Trash2,
   TriangleAlert,
 } from "lucide-react";
 import {
   crmApi,
   type BillingProject,
+  type CollectionsData,
   type ContractItem,
   type EstimateItem,
+  type InvoiceItem,
   type LeadItem,
   type MilestoneItem,
   type OrganizationItem,
   type ProjectItem,
+  type SubscriptionItem,
 } from "../api";
 import { Badge, EmptyState, Skeleton } from "../components/ui";
-import { MilestoneModal, NewContractModal, NewEstimateModal, ESTIMATE_CATEGORIES, type MilestoneModalTarget } from "./SalesForms";
+import {
+  InvoiceModal,
+  MilestoneModal,
+  NewContractModal,
+  NewEstimateModal,
+  PaymentModal,
+  SubscriptionModal,
+  ESTIMATE_CATEGORIES,
+  type InvoiceModalTarget,
+  type MilestoneModalTarget,
+  type SubscriptionModalTarget,
+} from "./SalesForms";
 
 /**
  * Ventas: el ciclo comercial completo que antes solo existía vía agente
@@ -36,6 +54,14 @@ type SalesTab = "cobros" | "propuestas" | "contratos";
 
 const fmtMoney = (cents: number, currency: string) =>
   (cents / 100).toLocaleString("es-MX", { style: "currency", currency, maximumFractionDigits: 0 });
+
+const fmtMoneyExact = (cents: number, currency: string) =>
+  (cents / 100).toLocaleString("es-MX", { style: "currency", currency, maximumFractionDigits: 2 });
+
+const moneyByCurrency = (totals: Record<string, number>) =>
+  Object.entries(totals)
+    .map(([cur, cents]) => fmtMoneyExact(cents, cur))
+    .join(" · ") || "—";
 
 const fmtDate = (value: string) =>
   new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString("es-MX", {
@@ -80,6 +106,28 @@ const CONTRACT_NEXT: Partial<
 
 function contractActions(status: ContractItem["status"]) {
   return CONTRACT_NEXT[status] ?? [];
+}
+
+const INVOICE_STATUS: Record<InvoiceItem["status"], { label: string; tone: "zinc" | "amber" | "sky" | "emerald" | "rose" }> = {
+  draft: { label: "Borrador", tone: "zinc" },
+  sent: { label: "Enviada", tone: "sky" },
+  overdue: { label: "Vencida", tone: "rose" },
+  paid: { label: "Pagada", tone: "emerald" },
+  cancelled: { label: "Cancelada", tone: "zinc" },
+};
+
+const CADENCE_LABEL: Record<SubscriptionItem["cadence"], string> = {
+  monthly: "mes",
+  quarterly: "trimestre",
+  yearly: "año",
+};
+
+function renewalState(s: SubscriptionItem): { label: string; tone: "zinc" | "amber" | "emerald" | "rose" } {
+  if (s.status !== "active") return { label: s.status === "paused" ? "Pausada" : "Cancelada", tone: "zinc" };
+  if (s.dueInDays == null) return { label: "Sin fecha", tone: "zinc" };
+  if (s.dueInDays < 0) return { label: `Vencida ${-s.dueInDays}d`, tone: "rose" };
+  if (s.dueInDays <= 14) return { label: `En ${s.dueInDays}d`, tone: "amber" };
+  return { label: fmtDate(s.nextRenewalAt!), tone: "zinc" };
 }
 
 const btnAction =
@@ -160,6 +208,7 @@ export const SalesView: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [billing, setBilling] = useState<BillingProject[]>([]);
+  const [collections, setCollections] = useState<CollectionsData | null>(null);
   const [estimates, setEstimates] = useState<EstimateItem[]>([]);
   const [contracts, setContracts] = useState<ContractItem[]>([]);
   const [orgs, setOrgs] = useState<OrganizationItem[]>([]);
@@ -168,14 +217,18 @@ export const SalesView: React.FC = () => {
 
   const [showEstimateForm, setShowEstimateForm] = useState(false);
   const [showContractForm, setShowContractForm] = useState(false);
+  const [showInvoiceForm, setShowInvoiceForm] = useState<InvoiceModalTarget | null>(null);
+  const [showSubscriptionForm, setShowSubscriptionForm] = useState<SubscriptionModalTarget | null>(null);
+  const [paymentInvoice, setPaymentInvoice] = useState<InvoiceItem | null>(null);
   const [milestoneTarget, setMilestoneTarget] = useState<MilestoneModalTarget | null>(null);
   const [expandedContract, setExpandedContract] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       setLoadError(null);
-      const [b, e, ct, o, p, l] = await Promise.all([
+      const [b, co, e, ct, o, p, l] = await Promise.all([
         crmApi.getBilling(),
+        crmApi.getCollections(),
         crmApi.getEstimates(),
         crmApi.getContracts(),
         crmApi.getOrganizations(),
@@ -183,6 +236,7 @@ export const SalesView: React.FC = () => {
         crmApi.getLeads(),
       ]);
       setBilling(b.projects);
+      setCollections(co);
       setEstimates(e.estimates);
       setContracts(ct.contracts);
       setOrgs(o.organizations);
@@ -215,7 +269,9 @@ export const SalesView: React.FC = () => {
 
   const kpis = useMemo(() => {
     const openProjects = billing;
-    const overdue = openProjects.reduce((n, p) => n + p.overdueMilestones.length, 0);
+    const overdueMilestones = openProjects.reduce((n, p) => n + p.overdueMilestones.length, 0);
+    const overdueInvoices = collections?.invoices.filter((i) => i.status === "overdue").length ?? 0;
+    const overdueRenewals = collections?.subscriptions.filter((s) => s.status === "active" && s.dueInDays != null && s.dueInDays < 0).length ?? 0;
     const dueSoon = openProjects.reduce((n, p) => n + p.dueSoonMilestones.length, 0);
     const unsigned = new Set(
       openProjects.flatMap((p) => p.unsignedContracts.map((ct) => ct.id))
@@ -225,8 +281,15 @@ export const SalesView: React.FC = () => {
       (ct) => !ct.projectId && (ct.status === "draft" || ct.status === "in_review" || ct.status === "sent")
     );
     leadUnsigned.forEach((ct) => unsigned.add(ct.id));
-    return { overdue, dueSoon, unsigned: unsigned.size };
-  }, [billing, contracts]);
+    return {
+      overdueMilestones,
+      overdueInvoices,
+      overdueRenewals,
+      overdue: overdueMilestones + overdueInvoices + overdueRenewals,
+      dueSoon,
+      unsigned: unsigned.size,
+    };
+  }, [billing, contracts, collections]);
 
   const unquoted = estimates.filter((e) => e.valueCents == null).length;
 
@@ -284,6 +347,16 @@ export const SalesView: React.FC = () => {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
+          {tab === "cobros" && (
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowSubscriptionForm({ mode: "new" })} className={btnGhost}>
+                <Repeat className="w-3.5 h-3.5 inline mr-1" /> Suscripción
+              </button>
+              <button onClick={() => setShowInvoiceForm({ mode: "new" })} className={btnPrimary}>
+                <Plus className="w-3.5 h-3.5 inline mr-1" /> Nueva factura
+              </button>
+            </div>
+          )}
           {tab === "propuestas" && (
             <button onClick={() => setShowEstimateForm(true)} className={btnPrimary}>
               <Plus className="w-3.5 h-3.5 inline mr-1" /> Nueva propuesta
@@ -339,10 +412,181 @@ export const SalesView: React.FC = () => {
           {/* COBROS */}
           {tab === "cobros" && (
             <div className="space-y-4">
+              {/* Dinero real: facturas y suscripciones (el biller y sus recordatorios leen esto) */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <KpiCard label="Hitos vencidos" value={kpis.overdue} tone={kpis.overdue > 0 ? "rose" : "zinc"} />
+                <KpiCard label="Por cobrar" value={collections ? moneyByCurrency(collections.outstandingCents) : "—"} tone={collections && Object.keys(collections.outstandingCents).length > 0 ? "amber" : "zinc"} />
+                <KpiCard label="Vencido" value={collections ? moneyByCurrency(collections.overdueCents) : "—"} tone={collections && Object.keys(collections.overdueCents).length > 0 ? "rose" : "zinc"} />
+                <KpiCard label="MRR (suscripciones)" value={collections ? moneyByCurrency(collections.mrrCents) : "—"} tone={collections && Object.keys(collections.mrrCents).length > 0 ? "emerald" : "zinc"} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <KpiCard label="Hitos vencidos" value={kpis.overdueMilestones} tone={kpis.overdueMilestones > 0 ? "rose" : "zinc"} />
                 <KpiCard label="Vencen en 7 días" value={kpis.dueSoon} tone={kpis.dueSoon > 0 ? "amber" : "zinc"} />
                 <KpiCard label="Contratos sin firmar" value={kpis.unsigned} tone={kpis.unsigned > 0 ? "sky" : "zinc"} />
+              </div>
+
+              {/* FACTURAS */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/70">
+                  <div className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Receipt className="w-4 h-4 text-emerald-400" /> Facturas
+                  </div>
+                  <span className="text-xs text-zinc-500">Pagada solo pagando; el saldo recalcula solo.</span>
+                </div>
+
+                {(collections?.invoices.length ?? 0) === 0 ? (
+                  <p className="px-4 py-3 text-xs text-zinc-500">
+                    Sin facturas todavía: crea la primera o deja que la factura nazca de un hito acordado.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-zinc-800/70 px-4">
+                    {[...(collections?.invoices ?? [])]
+                      .sort((a, b) => {
+                        const rank = (i: InvoiceItem) =>
+                          i.status === "overdue" ? 0 : i.status === "sent" ? 1 : i.status === "draft" ? 2 : 3;
+                        return rank(a) - rank(b) || (a.dueAt ?? "").localeCompare(b.dueAt ?? "");
+                      })
+                      .slice(0, 30)
+                      .map((inv) => (
+                        <div key={inv.id} className="flex items-center gap-3 py-2.5">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm text-zinc-200 flex items-center gap-2 flex-wrap">
+                              <span className="font-mono">{inv.number}</span>
+                              <Badge tone={INVOICE_STATUS[inv.status].tone}>{INVOICE_STATUS[inv.status].label}</Badge>
+                              {inv.pendingReminder && <Badge tone="amber">Recordatorio en revisión</Badge>}
+                            </div>
+                            <div className="text-xs text-zinc-500 mt-0.5 truncate">
+                              {inv.organizationName ?? "Sin organización"}
+                              {inv.projectName ? ` · ${inv.projectName}` : ""}
+                              {inv.dueAt ? ` · Vence ${fmtDate(inv.dueAt)}` : ""}
+                              {inv.paidCents > 0 ? ` · Pagado ${fmtMoneyExact(inv.paidCents, inv.currency)}` : ""}
+                            </div>
+                          </div>
+                          <div className="text-sm font-mono text-zinc-200 shrink-0">
+                            {fmtMoneyExact(inv.amountCents, inv.currency)}
+                          </div>
+                          {inv.status === "draft" && (
+                            <button
+                              type="button"
+                              onClick={() => runAction(() => crmApi.updateInvoice(inv.id, { status: "sent" }))}
+                              disabled={busy}
+                              title="Marcar como enviada"
+                              className={btnIcon}
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          )}
+                          {(inv.status === "sent" || inv.status === "overdue") && (
+                            <button
+                              type="button"
+                              onClick={() => setPaymentInvoice(inv)}
+                              disabled={busy}
+                              title="Registrar pago"
+                              className={btnIcon}
+                            >
+                              <CreditCard className="w-4 h-4 text-emerald-400" />
+                            </button>
+                          )}
+                          {inv.status !== "paid" && inv.status !== "cancelled" && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setShowInvoiceForm({ mode: "edit", invoice: inv })}
+                                disabled={busy}
+                                title="Editar factura"
+                                className={btnIcon}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!window.confirm(`¿Cancelar la factura ${inv.number}? No se puede pagar una cancelada.`)) return;
+                                  runAction(() => crmApi.updateInvoice(inv.id, { status: "cancelled" }));
+                                }}
+                                disabled={busy}
+                                title="Cancelar factura"
+                                className={btnIcon}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              {/* SUSCRIPCIONES */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-zinc-800/70">
+                  <div className="text-sm font-semibold text-white flex items-center gap-2">
+                    <Repeat className="w-4 h-4 text-emerald-400" /> Suscripciones
+                  </div>
+                  <button onClick={() => setShowSubscriptionForm({ mode: "new" })} className={btnGhost}>
+                    <Plus className="w-3.5 h-3.5 inline mr-1" /> Nueva
+                  </button>
+                </div>
+
+                {(collections?.subscriptions.length ?? 0) === 0 ? (
+                  <p className="px-4 py-3 text-xs text-zinc-500">
+                    Sin suscripciones: hosting, mantenimiento o SaaS recurrente se registran aquí para que el biller avise la renovación.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-zinc-800/70 px-4">
+                    {[...(collections?.subscriptions ?? [])]
+                      .sort((a, b) => {
+                        const rank = (s: SubscriptionItem) =>
+                          s.status === "active" ? (s.dueInDays != null && s.dueInDays < 0 ? 0 : 1) : 2;
+                        return rank(a) - rank(b) || (a.nextRenewalAt ?? "").localeCompare(b.nextRenewalAt ?? "");
+                      })
+                      .map((sub) => {
+                        const state = renewalState(sub);
+                        return (
+                          <div key={sub.id} className="flex items-center gap-3 py-2.5">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-zinc-200 flex items-center gap-2 flex-wrap">
+                                {sub.name}
+                                <Badge tone={state.tone}>{state.label}</Badge>
+                                {sub.pendingReminder && <Badge tone="amber">Aviso en revisión</Badge>}
+                              </div>
+                              <div className="text-xs text-zinc-500 mt-0.5 truncate">
+                                {sub.organizationName ?? "Sin organización"} · cada {CADENCE_LABEL[sub.cadence]}
+                              </div>
+                            </div>
+                            <div className="text-sm font-mono text-zinc-200 shrink-0">
+                              {fmtMoneyExact(sub.amountCents, sub.currency)}
+                            </div>
+                            {sub.status === "active" && (
+                              <button
+                                type="button"
+                                onClick={() => runAction(() => crmApi.renewSubscription(sub.id))}
+                                disabled={busy}
+                                title="Renovar: avanza una cadencia completa"
+                                className={btnIcon}
+                              >
+                                <RefreshCw className="w-4 h-4 text-emerald-400" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setShowSubscriptionForm({ mode: "edit", subscription: sub })}
+                              disabled={busy}
+                              title="Editar suscripción"
+                              className={btnIcon}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              {/* HITOS POR PROYECTO */}
+              <div className="text-sm font-semibold text-white flex items-center gap-2 pt-1">
+                <Banknote className="w-4 h-4 text-emerald-400" /> Hitos por proyecto
               </div>
 
               {billing.length === 0 ? (
@@ -566,11 +810,44 @@ export const SalesView: React.FC = () => {
           onClose={() => setMilestoneTarget(null)}
         />
       )}
+      {showInvoiceForm && (
+        <InvoiceModal
+          target={showInvoiceForm}
+          orgs={orgs}
+          projects={projects}
+          onSaved={() => {
+            setShowInvoiceForm(null);
+            load();
+          }}
+          onClose={() => setShowInvoiceForm(null)}
+        />
+      )}
+      {paymentInvoice && (
+        <PaymentModal
+          invoice={paymentInvoice}
+          onSaved={() => {
+            setPaymentInvoice(null);
+            load();
+          }}
+          onClose={() => setPaymentInvoice(null)}
+        />
+      )}
+      {showSubscriptionForm && (
+        <SubscriptionModal
+          target={showSubscriptionForm}
+          orgs={orgs}
+          onSaved={() => {
+            setShowSubscriptionForm(null);
+            load();
+          }}
+          onClose={() => setShowSubscriptionForm(null)}
+        />
+      )}
     </div>
   );
 };
 
-const KpiCard: React.FC<{ label: string; value: number; tone: "zinc" | "rose" | "amber" | "sky" }> = ({
+const KpiCard: React.FC<{ label: string; value: number | string; tone: "zinc" | "rose" | "amber" | "sky" | "emerald" }> = ({
   label,
   value,
   tone,
@@ -582,6 +859,8 @@ const KpiCard: React.FC<{ label: string; value: number; tone: "zinc" | "rose" | 
       ? "text-amber-300"
       : tone === "sky"
       ? "text-sky-300"
+      : tone === "emerald"
+      ? "text-emerald-300"
       : "text-zinc-200";
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">

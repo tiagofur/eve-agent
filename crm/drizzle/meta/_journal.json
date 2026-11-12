@@ -169,6 +169,13 @@
       "when": 1794418238430,
       "tag": "0023_small_mariko_yashida",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794496694047,
+      "tag": "0024_closed_infant_terrible",
+      "breakpoints": true
     }
   ]
 }

@@ -29,6 +29,7 @@ outboxRouter.post(
       subject: z.string().optional(),
       body: z.string().min(1),
       rationale: z.string().optional(),
+      metadata: z.record(z.string(), z.string().min(1).max(200)).optional(),
     })
   ),
   async (c) => {
