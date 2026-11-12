@@ -6,7 +6,7 @@ This project uses the eve framework: an agent is a directory of files under `age
 
 Three components live here (details in `docs/ARCHITECTURE.md`):
 
-- `agent/` — eve agent: orchestrator, 7 subagents, 9 tools, channels, schedules. Commands: `npm run dev`, `npm run typecheck`.
+- `agent/` — eve agent: orchestrator, declared subagents (one dir per specialist), tools, skills, channels, schedules. Counts live in docs/ARCHITECTURE.md; update them together. Commands: `npm run dev`, `npm run typecheck`.
 - `crm/` — Hono REST API + Drizzle/PostgreSQL 17 + Telegram daemon (API port 8787, DB port 5433). Commands: `npm run db:up`, `npm run db:migrate`, `npm run dev`, `npm run test` (vitest), `npm run typecheck`.
 - `desktop/` — Tauri v2 + React app. Commands: `npm run tauri dev`, `npm run desktop:build`.
 

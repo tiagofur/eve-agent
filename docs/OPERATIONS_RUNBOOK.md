@@ -133,6 +133,24 @@ Notas: IG publica carruseles de hasta 10 slides (límite del pack: 10) e imágen
 de video quedan fuera del 1-click (descarga manual + subida). El caption usado es
 `captionsByPlatform.instagram` si existe, si no el general.
 
+### Respuestas entrantes por email (Resend Receiving, PR #51)
+
+Las respuestas de clientes por email llegan solas al CRM vía webhook de Resend. Para activarlo en
+producción (hoy `RESEND_WEBHOOK_SECRET` está vacío y el endpoint responde 503):
+
+1. En el dominio de envío (el de `OUTBOX_EMAIL_FROM`) configura el receptor en
+   [resend.com](https://resend.com) → Receiving: crea un **Inbound Address** (p. ej.
+   `respuestas@creapolis.dev`) apuntando al webhook del CRM.
+2. Crea el **Webhook** de Resend para el evento `email.received` con URL
+   `https://crm.creapolis.dev/api/inbound/resend`; copia el **Signing secret** (empieza con
+   `whsec_`).
+3. Setea en el `.env` del VPS y reinicia el contenedor del CRM:
+   `RESEND_WEBHOOK_SECRET="<whsec_...>"`.
+4. Si la `RESEND_API_KEY` del VPS está restringida a "sending access", crea otra clave con
+   acceso de **lectura de correos recibidos** y ponla en `RESEND_INBOUND_API_KEY`.
+5. Smoke test: responde desde un email de un contacto real del CRM → debe llegar la notificación
+   📩 a Telegram, la interacción en la ficha 360 y el seguimiento movido a hoy. Con remitente
+   desconocido: aviso en Telegram y registro en auditoría, sin crear contacto.
 
 ### CRM Local `.env` (Database & Server Ports)
 Copy `crm/.env.example` to `crm/.env` (git-ignored) and fill in real values. Generate or rotate keys with `npx tsx src/seed-keys.ts`:
