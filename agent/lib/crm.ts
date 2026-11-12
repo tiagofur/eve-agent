@@ -382,6 +382,41 @@ export async function crmGetCollections() {
   return (await res.json()) as CollectionsOverview;
 }
 
+export interface WeeklyActivity {
+  weekTag: string;
+  window: { days: number; since: string; until: string };
+  projects: Array<{
+    projectId: string;
+    projectName: string;
+    status: string;
+    organizationId: string;
+    organizationName: string | null;
+    pendingReport: boolean;
+    completedTasks: Array<{ title: string; prUrl: string | null; resultSummary: string | null; completedAt: string }>;
+    inFlightTasks: Array<{ title: string; status: string }>;
+    milestonesCompleted: Array<{ title: string; doneAt: string }>;
+    milestonesUpcoming: Array<{ title: string; dueDate: string }>;
+    resolvedTickets: Array<{ system: string; severity: string; description: string; resolvedAt: string }>;
+    openTickets: number;
+  }>;
+  contactsByOrganization: Record<string, Array<{ id: string; name: string; email: string | null }>>;
+}
+
+export async function crmGetWeeklyActivity(days = 7) {
+  const res = await fetch(`${getCrmUrl()}/api/reports/weekly?days=${days}`, {
+    headers: {
+      Authorization: `Bearer ${getOpsKey()}`,
+    },
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`CRM weekly activity failed (${res.status}): ${errorText}`);
+  }
+
+  return (await res.json()) as WeeklyActivity;
+}
+
 export async function crmGetBilling() {
   const res = await fetch(`${getCrmUrl()}/api/projects/billing`, {
     headers: {
