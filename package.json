@@ -18,14 +18,14 @@
   "dependencies": {
     "@ai-sdk/google": "^4.0.109",
     "@ai-sdk/openai": "^4.0.93",
-    "@chat-adapter/state-memory": "^4.41.1",
-    "@chat-adapter/whatsapp": "^4.41.1",
+    "@chat-adapter/state-memory": "^4.45.0",
+    "@chat-adapter/whatsapp": "^4.45.0",
     "@resvg/resvg-js": "^2.6.2",
-    "@vercel/connect": "2.2.0",
-    "ai": "^7.0.137",
+    "@vercel/connect": "^2.9.5",
+    "ai": "^7.0.177",
     "archiver": "^8.0.0",
-    "chat": "^4.41.1",
-    "eve": "^0.79.0",
+    "chat": "^4.45.0",
+    "eve": "^1.1.0",
     "satori": "^0.63.2",
     "zod": "4.6.7"
   },
@@ -37,8 +37,5 @@
   },
   "engines": {
     "node": "24.x"
-  },
-  "overrides": {
-    "@ai-sdk/provider": "4.0.34"
   }
 }
