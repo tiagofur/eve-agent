@@ -22,8 +22,10 @@ export default defineAgent({
     // eve defaults without these: 40M input tokens per session and a
     // 30-day session lifetime — too generous for sessions that anonymous
     // visitors can keep alive from the public chat and WhatsApp.
-    maxInputTokensPerSession: 2_000_000,
-    maxOutputTokensPerSession: 60_000,
+    // eve 1.0 replaced maxInput/maxOutputTokensPerSession with this callback.
+    // Same caps as before: 2M input (includes cache reads) + 60K output.
     sessionTimeoutMs: 7 * 24 * 60 * 60 * 1_000,
+    sessionUsage: ({ total }) =>
+      total.inputTokens + total.outputTokens >= 2_000_000 + 60_000,
   },
 });
