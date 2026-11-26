@@ -98,29 +98,55 @@ async function runPublicTurn(args: {
   let sessionId = thread?.eveSessionId ?? null;
   let deliveryId: string | undefined;
 
+  const isDeadSession = (err: unknown): boolean =>
+    err instanceof EveClientError &&
+    (err.status === 409 ||
+      err.code === "session_not_active" ||
+      err.code === "session_stranded" ||
+      err.code === "session_version_unsupported");
+
   // Prepend instruction context indicating a public visitor session
   const payloadToEve = `[Contexto del canal: Cliente visitante en chat web público de Creapolis.Dev]\n\n${userContent}`;
 
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      if (!sessionId) {
+        const created = await createEveSession({
+          baseUrl: eve.baseUrl,
+          auth: eve,
+          message: payloadToEve,
+          operationId: `public-thread-${threadId}`,
+        });
+        sessionId = created.sessionId;
+        deliveryId = created.deliveryId;
+        await db
+          .update(chatThreads)
+          .set({ eveSessionId: sessionId })
+          .where(eq(chatThreads.id, threadId));
+      } else {
+        const sent = await sendEveMessage({
+          baseUrl: eve.baseUrl,
+          auth: eve,
+          sessionId,
+          message: payloadToEve,
+        });
+        deliveryId = sent.deliveryId;
+      }
+      break;
+    } catch (err) {
+      if (attempt === 0 && isDeadSession(err)) {
+        sessionId = null;
+        await db
+          .update(chatThreads)
+          .set({ eveSessionId: null })
+          .where(eq(chatThreads.id, threadId));
+        continue;
+      }
+      throw err;
+    }
+  }
   if (!sessionId) {
-    const created = await createEveSession({
-      baseUrl: eve.baseUrl,
-      auth: eve,
-      message: payloadToEve,
-      operationId: `public-thread-${threadId}`,
-    });
-    sessionId = created.sessionId;
-    await db
-      .update(chatThreads)
-      .set({ eveSessionId: sessionId })
-      .where(eq(chatThreads.id, threadId));
-  } else {
-    const sent = await sendEveMessage({
-      baseUrl: eve.baseUrl,
-      auth: eve,
-      sessionId,
-      message: payloadToEve,
-    });
-    deliveryId = sent.deliveryId;
+    throw new EveClientError("Could not establish an EVE session", { status: 502 });
   }
 
   const raw = await readEveStreamToTerminal({
@@ -132,6 +158,12 @@ async function runPublicTurn(args: {
   });
 
   const parsed = parseEveStream(raw, { deliveryId });
+  if (parsed.error && !parsed.text) {
+    throw new EveClientError(parsed.error.message, {
+      status: 502,
+      code: parsed.error.code,
+    });
+  }
   if (!parsed.turnCompleted && !parsed.sessionWaiting) {
     throw new EveClientError("EVE turn ended without a terminal event", { status: 502 });
   }

@@ -21,6 +21,7 @@ import {
 export interface TurnDeps {
   createSession: (input: { message: string; operationId?: string }) => Promise<{
     sessionId: string;
+    deliveryId?: string;
   }>;
   sendMessage: (input: { sessionId: string; message: string }) => Promise<{
     deliveryId?: string;
@@ -55,7 +56,8 @@ function isDeadSession(err: unknown): boolean {
   return (
     failure?.status === 409 ||
     failure?.code === "session_not_active" ||
-    failure?.code === "session_stranded"
+    failure?.code === "session_stranded" ||
+    failure?.code === "session_version_unsupported"
   );
 }
 
@@ -99,6 +101,7 @@ export async function runOrchestratorTurn(params: {
           operationId: `crm-thread-${threadId}`,
         });
         sessionId = created.sessionId;
+        deliveryId = created.deliveryId;
         await db
           .update(chatThreads)
           .set({ eveSessionId: sessionId, updatedAt: new Date() })
@@ -110,6 +113,10 @@ export async function runOrchestratorTurn(params: {
 
       const raw = await deps.readStream({ sessionId, deliveryId });
       const parsed = parseEveStream(raw, { deliveryId });
+
+      if (parsed.error && !parsed.text.trim()) {
+        return { reply: null, error: parsed.error.message };
+      }
 
       if (!parsed.text.trim()) {
         return { reply: null, error: "EVE turn finished without a reply" };

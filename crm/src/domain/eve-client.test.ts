@@ -298,4 +298,153 @@ describe("eve transport", () => {
       )
     ).rejects.toThrow();
   });
+
+  it("returns deliveryId from createEveSession when eve 1.x provides one", async () => {
+    const fetchImpl = fakeFetch(() =>
+      jsonResponse(202, { ok: true, sessionId: "wrun_V27", deliveryId: "d-0" })
+    );
+    const result = await createEveSession(
+      { baseUrl, auth, message: "hola", operationId: "crm-thread-1" },
+      fetchImpl
+    );
+    expect(result).toEqual({ sessionId: "wrun_V27", deliveryId: "d-0" });
+  });
+});
+
+/**
+ * EVE 1.x (stream version 27) fixtures: commit lines `{ at, facts }`,
+ * progress records `{ progress }`, and transport records `{ $eve }`.
+ */
+const V27_TURN_0 = [
+  '{"at":"2026-11-26T20:00:00.000Z","facts":[{"type":"session.started","data":{"runtime":{"eveVersion":"1.1.0"}}},{"type":"delivery.admitted","data":{"deliveryId":"d-0"}}]}',
+  '{"at":"2026-11-26T20:00:00.010Z","facts":[{"type":"turn.started","scope":{"turnId":"turn_0"},"data":{"turnId":"turn_0","cause":{"deliveryId":"d-0"},"follows":null}},{"type":"delivery.consumed","scope":{"turnId":"turn_0"},"data":{"deliveryId":"d-0","turnId":"turn_0","parts":[{"kind":"text","text":"hola"}]}}]}',
+  '{"at":"2026-11-26T20:00:00.020Z","facts":[{"type":"model.requested","scope":{"turnId":"turn_0"},"data":{"runId":"run_0","owner":{"turnId":"turn_0"}}}]}',
+  '{"$eve":"heartbeat"}',
+  '{"progress":{"type":"content.delta","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_reason","kind":"reasoning","delta":"pensando..."}}}',
+  '{"at":"2026-11-26T20:00:00.500Z","facts":[{"type":"content.completed","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_reason","runId":"run_0","kind":"reasoning","phase":"narration","value":"pensando..."}}]}',
+  '{"at":"2026-11-26T20:00:00.600Z","facts":[{"type":"content.completed","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_narr","runId":"run_0","kind":"text","phase":"narration","value":"Consultando CRM..."}}]}',
+  '{"progress":{"type":"content.delta","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_0","kind":"text","delta":"V27-"}}}',
+  '{"progress":{"type":"content.delta","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_0","delta":"OK"}}}',
+  '{"at":"2026-11-26T20:00:01.000Z","facts":[{"type":"content.completed","scope":{"turnId":"turn_0","runId":"run_0"},"data":{"partId":"part_0","runId":"run_0","kind":"text","phase":"reply","value":"V27-OK"}}]}',
+  '{"at":"2026-11-26T20:00:01.010Z","facts":[{"type":"turn.settled","scope":{"turnId":"turn_0"},"data":{"turnId":"turn_0","outcome":"completed","reply":["part_0"]}},{"type":"delivery.settled","data":{"deliveryId":"d-0","outcome":"handled","turnId":"turn_0"}}]}',
+].join("\n");
+
+const V27_TWO_TURN_REPLAY = [
+  V27_TURN_0,
+  '{"at":"2026-11-26T20:01:00.000Z","facts":[{"type":"delivery.admitted","data":{"deliveryId":"d-1"}}]}',
+  '{"at":"2026-11-26T20:01:00.010Z","facts":[{"type":"turn.started","scope":{"turnId":"turn_1"},"data":{"turnId":"turn_1","cause":{"deliveryId":"d-1"},"follows":"turn_0"}},{"type":"delivery.consumed","scope":{"turnId":"turn_1"},"data":{"deliveryId":"d-1","turnId":"turn_1","parts":[{"kind":"text","text":"segundo"}]}}]}',
+  '{"progress":{"type":"content.delta","scope":{"turnId":"turn_1","runId":"run_1"},"data":{"partId":"part_1","kind":"text","delta":"SEGUNDO"}}}',
+  '{"at":"2026-11-26T20:01:01.000Z","facts":[{"type":"content.completed","scope":{"turnId":"turn_1","runId":"run_1"},"data":{"partId":"part_1","runId":"run_1","kind":"text","phase":"reply","value":"SEGUNDO"}}]}',
+  '{"at":"2026-11-26T20:01:01.010Z","facts":[{"type":"turn.settled","scope":{"turnId":"turn_1"},"data":{"turnId":"turn_1","outcome":"completed","reply":["part_1"]}},{"type":"delivery.settled","data":{"deliveryId":"d-1","outcome":"handled","turnId":"turn_1"}}]}',
+].join("\n");
+
+describe("parseEveStream (v27 / eve 1.x)", () => {
+  it("parses a full v27 turn, ignoring reasoning and narration parts", () => {
+    const parsed = parseEveStream(V27_TURN_0, { deliveryId: "d-0" });
+    expect(parsed.text).toBe("V27-OK");
+    expect(parsed.turnCompleted).toBe(true);
+    expect(parsed.sessionWaiting).toBe(false);
+    expect(parsed.turnId).toBe("turn_0");
+    expect(parsed.messages).toEqual([{ id: "part_0", text: "V27-OK" }]);
+  });
+
+  it("concatenates text content.delta records before content.completed arrives", () => {
+    const partial = V27_TURN_0.split("\n").slice(0, 9).join("\n");
+    const parsed = parseEveStream(partial, { deliveryId: "d-0" });
+    expect(parsed.text).toBe("V27-OK");
+    expect(parsed.turnCompleted).toBe(false);
+    expect(parsed.messages).toEqual([]);
+  });
+
+  it("scopes a replayed v27 follow-up turn to its deliveryId", () => {
+    const parsed = parseEveStream(V27_TWO_TURN_REPLAY, { deliveryId: "d-1" });
+    expect(parsed.text).toBe("SEGUNDO");
+    expect(parsed.messages).toEqual([{ id: "part_1", text: "SEGUNDO" }]);
+    expect(parsed.turnId).toBe("turn_1");
+    expect(parsed.turnCompleted).toBe(true);
+  });
+
+  it("keeps the replayed v27 prefix open while the follow-up delivery has not settled", () => {
+    const parsed = parseEveStream(V27_TURN_0, { deliveryId: "d-1" });
+    expect(parsed.turnCompleted).toBe(false);
+    expect(parsed.sessionWaiting).toBe(false);
+    expect(parsed.messages).toEqual([]);
+  });
+
+  it("collects all completed replies on unscoped v27 reads for history sync", () => {
+    const parsed = parseEveStream(V27_TWO_TURN_REPLAY);
+    expect(parsed.messages).toEqual([
+      { id: "part_0", text: "V27-OK" },
+      { id: "part_1", text: "SEGUNDO" },
+    ]);
+    expect(parsed.text).toBe("V27-OK\n\nSEGUNDO");
+    expect(parsed.turnId).toBe("turn_1");
+    expect(parsed.turnCompleted).toBe(true);
+  });
+
+  it("surfaces turn.settled failures as parsed.error with turnCompleted=true", () => {
+    const failed = [
+      '{"at":"2026-11-26T20:00:00.000Z","facts":[{"type":"turn.started","scope":{"turnId":"turn_0"},"data":{"turnId":"turn_0","cause":{"deliveryId":"d-0"},"follows":null}},{"type":"delivery.consumed","scope":{"turnId":"turn_0"},"data":{"deliveryId":"d-0","turnId":"turn_0","parts":[{"kind":"text","text":"hola"}]}}]}',
+      '{"at":"2026-11-26T20:00:01.000Z","facts":[{"type":"turn.settled","scope":{"turnId":"turn_0"},"data":{"turnId":"turn_0","outcome":"failed","error":{"code":"MODEL_CALL_FAILED","message":"Rate limit exceeded"}}},{"type":"delivery.settled","data":{"deliveryId":"d-0","outcome":"handled","turnId":"turn_0"}}]}',
+    ].join("\n");
+    const parsed = parseEveStream(failed, { deliveryId: "d-0" });
+    expect(parsed.turnCompleted).toBe(true);
+    expect(parsed.error).toEqual({
+      code: "MODEL_CALL_FAILED",
+      message: "Rate limit exceeded",
+    });
+  });
+});
+
+describe("eve transport (v27 / eve 1.x)", () => {
+  const baseUrl = "http://127.0.0.1:3000";
+  const auth = { username: "u", password: "p" };
+
+  it("reconnects with startIndex when eve sends stream.lease-ended mid-turn", async () => {
+    const lines = V27_TURN_0.split("\n");
+    // First lease: 3 stored lines + heartbeat + lease-ended (heartbeat is not a stored line)
+    const lease1 = [...lines.slice(0, 4), '{"$eve":"stream.lease-ended"}'].join("\n") + "\n";
+    const lease2 = lines.slice(4).join("\n") + "\n";
+
+    let callCount = 0;
+    const fetchImpl = fakeFetch((url) => {
+      callCount += 1;
+      if (callCount === 1) {
+        expect(url).toBe(`${baseUrl}/eve/v1/session/wrun_V27/stream`);
+        return chunkedNdjsonResponse([lease1]);
+      }
+      expect(url).toBe(`${baseUrl}/eve/v1/session/wrun_V27/stream?startIndex=3`);
+      return chunkedNdjsonResponse([lease2]);
+    });
+
+    const raw = await readEveStreamToTerminal(
+      { baseUrl, auth, sessionId: "wrun_V27", deliveryId: "d-0" },
+      fetchImpl
+    );
+    expect(callCount).toBe(2);
+    const parsed = parseEveStream(raw, { deliveryId: "d-0" });
+    expect(parsed.text).toBe("V27-OK");
+    expect(parsed.turnCompleted).toBe(true);
+  });
+
+  it("reads all recorded turns to EOF when follow=false", async () => {
+    const lines = V27_TWO_TURN_REPLAY.split("\n");
+    const fetchImpl = fakeFetch((url) => {
+      expect(url).toBe(`${baseUrl}/eve/v1/session/wrun_V27/stream?follow=false`);
+      return chunkedNdjsonResponse([
+        lines.slice(0, 11).join("\n") + "\n",
+        lines.slice(11).join("\n") + "\n",
+      ]);
+    });
+
+    const raw = await readEveStreamToTerminal(
+      { baseUrl, auth, sessionId: "wrun_V27", follow: false },
+      fetchImpl
+    );
+    const parsed = parseEveStream(raw);
+    expect(parsed.messages).toEqual([
+      { id: "part_0", text: "V27-OK" },
+      { id: "part_1", text: "SEGUNDO" },
+    ]);
+  });
 });
