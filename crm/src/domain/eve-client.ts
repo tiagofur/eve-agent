@@ -1,15 +1,14 @@
 /**
- * Thin-proxy client for delegating the macOS chat to the EVE brain.
+ * Thin-proxy client for delegating CRM/Telegram/public chat to the EVE brain.
  *
  * The CRM route stays dumb: it resolves/creates the thread, forwards the new
  * user message to an EVE session, awaits the turn to a terminal event, and
  * persists the reply. Transport is injectable so tests run without network;
  * production passes the global fetch.
  *
- * Event shapes mirror the real /eve/v1 NDJSON protocol (verified in the
- * single-brain spike): session.started, turn.started, message.received (user
- * echo, ignored), step.*, message.appended (deltas), message.completed (full
- * assistant text), turn.completed, session.waiting (terminal).
+ * Supports EVE stream protocol v27 (eve 1.x: commit `{ at, facts }`, progress
+ * `{ progress }`, and transport `{ $eve }` NDJSON lines with renewable leases)
+ * while retaining compatibility with legacy v26 flat event envelopes.
  */
 
 export interface EveAuth {
@@ -59,6 +58,11 @@ export interface ParsedEveMessage {
   text: string;
 }
 
+export interface ParsedEveError {
+  code?: string;
+  message: string;
+}
+
 export interface ParsedEveStream {
   messages: ParsedEveMessage[];
   /** Full assistant text: completed messages, or concatenated deltas. */
@@ -66,17 +70,16 @@ export interface ParsedEveStream {
   turnCompleted: boolean;
   sessionWaiting: boolean;
   turnId?: string;
+  error?: ParsedEveError;
 }
 
 /**
  * Scoping options for replayed streams.
  *
  * The session stream is durable: opening it without a cursor replays every
- * recorded event, so a follow-up read sees the previous turn's events (and
- * its turn.completed/session.waiting) before the new turn's. Every event
- * carries `meta.deliveryIds` naming the accepted messages that own its turn,
- * and the follow-up POST response returns its `deliveryId`. Passing it here
- * keeps only the events of the turn that message owns.
+ * recorded event, so a follow-up read sees the previous turn's events before
+ * the new turn's. Passing the `deliveryId` returned by session create/send
+ * keeps only the events of the turn that delivery owns.
  */
 export interface ParseEveStreamOptions {
   deliveryId?: string;
@@ -85,27 +88,235 @@ export interface ParseEveStreamOptions {
 interface RawEnvelope {
   type?: unknown;
   data?: unknown;
+  scope?: unknown;
   meta?: unknown;
+  at?: unknown;
+  facts?: unknown;
+  progress?: unknown;
+  $eve?: unknown;
 }
 
-function eventBelongsToDelivery(evt: RawEnvelope, deliveryId?: string): boolean {
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function parseErrorInfo(value: unknown): ParsedEveError | undefined {
+  const obj = asRecord(value);
+  const message = typeof obj.message === "string" ? obj.message : undefined;
+  const code = typeof obj.code === "string" ? obj.code : undefined;
+  if (!message && !code) return undefined;
+  return {
+    ...(code ? { code } : {}),
+    message: message ?? code ?? "EVE turn failed",
+  };
+}
+
+function eventBelongsToDeliveryV26(evt: RawEnvelope, deliveryId?: string): boolean {
   if (!deliveryId) return true;
-  const meta =
-    evt.meta && typeof evt.meta === "object" ? (evt.meta as Record<string, unknown>) : {};
+  const meta = asRecord(evt.meta);
   const ids = Array.isArray(meta.deliveryIds) ? meta.deliveryIds : [];
   return ids.includes(deliveryId);
+}
+
+interface V27Part {
+  id: string;
+  kind: string;
+  phase: string;
+  text: string;
+  turnId?: string;
+}
+
+interface V27Delta {
+  kind?: string;
+  turnId?: string;
+  chunks: string[];
+}
+
+interface V27DeliverySettlement {
+  outcome: string;
+  turnId?: string;
+  reason?: string;
 }
 
 export function parseEveStream(
   ndjson: string,
   options?: ParseEveStreamOptions
 ): ParsedEveStream {
-  const messages: ParsedEveMessage[] = [];
-  const deltas: string[] = [];
-  let turnCompleted = false;
-  let sessionWaiting = false;
-  let turnId: string | undefined;
+  // Legacy v26 accumulators
+  const v26Messages: ParsedEveMessage[] = [];
+  const v26Deltas: string[] = [];
+  let v26TurnCompleted = false;
+  let v26SessionWaiting = false;
+  let v26TurnId: string | undefined;
   let counter = 0;
+
+  // Stream v27 accumulators
+  let sawV27 = false;
+  const deliveryToTurn = new Map<string, string>();
+  const runToTurn = new Map<string, string>();
+  const v27Parts = new Map<string, V27Part>();
+  const v27PartOrder: string[] = [];
+  const v27Deltas = new Map<string, V27Delta>();
+  const v27DeltaOrder: string[] = [];
+  const v27TurnReplies = new Map<string, string[]>();
+  const v27TurnOutcomes = new Map<string, string>();
+  const v27TurnErrors = new Map<string, ParsedEveError>();
+  const v27TurnPaused = new Set<string>();
+  const v27DeliverySettlements = new Map<string, V27DeliverySettlement>();
+  let v27SessionEnded = false;
+  let v27SessionError: ParsedEveError | undefined;
+  let v27LatestTurnId: string | undefined;
+
+  const resolveTurnId = (
+    scope: Record<string, unknown>,
+    data: Record<string, unknown>
+  ): string | undefined => {
+    if (typeof scope.turnId === "string") return scope.turnId;
+    if (typeof data.turnId === "string") return data.turnId;
+    const runId =
+      typeof data.runId === "string"
+        ? data.runId
+        : typeof scope.runId === "string"
+          ? scope.runId
+          : undefined;
+    if (runId) return runToTurn.get(runId);
+    return undefined;
+  };
+
+  const observeV27Fact = (rawFact: unknown) => {
+    const fact = asRecord(rawFact);
+    const type = typeof fact.type === "string" ? fact.type : "";
+    if (!type) return;
+    const data = asRecord(fact.data);
+    const scope = asRecord(fact.scope);
+
+    switch (type) {
+      case "turn.started": {
+        const turnId = typeof data.turnId === "string" ? data.turnId : undefined;
+        if (turnId) {
+          v27LatestTurnId = turnId;
+          const cause = asRecord(data.cause);
+          if (typeof cause.deliveryId === "string") {
+            deliveryToTurn.set(cause.deliveryId, turnId);
+          }
+        }
+        break;
+      }
+      case "delivery.consumed": {
+        const deliveryId =
+          typeof data.deliveryId === "string" ? data.deliveryId : undefined;
+        const turnId = resolveTurnId(scope, data);
+        if (deliveryId && turnId) {
+          deliveryToTurn.set(deliveryId, turnId);
+        }
+        break;
+      }
+      case "delivery.settled": {
+        const deliveryId =
+          typeof data.deliveryId === "string" ? data.deliveryId : undefined;
+        const outcome = typeof data.outcome === "string" ? data.outcome : "";
+        const turnId = resolveTurnId(scope, data);
+        const reason = typeof data.reason === "string" ? data.reason : undefined;
+        if (deliveryId && outcome) {
+          v27DeliverySettlements.set(deliveryId, { outcome, turnId, reason });
+          if (turnId) deliveryToTurn.set(deliveryId, turnId);
+        }
+        break;
+      }
+      case "model.requested":
+      case "model.started": {
+        const runId = typeof data.runId === "string" ? data.runId : undefined;
+        const owner = asRecord(data.owner);
+        const turnId =
+          typeof owner.turnId === "string"
+            ? owner.turnId
+            : typeof scope.turnId === "string"
+              ? scope.turnId
+              : undefined;
+        if (runId && turnId) runToTurn.set(runId, turnId);
+        break;
+      }
+      case "content.completed": {
+        const partId =
+          typeof data.partId === "string" ? data.partId : `part-${counter++}`;
+        const kind = typeof data.kind === "string" ? data.kind : "text";
+        const phase = typeof data.phase === "string" ? data.phase : "reply";
+        const text = typeof data.value === "string" ? data.value : "";
+        const turnId = resolveTurnId(scope, data);
+        if (!v27Parts.has(partId)) v27PartOrder.push(partId);
+        v27Parts.set(partId, { id: partId, kind, phase, text, turnId });
+        break;
+      }
+      case "turn.paused": {
+        const turnId = resolveTurnId(scope, data);
+        const awaiting = Array.isArray(data.awaiting) ? data.awaiting : [];
+        if (turnId && awaiting.length > 0) {
+          v27TurnPaused.add(turnId);
+        }
+        break;
+      }
+      case "turn.settled": {
+        const turnId = resolveTurnId(scope, data);
+        const outcome = typeof data.outcome === "string" ? data.outcome : "";
+        if (turnId) {
+          v27LatestTurnId = turnId;
+          if (outcome) v27TurnOutcomes.set(turnId, outcome);
+          if (Array.isArray(data.reply)) {
+            const replyIds = data.reply.filter(
+              (id): id is string => typeof id === "string"
+            );
+            v27TurnReplies.set(turnId, replyIds);
+          }
+          if (outcome === "failed") {
+            v27TurnErrors.set(
+              turnId,
+              parseErrorInfo(data.error) ?? {
+                code: "TURN_FAILED",
+                message: "EVE turn failed",
+              }
+            );
+          }
+        }
+        break;
+      }
+      case "session.ended": {
+        v27SessionEnded = true;
+        if (data.outcome === "failed") {
+          v27SessionError = parseErrorInfo(data.error) ?? {
+            code: "SESSION_FAILED",
+            message: "EVE session failed",
+          };
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const observeV27Progress = (rawProgress: unknown) => {
+    const progress = asRecord(rawProgress);
+    const type = typeof progress.type === "string" ? progress.type : "";
+    if (type !== "content.delta") return;
+    const data = asRecord(progress.data);
+    const scope = asRecord(progress.scope);
+    const partId = typeof data.partId === "string" ? data.partId : "";
+    const delta = typeof data.delta === "string" ? data.delta : "";
+    if (!partId || !delta) return;
+    const kind = typeof data.kind === "string" ? data.kind : undefined;
+    const turnId = resolveTurnId(scope, data);
+    const existing = v27Deltas.get(partId);
+    if (existing) {
+      existing.chunks.push(delta);
+      if (kind && !existing.kind) existing.kind = kind;
+      if (turnId && !existing.turnId) existing.turnId = turnId;
+    } else {
+      v27DeltaOrder.push(partId);
+      v27Deltas.set(partId, { kind, turnId, chunks: [delta] });
+    }
+  };
 
   for (const line of ndjson.split("\n")) {
     const trimmed = line.trim();
@@ -113,59 +324,206 @@ export function parseEveStream(
     let evt: RawEnvelope;
     try {
       const parsed: unknown = JSON.parse(trimmed);
-      if (!parsed || typeof parsed !== "object") continue;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
       evt = parsed as RawEnvelope;
     } catch {
       continue;
     }
 
-    if (!eventBelongsToDelivery(evt, options?.deliveryId)) continue;
+    // v27 transport records (heartbeat, position, lease-ended, stream.ended)
+    if (typeof evt.$eve === "string") {
+      sawV27 = true;
+      continue;
+    }
+
+    // v27 commit line: { at, facts: [...] }
+    if (Array.isArray(evt.facts)) {
+      sawV27 = true;
+      for (const fact of evt.facts) observeV27Fact(fact);
+      continue;
+    }
+
+    // v27 progress line: { progress: { type, scope?, data } }
+    if (evt.progress && typeof evt.progress === "object" && !Array.isArray(evt.progress)) {
+      sawV27 = true;
+      observeV27Progress(evt.progress);
+      continue;
+    }
+
+    // Legacy v26 flat event envelope
+    if (!eventBelongsToDeliveryV26(evt, options?.deliveryId)) continue;
 
     const type = typeof evt.type === "string" ? evt.type : "";
-    const data =
-      evt.data && typeof evt.data === "object"
-        ? (evt.data as Record<string, unknown>)
-        : {};
-    const meta =
-      evt.meta && typeof evt.meta === "object"
-        ? (evt.meta as Record<string, unknown>)
-        : {};
+    const data = asRecord(evt.data);
+    const meta = asRecord(evt.meta);
     const metaId = typeof meta.id === "string" ? meta.id : `evt-${counter++}`;
     const eventTurnId = typeof data.turnId === "string" ? data.turnId : undefined;
-    if (eventTurnId) turnId = eventTurnId;
+    if (eventTurnId) v26TurnId = eventTurnId;
 
     switch (type) {
       case "message.completed": {
         const text = typeof data.message === "string" ? data.message : "";
-        if (text) messages.push({ id: metaId, text });
+        if (text) v26Messages.push({ id: metaId, text });
         break;
       }
       case "message.appended": {
         const delta = typeof data.messageDelta === "string" ? data.messageDelta : "";
-        if (delta) deltas.push(delta);
+        if (delta) v26Deltas.push(delta);
         break;
       }
       case "turn.completed":
-        turnCompleted = true;
+        v26TurnCompleted = true;
         break;
       case "session.waiting":
-        sessionWaiting = true;
+        v26SessionWaiting = true;
         break;
       default:
-        // session.started, turn.started, message.received (user echo),
-        // step.* — not assistant content, ignored.
         break;
     }
   }
 
+  if (!sawV27) {
+    return {
+      messages: v26Messages,
+      // Multi-message turns (status preamble + final answer) need a paragraph
+      // break between messages; the streaming-deltas fallback stays unjoined.
+      text:
+        v26Messages.length > 0
+          ? v26Messages.map((m) => m.text).join("\n\n")
+          : v26Deltas.join(""),
+      turnCompleted: v26TurnCompleted,
+      sessionWaiting: v26SessionWaiting,
+      turnId: v26TurnId,
+    };
+  }
+
+  const targetDeliveryId = options?.deliveryId;
+  const messages: ParsedEveMessage[] = [];
+  const deltas: string[] = [];
+
+  if (targetDeliveryId) {
+    const settlement = v27DeliverySettlements.get(targetDeliveryId);
+    const targetTurnId = settlement?.turnId ?? deliveryToTurn.get(targetDeliveryId);
+    let turnCompleted = false;
+    let sessionWaiting = false;
+    let error: ParsedEveError | undefined;
+
+    if (settlement) {
+      turnCompleted = true;
+      sessionWaiting = settlement.outcome === "awaiting-input";
+      if (settlement.outcome === "failed" || settlement.outcome === "refused") {
+        error =
+          (targetTurnId ? v27TurnErrors.get(targetTurnId) : undefined) ?? {
+            code:
+              settlement.outcome === "refused"
+                ? "DELIVERY_REFUSED"
+                : "DELIVERY_FAILED",
+            message: settlement.reason ?? `EVE delivery ${settlement.outcome}`,
+          };
+      }
+    } else if (targetTurnId && v27TurnOutcomes.has(targetTurnId)) {
+      turnCompleted = true;
+    } else if (targetTurnId && v27TurnPaused.has(targetTurnId)) {
+      sessionWaiting = true;
+    } else if (v27SessionEnded) {
+      turnCompleted = true;
+      error = v27SessionError;
+    }
+
+    if (!error && targetTurnId && v27TurnErrors.has(targetTurnId)) {
+      error = v27TurnErrors.get(targetTurnId);
+    }
+
+    if (targetTurnId) {
+      const replyPartIds = v27TurnReplies.get(targetTurnId);
+      if (replyPartIds && replyPartIds.length > 0) {
+        for (const partId of replyPartIds) {
+          const part = v27Parts.get(partId);
+          if (part && part.kind === "text" && part.text) {
+            messages.push({ id: part.id, text: part.text });
+          }
+        }
+      }
+      if (messages.length === 0) {
+        for (const partId of v27PartOrder) {
+          const part = v27Parts.get(partId);
+          if (
+            part &&
+            part.turnId === targetTurnId &&
+            part.kind === "text" &&
+            part.phase === "reply" &&
+            part.text
+          ) {
+            messages.push({ id: part.id, text: part.text });
+          }
+        }
+      }
+      if (messages.length === 0) {
+        for (const partId of v27DeltaOrder) {
+          const delta = v27Deltas.get(partId);
+          if (
+            delta &&
+            delta.turnId === targetTurnId &&
+            (delta.kind === undefined || delta.kind === "text")
+          ) {
+            deltas.push(delta.chunks.join(""));
+          }
+        }
+      }
+    }
+
+    return {
+      messages,
+      text:
+        messages.length > 0
+          ? messages.map((m) => m.text).join("\n\n")
+          : deltas.join(""),
+      turnCompleted,
+      sessionWaiting,
+      turnId: targetTurnId,
+      ...(error ? { error } : {}),
+    };
+  }
+
+  // Unscoped v27 read (first turn without deliveryId or full history sync)
+  const allReplyPartIds = new Set<string>();
+  for (const ids of v27TurnReplies.values()) {
+    for (const id of ids) allReplyPartIds.add(id);
+  }
+  for (const partId of v27PartOrder) {
+    const part = v27Parts.get(partId);
+    if (
+      part &&
+      part.kind === "text" &&
+      part.text &&
+      (part.phase === "reply" || allReplyPartIds.has(part.id))
+    ) {
+      messages.push({ id: part.id, text: part.text });
+    }
+  }
+  if (messages.length === 0) {
+    for (const partId of v27DeltaOrder) {
+      const delta = v27Deltas.get(partId);
+      if (delta && (delta.kind === undefined || delta.kind === "text")) {
+        deltas.push(delta.chunks.join(""));
+      }
+    }
+  }
+
+  const error =
+    (v27LatestTurnId ? v27TurnErrors.get(v27LatestTurnId) : undefined) ??
+    v27SessionError;
+
   return {
     messages,
-    // Multi-message turns (status preamble + final answer) need a paragraph
-    // break between messages; the streaming-deltas fallback stays unjoined.
-    text: messages.length > 0 ? messages.map((m) => m.text).join("\n\n") : deltas.join(""),
-    turnCompleted,
-    sessionWaiting,
-    turnId,
+    text:
+      messages.length > 0
+        ? messages.map((m) => m.text).join("\n\n")
+        : deltas.join(""),
+    turnCompleted: v27TurnOutcomes.size > 0 || v27SessionEnded,
+    sessionWaiting: v27TurnPaused.size > 0,
+    turnId: v27LatestTurnId,
+    ...(error ? { error } : {}),
   };
 }
 
@@ -227,7 +585,7 @@ function eveError(
 export async function createEveSession(
   input: EveCall & { message: string; operationId?: string },
   fetchImpl: FetchImpl = fetch
-): Promise<{ sessionId: string }> {
+): Promise<{ sessionId: string; deliveryId?: string }> {
   const res = await fetchImpl(`${input.baseUrl}/eve/v1/session`, {
     method: "POST",
     headers: authHeaders(input.auth),
@@ -237,13 +595,21 @@ export async function createEveSession(
     }),
   });
   if (!res.ok) throw eveError("session create", res, await readErrorCode(res));
-  const data = (await res.json()) as { sessionId?: unknown };
-  if (typeof data.sessionId !== "string" || !data.sessionId) {
+  const data = (await res.json()) as { sessionId?: unknown; deliveryId?: unknown };
+  const sessionId =
+    typeof data.sessionId === "string" && data.sessionId
+      ? data.sessionId
+      : res.headers.get("x-eve-session-id")?.trim() ?? "";
+  if (!sessionId) {
     throw new EveClientError("EVE session create returned no sessionId", {
       status: res.status,
     });
   }
-  return { sessionId: data.sessionId };
+  const deliveryId =
+    typeof data.deliveryId === "string" && data.deliveryId
+      ? data.deliveryId
+      : undefined;
+  return deliveryId ? { sessionId, deliveryId } : { sessionId };
 }
 
 export async function sendEveMessage(
@@ -264,6 +630,8 @@ export async function sendEveMessage(
   return deliveryId ? { deliveryId } : {};
 }
 
+const MAX_LEASE_RECONNECTS = 60;
+
 export async function readEveStreamToTerminal(
   input: EveCall & {
     sessionId: string;
@@ -275,37 +643,102 @@ export async function readEveStreamToTerminal(
 ): Promise<string> {
   input.signal?.throwIfAborted?.();
   const streamUrl = `${input.baseUrl}/eve/v1/session/${input.sessionId}/stream`;
-  const url =
-    input.follow === false ? `${streamUrl}?follow=false` : streamUrl;
-  const res = await fetchImpl(url, {
-    headers: { Authorization: basicAuthHeader(input.auth.username, input.auth.password) },
-    signal: input.signal,
-  });
-  if (!res.ok) throw eveError("session stream", res, await readErrorCode(res));
-  if (!res.body) {
-    throw new EveClientError("EVE session stream returned an empty body", {
-      status: res.status,
-    });
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
   let acc = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (value) {
-        acc += decoder.decode(value, { stream: true });
-        const parsed = parseEveStream(acc, { deliveryId: input.deliveryId });
-        if (parsed.turnCompleted || parsed.sessionWaiting) {
-          await reader.cancel().catch(() => {});
-          return acc;
+  let cursor = 0;
+
+  for (let reconnect = 0; reconnect <= MAX_LEASE_RECONNECTS; reconnect++) {
+    input.signal?.throwIfAborted?.();
+    const url =
+      input.follow === false
+        ? `${streamUrl}?follow=false`
+        : cursor > 0
+          ? `${streamUrl}?startIndex=${cursor}`
+          : streamUrl;
+    const res = await fetchImpl(url, {
+      headers: {
+        Authorization: basicAuthHeader(input.auth.username, input.auth.password),
+      },
+      signal: input.signal,
+    });
+    if (!res.ok) throw eveError("session stream", res, await readErrorCode(res));
+    if (!res.body) {
+      throw new EveClientError("EVE session stream returned an empty body", {
+        status: res.status,
+      });
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let lineBuf = "";
+    let leaseEnded = false;
+    let streamEnded = false;
+
+    const processLine = (rawLine: string) => {
+      const trimmed = rawLine.trim();
+      if (!trimmed) return;
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const rec = parsed as Record<string, unknown>;
+          if (typeof rec.$eve === "string") {
+            if (
+              rec.$eve === "position" &&
+              typeof rec.next === "number" &&
+              Number.isSafeInteger(rec.next)
+            ) {
+              cursor = Math.max(cursor, rec.next);
+            } else if (rec.$eve === "stream.lease-ended") {
+              leaseEnded = true;
+            } else if (rec.$eve === "stream.ended") {
+              streamEnded = true;
+            }
+            return;
+          }
+        }
+      } catch {
+        // Non-JSON lines still pass through to acc for parser tolerance.
+      }
+      cursor += 1;
+      acc += `${trimmed}\n`;
+    };
+
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (value) {
+          lineBuf += decoder.decode(value, { stream: true });
+          let nl = lineBuf.indexOf("\n");
+          while (nl !== -1) {
+            processLine(lineBuf.slice(0, nl));
+            lineBuf = lineBuf.slice(nl + 1);
+            nl = lineBuf.indexOf("\n");
+          }
+          if (input.follow !== false) {
+            const parsed = parseEveStream(acc, { deliveryId: input.deliveryId });
+            if (parsed.turnCompleted || parsed.sessionWaiting) {
+              await reader.cancel().catch(() => {});
+              return acc;
+            }
+          }
+        }
+        if (done) {
+          lineBuf += decoder.decode();
+          if (lineBuf.trim()) processLine(lineBuf);
+          break;
         }
       }
-      if (done) return acc;
+    } catch (err) {
+      await reader.cancel().catch(() => {});
+      throw err;
     }
-  } catch (err) {
-    await reader.cancel().catch(() => {});
-    throw err;
+
+    if (input.follow === false) return acc;
+
+    const parsed = parseEveStream(acc, { deliveryId: input.deliveryId });
+    if (parsed.turnCompleted || parsed.sessionWaiting) return acc;
+
+    if (!leaseEnded || streamEnded || input.signal?.aborted) return acc;
   }
+
+  return acc;
 }

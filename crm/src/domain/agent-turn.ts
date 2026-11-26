@@ -34,7 +34,8 @@ export async function runProxiedTurn(args: {
     err instanceof EveClientError &&
     (err.status === 409 ||
       err.code === "session_not_active" ||
-      err.code === "session_stranded");
+      err.code === "session_stranded" ||
+      err.code === "session_version_unsupported");
 
   // Ensure EVE session, recreating once when the mapped one is dead.
   // The create-once operationId keeps retried creates from duplicating sessions.
@@ -58,6 +59,7 @@ export async function runProxiedTurn(args: {
           operationId: `crm-thread-${threadId}`,
         });
         sessionId = created.sessionId;
+        deliveryId = created.deliveryId;
         await db
           .update(chatThreads)
           .set({ eveSessionId: sessionId })
@@ -98,6 +100,12 @@ export async function runProxiedTurn(args: {
     deliveryId,
   });
   const parsed = parseEveStream(raw, { deliveryId });
+  if (parsed.error && !parsed.text) {
+    throw new EveClientError(parsed.error.message, {
+      status: 502,
+      code: parsed.error.code,
+    });
+  }
   if (!parsed.turnCompleted && !parsed.sessionWaiting) {
     throw new EveClientError("EVE turn ended without a terminal event", { status: 502 });
   }
