@@ -31,9 +31,11 @@ const READ_FILTERS: Array<{ key: ReadFilter; label: string }> = [
   { key: "all", label: "Todos" },
 ];
 
-export const WebContactsView: React.FC<{ onAskOrchestrator: (text: string) => void }> = ({
-  onAskOrchestrator,
-}) => {
+export const WebContactsView: React.FC<{
+  onAskOrchestrator: (text: string) => void;
+  /** Se avisa cuando cambia el conteo de sin revisar (el badge del sidebar). */
+  onReviewedChange?: () => void;
+}> = ({ onAskOrchestrator, onReviewedChange }) => {
   const [contacts, setContacts] = useState<WebContactItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
@@ -69,6 +71,7 @@ export const WebContactsView: React.FC<{ onAskOrchestrator: (text: string) => vo
       );
       try {
         await crmApi.markWebContactReviewed(id, read);
+        onReviewedChange?.();
       } catch (err) {
         setBanner({ ok: false, text: `No se pudo marcar: ${(err as Error).message}` });
         void load();
