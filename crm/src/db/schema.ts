@@ -160,6 +160,9 @@ export const scheduleCategoryEnum = pgEnum("schedule_category", [
   "system",
   "other",
 ]);
+// agent = EVE orchestrator turn (spends tokens); local = CRM job with a
+// registered handler (no LLM, runs even without EVE configured).
+export const scheduleKindEnum = pgEnum("schedule_kind", ["agent", "local"]);
 
 export const contentPackKindEnum = pgEnum("content_pack_kind", ["video", "carousel", "image"]);
 
@@ -848,6 +851,10 @@ export const schedules = pgTable(
     // Block this task belongs to (the desktop groups by it and can pause a
     // whole category with one switch). Seeded rows were classified by name.
     category: scheduleCategoryEnum("category").notNull().default("other"),
+    // agent rows carry the prompt below; local rows point at a registered
+    // CRM handler instead and never spend tokens.
+    kind: scheduleKindEnum("kind").notNull().default("agent"),
+    handler: text("handler"),
     // NULL = never computed yet (fresh seed): the first tick aligns it to the
     // next occurrence without firing the schedule out of its cadence.
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),

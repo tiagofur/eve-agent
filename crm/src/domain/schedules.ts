@@ -24,6 +24,19 @@ import type { EveUsage } from "./eve-client";
 
 export const SCHEDULE_CATEGORIES = scheduleCategoryEnum.enumValues;
 
+/** Handlers a local (kind=local) schedule can point at. Registered at import time. */
+export type LocalScheduleHandler = () => Promise<void> | void;
+const localHandlers = new Map<string, LocalScheduleHandler>();
+
+/** Registers (or replaces) a local job handler; tests may register their own. */
+export function registerLocalScheduleHandler(name: string, handler: LocalScheduleHandler): void {
+  localHandlers.set(name, handler);
+}
+
+export function getLocalScheduleHandler(name: string): LocalScheduleHandler | undefined {
+  return localHandlers.get(name);
+}
+
 /**
  * Category of a new schedule when its creator gave none: a keyword match on
  * the slug and title. Anything unrecognized lands in `other`, where it is
@@ -83,6 +96,9 @@ export interface ClaimedSchedule {
   title: string;
   prompt: string;
   cron: string;
+  /** agent = EVE turn; local = registered CRM handler, no tokens. */
+  kind: "agent" | "local";
+  handler: string | null;
   /** The window that came due — old next_run_at, before the claim advanced it. */
   dueAt: Date;
   /** next_run_at already advanced to the following occurrence. */
@@ -93,12 +109,21 @@ export interface ClaimedSchedule {
  * Atomically claims due rows by compare-and-set on next_run_at: the update
  * only wins while the row still shows the due window we saw, so concurrent
  * ticks (or a manual tick racing the cron) never double-dispatch a window.
+ * `kind` scopes the claim: local jobs run even without EVE, so their windows
+ * are claimed on every tick, while agent windows stay unclaimed when the
+ * brain is down and a later tick still catches them.
  */
-export async function claimDueSchedules(now: Date, limit = 20): Promise<ClaimedSchedule[]> {
+export async function claimDueSchedules(
+  now: Date,
+  limit = 20,
+  kind?: "agent" | "local"
+): Promise<ClaimedSchedule[]> {
+  const filters = [eq(schedules.enabled, true), lte(schedules.nextRunAt, now)];
+  if (kind) filters.push(eq(schedules.kind, kind));
   const candidates = await db
     .select()
     .from(schedules)
-    .where(and(eq(schedules.enabled, true), lte(schedules.nextRunAt, now)))
+    .where(and(...filters))
     .orderBy(asc(schedules.nextRunAt))
     .limit(limit);
 
@@ -125,12 +150,40 @@ export async function claimDueSchedules(now: Date, limit = 20): Promise<ClaimedS
         title: row.title,
         prompt: row.prompt,
         cron: row.cron,
+        kind: row.kind,
+        handler: row.handler,
         dueAt,
         nextRunAt,
       });
     }
   }
   return claimed;
+}
+
+/**
+ * Records a local (kind=local) run without an EVE thread: one row with the
+ * outcome, so Mission Control's history covers non-LLM jobs too. Returns the
+ * run id for the audit event / manual dispatch response.
+ */
+export async function recordLocalRun(
+  scheduleId: string,
+  outcome: { status: "succeeded"; resultSummary?: string } | { status: "failed"; error: string },
+  trigger: ScheduleRunTrigger = "cron"
+): Promise<string> {
+  const [row] = await db
+    .insert(scheduleRuns)
+    .values({
+      scheduleId,
+      trigger,
+      status: outcome.status,
+      ...(outcome.status === "succeeded"
+        ? { resultSummary: outcome.resultSummary ?? null }
+        : { error: outcome.error }),
+      startedAt: new Date(),
+      finishedAt: new Date(),
+    })
+    .returning({ id: scheduleRuns.id });
+  return row!.id;
 }
 
 /** A task whose enabled flag a category-wide toggle actually changed. */

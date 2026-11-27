@@ -1097,6 +1097,9 @@ export interface ScheduleItem {
   enabled: boolean;
   source: "system" | "user";
   category: ScheduleCategory;
+  /** local = handler del CRM (sin LLM); agent = turno EVE (gasta tokens). */
+  kind: "agent" | "local";
+  handler: string | null;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;

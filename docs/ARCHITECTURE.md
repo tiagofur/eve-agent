@@ -115,7 +115,7 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
   - `owner`: Approve/reject outbox drafts, review social posts, modify SLA statuses.
   - `dev`: Terminal coding agent access.
   - CORS configured with `origin: "*"` to support WebKit/Tauri desktop origins.
-- **Scheduled tasks (`schedules` / `schedule_runs`):** agent cronjobs live in the database and are dispatched by a minute tick (`crm/src/services/schedule-dispatcher.ts`) as EVE orchestrator turns. Each run records the tokens its turn spent — delegated subagents included — read from the stream's `usage.recorded` facts; `GET /api/schedules` adds each task's trailing-week total as `usage7d`. Tasks carry a `category` block (content/reports/sales/system/other) the desktop groups by; `PATCH /api/schedules/category/:category` pauses or resumes a whole block, re-arming next runs on resume.
+- **Scheduled tasks (`schedules` / `schedule_runs`):** agent cronjobs live in the database and are dispatched by a minute tick (`crm/src/services/schedule-dispatcher.ts`). Rows are `kind=agent` (EVE orchestrator turns) or `kind=local` (registered CRM handlers like `followup_digest`/`metrics_collector` — no LLM, run even without EVE, 12h grace). Each agent run records the tokens its turn spent — delegated subagents included — read from the stream's `usage.recorded` facts; `GET /api/schedules` adds each task's trailing-week total as `usage7d`. Tasks carry a `category` block (content/reports/sales/system/other) the desktop groups by; `PATCH /api/schedules/category/:category` pauses or resumes a whole block, re-arming next runs on resume.
 
 ### C. macOS Desktop App (`desktop/`)
 - **Runtime:** Tauri v2 + Rust

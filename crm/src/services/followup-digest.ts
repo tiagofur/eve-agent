@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import cron from "node-cron";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { contacts, events, leads, organizations, tickets } from "../db/schema";
@@ -172,24 +171,5 @@ export async function runDailyDigestOnce(now: Date = new Date()): Promise<void> 
     }
   } catch (err) {
     console.error("[Digest] failed:", err);
-  }
-}
-
-let digestInFlight: Promise<void> | null = null;
-
-/** Push matutino 9:00 (hora del servidor) + catch-up si el daemon arrancó después de las 9. */
-export function startFollowupDigest(): void {
-  const trigger = () => {
-    if (digestInFlight) return;
-    digestInFlight = runDailyDigestOnce().finally(() => {
-      digestInFlight = null;
-    });
-  };
-
-  cron.schedule("0 9 * * *", trigger);
-
-  const now = new Date();
-  if (now.getHours() >= 9) {
-    trigger();
   }
 }

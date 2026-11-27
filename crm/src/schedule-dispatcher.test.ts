@@ -32,8 +32,9 @@ import {
   assertValidCron,
   claimDueSchedules,
   nextOccurrence,
+  registerLocalScheduleHandler,
 } from "./domain/schedules";
-import { tickScheduleDispatcher } from "./services/schedule-dispatcher";
+import { dispatchScheduleNow, tickScheduleDispatcher } from "./services/schedule-dispatcher";
 
 let seq = 0;
 const nextName = () => `TEST-Sch${++seq}${Date.now().toString(36)}`;
@@ -113,6 +114,99 @@ describe("Schedules: cadencia y claim", () => {
     await insertSchedule({ cron: "0 7 * * *", nextRunAt: new Date(Date.now() + 24 * 3_600_000) });
     const claimed = await claimDueSchedules(new Date());
     expect(claimed).toHaveLength(0);
+  });
+
+  it("el filtro de kind separa los claims: los locales se reclaman aunque EVE no esté", async () => {
+    await insertSchedule({ kind: "local", handler: "test_handler", nextRunAt: new Date(Date.now() - 60_000) });
+    const locals = await claimDueSchedules(new Date(), 20, "local");
+    expect(locals).toHaveLength(1);
+    expect(locals[0]!.kind).toBe("local");
+    // The agent scope leaves the local row alone (and vice versa).
+    const agents = await claimDueSchedules(new Date(), 20, "agent");
+    expect(agents).toHaveLength(0);
+  });
+});
+
+describe("Schedules: jobs locales (kind=local)", () => {
+  it("el dispatcher ejecuta el handler registrado y registra la corrida", async () => {
+    let calls = 0;
+    registerLocalScheduleHandler("test_local_ok", () => {
+      calls += 1;
+    });
+    const row = await insertSchedule({
+      kind: "local",
+      handler: "test_local_ok",
+      title: "TEST local ok",
+      cron: "* * * * *",
+      nextRunAt: new Date(Date.now() - 30_000),
+    });
+
+    await tickScheduleDispatcher(new Date());
+
+    expect(calls).toBe(1);
+    const [run] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.scheduleId, row.id));
+    expect(run?.status).toBe("succeeded");
+    expect(run?.threadId).toBeNull();
+    expect(run?.finishedAt).toBeDefined();
+    const [after] = await db.select().from(schedules).where(eq(schedules.id, row.id)).limit(1);
+    expect(after?.nextRunAt?.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("un handler que falla deja la corrida como failed con el error", async () => {
+    registerLocalScheduleHandler("test_local_fail", () => {
+      throw new Error("local job exploded");
+    });
+    const row = await insertSchedule({
+      kind: "local",
+      handler: "test_local_fail",
+      title: "TEST local fail",
+      cron: "* * * * *",
+      nextRunAt: new Date(Date.now() - 30_000),
+    });
+
+    await tickScheduleDispatcher(new Date());
+
+    const [run] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.scheduleId, row.id));
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toContain("local job exploded");
+    // Cadence still advances: a broken job must not fire every minute forever.
+    const [after] = await db.select().from(schedules).where(eq(schedules.id, row.id)).limit(1);
+    expect(after?.nextRunAt?.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("un handler sin registro falla con mensaje claro en vez de colgarse", async () => {
+    const row = await insertSchedule({
+      kind: "local",
+      handler: "never_registered",
+      title: "TEST local huerfano",
+      cron: "* * * * *",
+      nextRunAt: new Date(Date.now() - 30_000),
+    });
+
+    await tickScheduleDispatcher(new Date());
+
+    const [run] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.scheduleId, row.id));
+    expect(run?.status).toBe("failed");
+    expect(run?.error).toContain("never_registered");
+  });
+
+  it("la ejecución manual de un job local corre sin EVE y sin hilo", async () => {
+    let calls = 0;
+    registerLocalScheduleHandler("test_local_manual", () => {
+      calls += 1;
+    });
+    const row = await insertSchedule({
+      kind: "local",
+      handler: "test_local_manual",
+      title: "TEST local manual",
+      cron: "0 7 * * *",
+      nextRunAt: null,
+    });
+
+    const opened = await dispatchScheduleNow(row.id);
+    expect(calls).toBe(1);
+    expect(opened.threadId).toBeNull();
+    expect(opened.runId).toBeTruthy();
   });
 });
 

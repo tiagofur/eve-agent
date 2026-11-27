@@ -22,6 +22,7 @@ export default defineTool({
           enabled: s.enabled,
           source: s.source,
           category: s.category,
+          kind: s.kind,
           nextRunAt: s.nextRunAt,
           lastRun: s.lastRun
             ? {

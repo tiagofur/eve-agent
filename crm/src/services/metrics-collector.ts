@@ -1,4 +1,3 @@
-import cron from "node-cron";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { analystReports, productMetricsDaily } from "../db/schema";
@@ -14,7 +13,6 @@ import { escapeHtml, sendTelegramMessage } from "./telegram";
  * (analyst_reports, createdBy metrics:collector).
  */
 
-const COLLECT_CRON = "45 6 * * *";
 
 /** UTC date (YYYY-MM-DD) a snapshot belongs to — the server runs in UTC. */
 function utcDate(now: Date = new Date()): string {
@@ -199,32 +197,4 @@ export async function notifyCollectorFailure(app: string, error: string): Promis
   } catch {
     // The audit event already carries the failure.
   }
-}
-
-let tickInFlight: Promise<unknown> | null = null;
-
-/** Daily 06:45 UTC + boot catch-up when today has no snapshots yet. */
-export function startMetricsCollector(): void {
-  cron.schedule(COLLECT_CRON, () => {
-    if (tickInFlight) return;
-    tickInFlight = tickMetricsCollector()
-      .catch((err) => console.error("[Metrics] tick failed:", err))
-      .finally(() => {
-        tickInFlight = null;
-      });
-  });
-
-  // Boot catch-up: a deploy after 06:45 must still collect today's snapshot.
-  void (async () => {
-    try {
-      const [row] = await db
-        .select({ id: productMetricsDaily.id })
-        .from(productMetricsDaily)
-        .where(eq(productMetricsDaily.metricDate, utcDate()))
-        .limit(1);
-      if (!row) await tickMetricsCollector();
-    } catch (err) {
-      console.error("[Metrics] boot catch-up failed:", err);
-    }
-  })();
 }
