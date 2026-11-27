@@ -688,11 +688,23 @@ export const socialPosts = pgTable(
     hashtags: text("hashtags").array().notNull().default(sql`'{}'::text[]`),
     imagePrompt: text("image_prompt"),
     imageUrl: text("image_url"),
+    // Content-pipeline brand (creapolis/pepinillo/solennix): resolves the
+    // per-brand Meta credentials at publish time. Legacy posts have NULL.
+    brand: text("brand"),
+    // Public video asset (IG Reels/Stories + FB video): the clip lives on
+    // disk (videoPath) and is served unauthenticated under the unguessable
+    // 32-hex publicId, the same gate as pack slides.
+    publicId: text("public_id"),
+    videoPath: text("video_path"),
     status: socialPostStatusEnum("status").notNull().default("pending_approval"),
     rejectedReason: text("rejected_reason"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     externalPostId: text("external_post_id"),
     externalPostUrl: text("external_post_url"),
+    // Facebook is best-effort on video posts: a FB failure never un-publishes
+    // the IG Reel (same contract as content_packs.fb_post_url).
+    fbPostUrl: text("fb_post_url"),
+    fbPublishedAt: timestamp("fb_published_at", { withTimezone: true }),
     createdBy: text("created_by").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

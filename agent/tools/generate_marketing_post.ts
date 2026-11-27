@@ -28,6 +28,12 @@ export default defineTool({
       .enum(["image", "video"])
       .optional()
       .describe("Visual format: 'image' (generated via Nano Banana 2.1) or 'video' (generated via Google Veo / Gemini Omni Flash)"),
+    brand: z
+      .enum(["creapolis", "pepinillo", "solennix"])
+      .optional()
+      .describe(
+        "Content-pipeline brand that owns this post. REQUIRED for format='video': the IG Reel / FB video publish resolves the per-brand accounts from it."
+      ),
     productSlug: z
       .string()
       .regex(/^[a-z0-9-]+$/)

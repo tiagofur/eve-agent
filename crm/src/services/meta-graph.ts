@@ -1,8 +1,9 @@
 /**
  * Meta Graph API Service for Creapolis Social Publishing
  * Supports Facebook Page Posts & Instagram Business Media Publishing
- * (single image + carousel), with per-brand credentials for the three
- * content-pipeline brands: creapolis, pepinillo, solennix.
+ * (single image + carousel + video Reels/Stories), with per-brand
+ * credentials for the three content-pipeline brands: creapolis,
+ * pepinillo, solennix.
  *
  * PUBLISH_DRY_RUN=true short-circuits every publish into a fake success —
  * used to rehearse the approve+publish flow without touching real accounts.
@@ -418,5 +419,138 @@ export async function publishInstagramMedia(args: {
     externalPostId: pubData.id as string,
     externalPostUrl: `https://instagram.com/p/${pubData.id}`,
     platform: "instagram",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Instagram video publishing (Reels + Stories, per brand)             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Publishes a vertical video to the brand's Instagram account as a Reel
+ * (permanent, feeds the algorithm) or a Story (24h). `videoUrl` must be a
+ * publicly accessible HTTPS mp4 URL (Meta's servers download it). Videos
+ * transcode asynchronously and can take minutes — the container poll gets a
+ * generous timeout here, unlike the near-instant image containers.
+ */
+export async function publishInstagramVideo(args: {
+  brand: PublishBrand;
+  videoUrl: string;
+  caption: string;
+  hashtags?: string[];
+  mediaType: "REELS" | "STORIES";
+}): Promise<PublishResult> {
+  const cfg = resolveBrandConfig(args.brand);
+  const { version, pageAccessToken, instagramAccountId } = cfg;
+
+  if (process.env.PUBLISH_DRY_RUN === "true") {
+    console.warn(`[MetaGraph] PUBLISH_DRY_RUN: skipping Instagram ${args.mediaType} publish (${args.brand})`);
+    return {
+      success: true,
+      externalPostId: `dryrun_ig_${Date.now()}`,
+      externalPostUrl:
+        args.mediaType === "REELS" ? `https://instagram.com/reel/dryrun` : "https://instagram.com/dryrun_story",
+      platform: "instagram",
+    };
+  }
+
+  if (!instagramAccountId || !pageAccessToken) {
+    throw new Error(brandMissingMessage(args.brand));
+  }
+  if (!args.videoUrl.startsWith("http")) {
+    throw new Error("Instagram video publish needs a publicly accessible HTTPS video URL");
+  }
+
+  const params: Record<string, string> = {
+    media_type: args.mediaType,
+    video_url: args.videoUrl,
+    access_token: pageAccessToken,
+  };
+  // Stories have no caption surface; Reels carry the caption + hashtags.
+  if (args.mediaType === "REELS") {
+    params.caption = withHashtags(args.caption, args.hashtags);
+    params.share_to_feed = "true";
+  }
+
+  const { res, data } = await graphPost(
+    `https://graph.facebook.com/${version}/${instagramAccountId}/media`,
+    params
+  );
+  if (!res.ok || data.error || typeof data.id !== "string") {
+    await graphError(data, res, `Instagram ${args.mediaType.toLowerCase()} container creation failed`);
+  }
+
+  // Video containers transcode server-side: allow up to 8 minutes.
+  await waitForContainer(version, data.id as string, pageAccessToken, 8 * 60_000);
+
+  const { res: pubRes, data: pubData } = await graphPost(
+    `https://graph.facebook.com/${version}/${instagramAccountId}/media_publish`,
+    { creation_id: data.id as string, access_token: pageAccessToken }
+  );
+  if (!pubRes.ok || pubData.error || typeof pubData.id !== "string") {
+    await graphError(pubData, pubRes, `Instagram ${args.mediaType.toLowerCase()} publish failed`);
+  }
+  return {
+    success: true,
+    externalPostId: pubData.id as string,
+    externalPostUrl:
+      args.mediaType === "REELS"
+        ? `https://instagram.com/reel/${pubData.id}`
+        : "https://instagram.com/", // Stories carry no public permalink
+    platform: "instagram",
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Facebook video publishing (page video, per brand)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Publishes a video to the brand's Facebook page from a public HTTPS URL
+ * (`/{pageId}/videos` with file_url). Vertical short clips surface as
+ * Reels on Facebook. Best-effort by contract: callers never un-publish the
+ * IG side when this fails.
+ */
+export async function publishFacebookVideo(args: {
+  brand: PublishBrand;
+  videoUrl: string;
+  description: string;
+  hashtags?: string[];
+}): Promise<PublishResult> {
+  const cfg = resolveBrandConfig(args.brand);
+  const { version, pageId } = cfg;
+  if (process.env.PUBLISH_DRY_RUN === "true") {
+    console.warn(`[MetaGraph] PUBLISH_DRY_RUN: skipping Facebook video publish (${args.brand})`);
+    return {
+      success: true,
+      externalPostId: `dryrun_fb_${Date.now()}`,
+      externalPostUrl: "https://facebook.com/dryrun_video",
+      platform: "facebook",
+    };
+  }
+
+  const pageAccessToken = cfg.tokenIsSystemUser
+    ? await getPageAccessToken(cfg.pageAccessToken ?? "", cfg.pageId ?? "", version)
+    : cfg.pageAccessToken;
+  if (!pageId || !pageAccessToken) {
+    throw new Error(brandMissingMessage(args.brand));
+  }
+  if (!args.videoUrl.startsWith("http")) {
+    throw new Error("Facebook video publish needs a publicly accessible HTTPS video URL");
+  }
+
+  const { res, data } = await graphPost(`https://graph.facebook.com/${version}/${pageId}/videos`, {
+    file_url: args.videoUrl,
+    description: withHashtags(args.description, args.hashtags),
+    access_token: pageAccessToken,
+  });
+  if (!res.ok || data.error || typeof data.id !== "string") {
+    await graphError(data, res, "Facebook video publish failed");
+  }
+  return {
+    success: true,
+    externalPostId: data.id as string,
+    externalPostUrl: `https://facebook.com/${pageId}/videos/${data.id}`,
+    platform: "facebook",
   };
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   publishToFacebook,
+  publishFacebookVideo,
   publishInstagramMedia,
+  publishInstagramVideo,
   resolveBrandConfig,
   type PublishBrand,
 } from "./services/meta-graph";
@@ -207,5 +209,112 @@ describe("publishToFacebook con token de usuario de sistema", () => {
     expect(result.success).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toContain("/photos");
+  });
+});
+
+describe("publishInstagramVideo (Reel / Historia)", () => {
+  it("reel: contenedor REELS con video_url + caption → poll FINISHED → media_publish", async () => {
+    vi.stubEnv("PUBLISH_PEPINILLO_IG_ACCOUNT_ID", "ig-pep");
+    vi.stubEnv("PUBLISH_PEPINILLO_ACCESS_TOKEN", "tok-pep");
+    delete process.env.PUBLISH_DRY_RUN;
+
+    const calls = mockGraph([
+      { json: { id: "video-container" } },
+      { json: { status_code: "FINISHED" } },
+      { json: { id: "reel-123" } },
+    ]);
+
+    const result = await publishInstagramVideo({
+      brand: "pepinillo",
+      videoUrl: "https://crm.example/api/public/content/social/abc/video.mp4",
+      caption: "Clip vertical",
+      hashtags: ["Pepinillo"],
+      mediaType: "REELS",
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.externalPostId).toBe("reel-123");
+    expect(result.externalPostUrl).toContain("instagram.com/reel/reel-123");
+
+    const posts = calls.filter((c) => !c.url.includes("?fields="));
+    expect(posts).toHaveLength(2);
+    const params = new URLSearchParams(posts[0]!.body);
+    expect(posts[0]!.url).toContain("/media");
+    expect(params.get("media_type")).toBe("REELS");
+    expect(params.get("video_url")).toContain("/video.mp4");
+    expect(params.get("share_to_feed")).toBe("true");
+    expect(params.get("caption")).toContain("Clip vertical");
+    expect(calls[1]!.url).toContain("video-container");
+    expect(posts[1]!.url).toContain("/media_publish");
+  });
+
+  it("historia: media_type STORIES sin caption ni share_to_feed", async () => {
+    vi.stubEnv("PUBLISH_SOLENNIX_IG_ACCOUNT_ID", "ig-sol");
+    vi.stubEnv("PUBLISH_SOLENNIX_ACCESS_TOKEN", "tok-sol");
+    delete process.env.PUBLISH_DRY_RUN;
+
+    const calls = mockGraph([
+      { json: { id: "story-container" } },
+      { json: { status_code: "FINISHED" } },
+      { json: { id: "story-77" } },
+    ]);
+
+    const result = await publishInstagramVideo({
+      brand: "solennix",
+      videoUrl: "https://crm.example/v.mp4",
+      caption: "",
+      mediaType: "STORIES",
+    });
+
+    expect(result.success).toBe(true);
+    const params = new URLSearchParams(calls.filter((c) => !c.url.includes("?fields="))[0]!.body);
+    expect(params.get("media_type")).toBe("STORIES");
+    expect(params.has("caption")).toBe(false);
+    expect(params.has("share_to_feed")).toBe(false);
+  });
+
+  it("sin credenciales de la marca: error que nombra la marca", async () => {
+    delete process.env.PUBLISH_DRY_RUN;
+    delete process.env.PUBLISH_PEPINILLO_IG_ACCOUNT_ID;
+    delete process.env.PUBLISH_PEPINILLO_ACCESS_TOKEN;
+
+    await expect(
+      publishInstagramVideo({
+        brand: "pepinillo",
+        videoUrl: "https://x/v.mp4",
+        caption: "x",
+        mediaType: "REELS",
+      })
+    ).rejects.toThrow(/pepinillo.*PUBLISH_PEPINILLO/s);
+  });
+});
+
+describe("publishFacebookVideo", () => {
+  it("intercambia el token de sistema por token de página antes de /videos", async () => {
+    vi.stubEnv("PUBLISH_SOLENNIX_FB_PAGE_ID", "page-sol");
+    vi.stubEnv("PUBLISH_SOLENNIX_ACCESS_TOKEN", "tok-sistema");
+    delete process.env.PUBLISH_DRY_RUN;
+
+    const calls = mockGraph([
+      { json: { access_token: "tok-pagina" } }, // GET page?fields=access_token
+      { json: { id: "video-9" } }, // POST /videos
+    ]);
+
+    const result = await publishFacebookVideo({
+      brand: "solennix",
+      videoUrl: "https://crm.example/v.mp4",
+      description: "Clip",
+      hashtags: ["Solennix"],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.externalPostUrl).toContain("facebook.com/");
+
+    const params = new URLSearchParams(calls[1]!.body);
+    expect(calls[1]!.url).toContain("/videos");
+    expect(params.get("file_url")).toContain("/v.mp4");
+    expect(params.get("description")).toContain("Clip");
+    // The page token exchange ran with the system-user token.
+    expect(calls[0]!.url).toContain("page-sol?fields=access_token");
   });
 });

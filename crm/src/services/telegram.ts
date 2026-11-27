@@ -386,12 +386,21 @@ ${hashtagsFormatted ? `<b>Hashtags:</b> ${hashtagsFormatted}\n` : ""}
 
 ${post.imagePrompt ? `<b>Prompt Visual (Nano Banana):</b>\n<code>${escapeHtml(post.imagePrompt.slice(0, 400))}</code>\n\n` : ""}¿Deseas autorizar la publicación en ${platformUpper}?`;
 
-  const keyboard = [
-    [
-      { text: `✅ Aprobar para ${platformUpper}`, callback_data: `approve_post:${post.id}` },
-      { text: "❌ Rechazar", callback_data: `reject_post:${post.id}` },
-    ],
-  ];
+  const isVideoPost = Boolean(post.imageUrl?.startsWith("data:video/") || post.videoPath);
+  const keyboard = isVideoPost
+    ? [
+        [
+          { text: "✅ Publicar Reel (IG+FB)", callback_data: `approve_post:${post.id}` },
+          { text: "📱 Reel + Historia", callback_data: `approve_post_story:${post.id}` },
+        ],
+        [{ text: "❌ Rechazar", callback_data: `reject_post:${post.id}` }],
+      ]
+    : [
+        [
+          { text: `✅ Aprobar para ${platformUpper}`, callback_data: `approve_post:${post.id}` },
+          { text: "❌ Rechazar", callback_data: `reject_post:${post.id}` },
+        ],
+      ];
 
   if (post.imageUrl && (post.imageUrl.startsWith("data:") || !post.imageUrl.startsWith("http"))) {
     const isVideo = post.imageUrl.startsWith("data:video/") || post.imageUrl.includes("video/mp4");
@@ -673,6 +682,59 @@ export async function startTelegramPolling() {
                     `${msg.text}\n\n🚫 *Rechazado por Administrador a las ${new Date().toLocaleTimeString()}*`
                   );
                 }
+              } else if (cqData.startsWith("approve_post_story:")) {
+                const postId = cqData.replace("approve_post_story:", "");
+                const { reviewSocialPost, publishSocialPost, publishSocialStory } = await import(
+                  "../domain/marketing"
+                );
+                const originalContent = msg.text || msg.caption || "";
+
+                const reviewRes = await reviewSocialPost({
+                  postId,
+                  decision: "approved",
+                  actor: "telegram_admin",
+                });
+
+                if (reviewRes.success) {
+                  await answerCallbackQuery(cq.id, "🚀 Publicando Reel + Historia...");
+                  await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                  const hasPhoto = !!msg.photo;
+                  try {
+                    const pubRes = await publishSocialPost(postId, "telegram_admin");
+                    const postUrl = pubRes.publishResult?.externalPostUrl || "";
+                    const postIdMeta = pubRes.publishResult?.externalPostId || "";
+                    const fbUrl = (pubRes as { fbUrl?: string }).fbUrl || "";
+                    let suffix = `\n\n🚀 <b>¡REEL PUBLICADO EN META!</b>\n🆔 ID: <code>${escapeHtml(postIdMeta)}</code>${postUrl ? `\n🔗 <a href="${postUrl}">Ver Reel</a>` : ""}${fbUrl ? `\n🔗 <a href="${fbUrl}">Ver en Facebook</a>` : ""}`;
+                    try {
+                      await publishSocialStory(postId, "telegram_admin");
+                      suffix += "\n📱 <b>Historia compartida</b> (24h)";
+                    } catch (storyErr: any) {
+                      console.error("IG story publish failed after reel:", storyErr);
+                      suffix += `\n⚠️ La Historia falló (el Reel ya está publicado): ${escapeHtml(storyErr.message)}`;
+                    }
+                    await editTelegramMessage(
+                      msg.message_id,
+                      msg.chat.id,
+                      `${originalContent}${suffix}`,
+                      undefined,
+                      "HTML",
+                      hasPhoto
+                    );
+                  } catch (publishErr: any) {
+                    console.error("Meta video publish error after approval:", publishErr);
+                    await removeTelegramKeyboard(msg.message_id, msg.chat.id);
+                    await editTelegramMessage(
+                      msg.message_id,
+                      msg.chat.id,
+                      `${originalContent}\n\n⚠️ <b>Aprobado en CRM, pero falló el envío a Meta:</b> ${escapeHtml(publishErr.message)}`,
+                      undefined,
+                      "HTML",
+                      hasPhoto
+                    );
+                  }
+                } else {
+                  await answerCallbackQuery(cq.id, "Error al aprobar.");
+                }
               } else if (cqData.startsWith("approve_post:")) {
                 const postId = cqData.replace("approve_post:", "");
                 const { reviewSocialPost, publishSocialPost } = await import("../domain/marketing");
@@ -692,10 +754,11 @@ export async function startTelegramPolling() {
                     const pubRes = await publishSocialPost(postId, "telegram_admin");
                     const postUrl = pubRes.publishResult?.externalPostUrl || "";
                     const postIdMeta = pubRes.publishResult?.externalPostId || "";
+                    const fbUrl = (pubRes as { fbUrl?: string }).fbUrl || "";
                     await editTelegramMessage(
                       msg.message_id,
                       msg.chat.id,
-                      `${originalContent}\n\n🚀 <b>¡PUBLICADO EN META CON ÉXITO!</b>\n🆔 ID: <code>${escapeHtml(postIdMeta)}</code>${postUrl ? `\n🔗 <a href="${postUrl}">Ver publicación</a>` : ""}`,
+                      `${originalContent}\n\n🚀 <b>¡PUBLICADO EN META CON ÉXITO!</b>\n🆔 ID: <code>${escapeHtml(postIdMeta)}</code>${postUrl ? `\n🔗 <a href="${postUrl}">Ver publicación</a>` : ""}${fbUrl ? `\n🔗 <a href="${fbUrl}">Ver en Facebook</a>` : ""}`,
                       undefined,
                       "HTML",
                       hasPhoto

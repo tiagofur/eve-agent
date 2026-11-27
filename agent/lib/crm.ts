@@ -548,6 +548,7 @@ export interface GenerateMarketingPostParams {
   tone?: string;
   targetAudience?: string;
   format?: "image" | "video";
+  brand?: "creapolis" | "pepinillo" | "solennix";
   productSlug?: string;
 }
 
