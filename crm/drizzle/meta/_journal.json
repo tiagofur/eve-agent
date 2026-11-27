@@ -197,6 +197,13 @@
       "when": 1795755020619,
       "tag": "0027_schedule_category",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1795830000000,
+      "tag": "0028_content_split_crons",
+      "breakpoints": true
     }
   ]
 }
