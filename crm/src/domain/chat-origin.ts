@@ -24,9 +24,11 @@ export const webThreadFilter: SQL = like(
 );
 
 // NOT LIKE yields NULL (not true) on keyless threads, so those go in
-// explicitly. Schedule-run threads are internal but machine-generated: the
-// owner's chat list shows only their own conversations with the orchestrator.
+// explicitly — and the schedule exclusion needs the same NULL guard, or it
+// would silently drop every keyless (desktop) thread. Schedule-run threads
+// are internal but machine-generated: the owner's chat list shows only their
+// own conversations with the orchestrator.
 export const internalThreadFilter: SQL = and(
   or(isNull(chatThreads.externalKey), notLike(chatThreads.externalKey, `${WEB_THREAD_KEY_PREFIX}%`)),
-  notLike(chatThreads.externalKey, `${SCHEDULE_THREAD_KEY_PREFIX}%`)
+  or(isNull(chatThreads.externalKey), notLike(chatThreads.externalKey, `${SCHEDULE_THREAD_KEY_PREFIX}%`))
 )!;
