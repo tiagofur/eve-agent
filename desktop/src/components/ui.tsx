@@ -148,20 +148,20 @@ export const Modal: React.FC<ModalProps> = ({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          "relative w-full rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl outline-none anim-scale-in",
+          "relative flex w-full flex-col max-h-[calc(100vh-2rem)] rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl outline-none anim-scale-in",
           width
         )}
       >
-        <div className="flex items-start justify-between gap-4 px-6 pt-5">
+        <div className="flex shrink-0 items-start justify-between gap-4 px-6 pt-5">
           <h3 className="text-lg font-semibold text-white">{title}</h3>
           <button onClick={onClose} aria-label="Cerrar" className={closeBtnClass}>
             <X className="w-5 h-5" />
           </button>
         </div>
-        {description && <p className="text-xs text-zinc-400 px-6 mt-1 leading-relaxed">{description}</p>}
-        <div className="p-6">{children}</div>
+        {description && <p className="shrink-0 text-xs text-zinc-400 px-6 mt-1 leading-relaxed">{description}</p>}
+        <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
         {footer && (
-          <div className="flex items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3.5">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-800 px-5 py-3.5">
             {footer}
           </div>
         )}
