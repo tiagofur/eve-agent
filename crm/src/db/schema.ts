@@ -746,6 +746,35 @@ export const contentPacks = pgTable(
 );
 
 /** Orchestrator chat threads (persistent conversation memory) */
+
+/**
+ * Per-brand visual profile the owner edits from Mission Control
+ * (Contenido → Configuración Visual) and `render_content_pack` consults on
+ * every run. `mode` gates the AI cover: `hybrid` = generated art + short
+ * satori headline, `image_only` = full-bleed art without text, `editorial`
+ * = today's deterministic typography (no image spend).
+ */
+export const brandVisualConfigs = pgTable(
+  "brand_visual_configs",
+  {
+    id: id(),
+    // One row per brand; the migration seeds the three. Matches the
+    // content_pack_brand enum values.
+    brand: text("brand").notNull(),
+    mode: text("mode").notNull().default("editorial"),
+    // Free-form art direction the owner writes: palette, style, what to
+    // avoid. Concatenated with the designer's cover scene when generating.
+    artDirection: text("art_direction").notNull().default(""),
+    // Headline word cap the tool enforces on cover slides.
+    coverTitleMaxWords: integer("cover_title_max_words").notNull().default(8),
+    showLogo: boolean("show_logo").notNull().default(true),
+    // Image model id, so a newer/cheaper model is one edit away (no deploy).
+    imageModel: text("image_model").notNull().default("gemini-nano-banana-2.1"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("brand_visual_configs_brand_uq").on(t.brand)]
+);
 export const estimates = pgTable("estimates", {
   id: id(),
   leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
