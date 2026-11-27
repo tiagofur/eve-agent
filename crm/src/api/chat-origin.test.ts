@@ -81,6 +81,9 @@ describe("Chat threads: web / internal origin", () => {
     // The list is the newest 50 of a shared DB: assert the boundary, not who is in it.
     expect(internalBody.threads.every((t) => t.origin === "internal")).toBe(true);
     expect(internalBody.threads.some((t) => t.id === webId)).toBe(false);
+    // Keyless (desktop) threads must stay visible — a NOT LIKE alone reads
+    // NULL on them and would silently drop the owner's own chats.
+    expect(internalBody.threads.some((t) => t.id === desktopId)).toBe(true);
     // Schedule-run threads are internal staff traffic, but the owner's chat
     // list only shows their own conversations — machine turns stay out.
     expect(internalBody.threads.some((t) => t.id === scheduleId)).toBe(false);
