@@ -116,18 +116,20 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
   - `dev`: Terminal coding agent access.
   - CORS configured with `origin: "*"` to support WebKit/Tauri desktop origins.
 - **Scheduled tasks (`schedules` / `schedule_runs`):** agent cronjobs live in the database and are dispatched by a minute tick (`crm/src/services/schedule-dispatcher.ts`). Rows are `kind=agent` (EVE orchestrator turns) or `kind=local` (registered CRM handlers like `followup_digest`/`metrics_collector` — no LLM, run even without EVE, 12h grace). Each agent run records the tokens its turn spent — delegated subagents included — read from the stream's `usage.recorded` facts; `GET /api/schedules` adds each task's trailing-week total as `usage7d`. Tasks carry a `category` block (content/reports/sales/system/other) the desktop groups by; `PATCH /api/schedules/category/:category` pauses or resumes a whole block, re-arming next runs on resume.
+- **Web contacts inbox (`chat_threads.reviewed_at`):** threads keyed `public:<uuid>` are the visitors of the creapolis.dev chat widget; everything else (desktop chats, the Telegram orchestrator thread, schedule runs) is internal. `GET /api/chat/threads` reports each thread's `origin` and filters by it, and `POST /api/chat` refuses a web thread. `/api/web-contacts` is the owner's review inbox over the web chats: list (first message + size), unread count, mark reviewed, and the conversation. A visitor writing again on a reviewed thread returns it to "sin revisar"; the first message of a chat pages the owner's Telegram (`crm/src/services/web-contact-page.ts`, capped at 5 pages per 10 minutes).
 
 ### C. macOS Desktop App (`desktop/`)
 - **Runtime:** Tauri v2 + Rust
 - **Frontend:** React 18 + Vite + Tailwind CSS + Lucide Icons
 - **Key Modules:**
   1. **Dashboard:** High-level pipeline metrics, conversion rates, open SLAs, and approval alerts.
-  2. **Orquestador Chat:** Thin visual layer over the single EVE brain. `POST /api/chat` forwards each turn to an EVE `/eve/v1` session (durable server-side: closing the chat never aborts the run), maps threads 1:1 to sessions (`chat_threads.eve_session_id`), and persists replies; without EVE env it answers 503 instead of a second brain.
+  2. **Orquestador Chat:** Thin visual layer over the single EVE brain. `POST /api/chat` forwards each turn to an EVE `/eve/v1` session (durable server-side: closing the chat never aborts the run), maps threads 1:1 to sessions (`chat_threads.eve_session_id`), and persists replies; without EVE env it answers 503 instead of a second brain. It lists internal threads only — the web chats live in Contactos web.
   3. **Marketing Studio:** AI Campaign generator. View generated copy, hashtags, and Muse Image visual renders with 1-click Approve / Reject / Publish buttons.
   4. **Outbox Approvals:** Human-in-the-Loop review queue for cold email and WhatsApp drafts.
   5. **Leads & Pipeline:** Kanban/Table view with full Dossier slide-over drawers (pains, verified source links, outreach history).
   6. **Support SLA:** Incident management with live countdowns against contractual SLAs (1h critical, 4h major, 24h minor).
   7. **Coding Dispatcher:** Backlog and ready tasks queue for autonomous terminal workers.
+  8. **Contactos web:** Review inbox for the chats visitors open on creapolis.dev — sin revisar / revisados, unread badge in the sidebar, the whole conversation in a drawer, and «Pedir respuesta», which hands the transcript to the Orquestador Chat as untrusted data so the agent leaves a reply draft in Outbox (`desktop/src/lib/webContactReply.ts` builds that prompt).
 
 ### D. Mobile Channel: Telegram Bot (`crm/src/services/telegram.ts`)
 - **Bot Username:** `@creapolis_cm_bot`

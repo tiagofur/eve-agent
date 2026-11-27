@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, CircleAlert, Globe, Inbox, RefreshCw, User } from "lucide-react";
+import { Bot, CircleAlert, Globe, Inbox, RefreshCw, Send, User } from "lucide-react";
 import { crmApi, type WebContactItem, type WebContactMessage } from "../api";
 import { Badge, EmptyState, SectionList, Skeleton, SlideOver } from "../components/ui";
+import { buildReplyPrompt } from "../lib/webContactReply";
 
 /**
  * Bandeja de contactos web: los chats que abren los visitantes de
  * creapolis.dev, separados del Orquestador Chat. Cada contacto queda "sin
- * revisar" hasta que se abre (reversible). Abrirlo carga la conversación
- * entre el visitante y el asistente.
+ * revisar" hasta que se abre (reversible). Abrirlo carga la conversación y
+ * permite pedirle al Orquestador un borrador de respuesta, que queda en
+ * Outbox esperando aprobación.
  */
 
 type ReadFilter = "unread" | "read" | "all";
@@ -29,7 +31,11 @@ const READ_FILTERS: Array<{ key: ReadFilter; label: string }> = [
   { key: "all", label: "Todos" },
 ];
 
-export const WebContactsView: React.FC = () => {
+export const WebContactsView: React.FC<{
+  onAskOrchestrator: (text: string) => void;
+  /** Se avisa cuando cambia el conteo de sin revisar (el badge del sidebar). */
+  onReviewedChange?: () => void;
+}> = ({ onAskOrchestrator, onReviewedChange }) => {
   const [contacts, setContacts] = useState<WebContactItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
@@ -65,6 +71,7 @@ export const WebContactsView: React.FC = () => {
       );
       try {
         await crmApi.markWebContactReviewed(id, read);
+        onReviewedChange?.();
       } catch (err) {
         setBanner({ ok: false, text: `No se pudo marcar: ${(err as Error).message}` });
         void load();
@@ -231,17 +238,31 @@ export const WebContactsView: React.FC = () => {
             </>
           }
           actions={
-            <button
-              onClick={() => void setReviewed(selected.id, !selected.reviewedAt)}
-              className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition whitespace-nowrap"
-            >
-              {selected.reviewedAt ? "Marcar sin revisar" : "Marcar revisado"}
-            </button>
+            <>
+              <button
+                onClick={() => void setReviewed(selected.id, !selected.reviewedAt)}
+                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition whitespace-nowrap"
+              >
+                {selected.reviewedAt ? "Marcar sin revisar" : "Marcar revisado"}
+              </button>
+              <button
+                onClick={() => {
+                  if (messages) onAskOrchestrator(buildReplyPrompt(messages));
+                }}
+                disabled={!messages}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 text-black hover:bg-emerald-400 transition disabled:opacity-50 whitespace-nowrap"
+                title="Le pide al Orquestador un borrador de respuesta; queda en Outbox esperando tu aprobación"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Pedir respuesta
+              </button>
+            </>
           }
         >
           <div className="p-6 space-y-5">
             <p className="text-xs text-zinc-500 leading-relaxed">
-              Conversación entre el visitante y el asistente de la web. El visitante no ve nada de lo que pase por acá.
+              El visitante no ve nada de lo que escribas desde acá. «Pedir respuesta» abre el Orquestador Chat con
+              esta conversación: el agente deja un borrador en Outbox y nada se envía sin tu aprobación.
             </p>
 
             {messagesLoading ? (

@@ -58,6 +58,14 @@ export const App: React.FC = () => {
     setActiveTab("chat");
   };
 
+  // Contactos web avisa cuando marca/desmarca: el badge no espera al poll de 15s.
+  const refreshUnreadWebContacts = () => {
+    crmApi
+      .getUnreadWebContactCount()
+      .then((r) => setUnreadWebContacts(r.unread))
+      .catch(() => {});
+  };
+
   const checkStatus = async () => {
     try {
       await crmApi.getHealth();
@@ -84,8 +92,8 @@ export const App: React.FC = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-zinc-950 text-zinc-100 font-sans selection:bg-emerald-500 selection:text-black">
       {/* Sidebar */}
-      <aside className="w-64 border-r border-zinc-800 bg-zinc-950/80 backdrop-blur flex flex-col justify-between shrink-0 select-none">
-        <div>
+      <aside className="w-64 border-r border-zinc-800 bg-zinc-950/80 backdrop-blur flex flex-col justify-between shrink-0 select-none min-h-0">
+        <div className="flex flex-col min-h-0">
           {/* Logo / Branding */}
           <div className="p-5 border-b border-zinc-800/80 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -103,8 +111,8 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Nav Links */}
-          <nav className="p-3 space-y-1">
+          {/* Nav Links (scrollable: 13 entradas no caben en ventanas bajas) */}
+          <nav className="p-3 space-y-1 flex-1 min-h-0 overflow-y-auto scrollbar-none">
             <button
               onClick={() => setActiveTab("dashboard")}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
@@ -341,7 +349,9 @@ export const App: React.FC = () => {
           )}
           {activeTab === "programadas" && <SchedulesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "reportes" && <ReportsView />}
-          {activeTab === "contactos" && <WebContactsView />}
+          {activeTab === "contactos" && (
+            <WebContactsView onAskOrchestrator={askOrchestrator} onReviewedChange={refreshUnreadWebContacts} />
+          )}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}
