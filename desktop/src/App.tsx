@@ -15,6 +15,7 @@ import {
   HandCoins,
   CalendarClock,
   Newspaper,
+  Globe,
   Settings,
 } from "lucide-react";
 import { DashboardView } from "./views/DashboardView";
@@ -25,6 +26,7 @@ import { SalesView } from "./views/SalesView";
 import { TicketsView } from "./views/TicketsView";
 import { ProjectsView } from "./views/ProjectsView";
 import { ChatView } from "./views/ChatView";
+import { WebContactsView } from "./views/WebContactsView";
 import { MarketingView } from "./views/MarketingView";
 import { ContentView } from "./views/ContentView";
 import { SchedulesView } from "./views/SchedulesView";
@@ -32,7 +34,7 @@ import { ReportsView } from "./views/ReportsView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "programadas" | "reportes" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "contactos" | "programadas" | "reportes" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
 
 const apiHost = (() => {
   try {
@@ -47,6 +49,7 @@ export const App: React.FC = () => {
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
   const [unreadReportsCount, setUnreadReportsCount] = useState<number>(0);
+  const [unreadWebContacts, setUnreadWebContacts] = useState<number>(0);
   const [chatPrompt, setChatPrompt] = useState<{ id: number; text: string } | null>(null);
   const [showConnection, setShowConnection] = useState(false);
 
@@ -59,12 +62,14 @@ export const App: React.FC = () => {
     try {
       await crmApi.getHealth();
       setBackendOnline(true);
-      const [draftsRes, unreadRes] = await Promise.all([
+      const [draftsRes, unreadReports, unreadContacts] = await Promise.all([
         crmApi.getPendingDrafts(),
         crmApi.getUnreadReportCount().catch(() => null),
+        crmApi.getUnreadWebContactCount().catch(() => null),
       ]);
       setPendingDraftsCount(draftsRes.drafts.length);
-      if (unreadRes) setUnreadReportsCount(unreadRes.unread);
+      if (unreadReports) setUnreadReportsCount(unreadReports.unread);
+      if (unreadContacts) setUnreadWebContacts(unreadContacts.unread);
     } catch {
       setBackendOnline(false);
     }
@@ -122,6 +127,25 @@ export const App: React.FC = () => {
             >
               <Bot className="w-4 h-4 text-emerald-400" />
               <span>Orquestador Chat</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab("contactos")}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition ${
+                activeTab === "contactos"
+                  ? "bg-zinc-800 text-white font-semibold shadow-sm"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Globe className="w-4 h-4 text-sky-400" />
+                <span>Contactos web</span>
+              </div>
+              {unreadWebContacts > 0 && (
+                <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-sky-500 text-black">
+                  {unreadWebContacts}
+                </span>
+              )}
             </button>
 
             <button
@@ -317,6 +341,7 @@ export const App: React.FC = () => {
           )}
           {activeTab === "programadas" && <SchedulesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "reportes" && <ReportsView />}
+          {activeTab === "contactos" && <WebContactsView />}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}
