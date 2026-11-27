@@ -107,6 +107,16 @@ chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
   if (!id) return c.json({ error: "Missing thread id" }, 400);
   const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
   if (!thread) return c.json({ error: "Thread not found" }, 404);
+  // Web threads belong to the "Contactos web" inbox. Reading one here would
+  // also run the EVE history sync below, which re-inserts every reply of the
+  // visitor's session as a new row: the public route persists replies without
+  // an eve_event_id, so the sync's dedupe has nothing to match against.
+  if (chatThreadOrigin(thread.externalKey) === "web") {
+    return c.json(
+      { error: "Web chat threads are reviewed in Contactos web", code: "web_thread" },
+      400
+    );
+  }
   // Reconnect support: pull replies completed while no client was attached.
   // Idempotent (dedupe by eve_event_id); skipped for threads without an EVE session.
   const eve = resolveEveProxyConfig(process.env);
@@ -129,6 +139,15 @@ chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
 chatRouter.delete("/threads/:id", requireScope(["ops"]), async (c) => {
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing thread id" }, 400);
+  const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
+  if (!thread) return c.json({ error: "Thread not found" }, 404);
+  // Same boundary as the read above: the inbox owns the web threads' lifecycle.
+  if (chatThreadOrigin(thread.externalKey) === "web") {
+    return c.json(
+      { error: "Web chat threads are reviewed in Contactos web", code: "web_thread" },
+      400
+    );
+  }
   await db.delete(chatThreads).where(eq(chatThreads.id, id));
   return c.json({ success: true });
 });

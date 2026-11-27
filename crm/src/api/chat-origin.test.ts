@@ -82,6 +82,32 @@ describe("Chat threads: web / internal origin", () => {
     expect(res.status).toBe(400);
   });
 
+  it("refuses to read, delete or continue a web thread from the internal routes", async () => {
+    // The read guard also stops the EVE history sync, which would re-insert
+    // the visitor's whole session (the public route saves replies without an
+    // eve_event_id, so the sync's dedupe has nothing to match against).
+    for (const method of ["GET", "DELETE"] as const) {
+      const res = await app.request(`/api/chat/threads/${webId}`, { method, headers: auth });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code: string };
+      expect(body.code).toBe("web_thread");
+    }
+    const stillThere = await db.select().from(chatThreads).where(eq(chatThreads.id, webId));
+    expect(stillThere).toHaveLength(1);
+
+    // With EVE unconfigured an allowed read still works (no sync, empty list).
+    const saved = process.env.EVE_AGENT_URL;
+    delete process.env.EVE_AGENT_URL;
+    try {
+      const allowed = await app.request(`/api/chat/threads/${desktopId}`, { headers: auth });
+      expect(allowed.status).toBe(200);
+      const detail = (await allowed.json()) as { messages: unknown[] };
+      expect(detail.messages).toEqual([]);
+    } finally {
+      if (saved !== undefined) process.env.EVE_AGENT_URL = saved;
+    }
+  });
+
   it("the internal chat refuses to continue a web thread, before any EVE call", async () => {
     // With EVE unconfigured an allowed post reaches the 503 below: a 400 here
     // can only come from the guard.
