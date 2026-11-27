@@ -6,8 +6,24 @@ import { db } from "../../db/client";
 import { schedules, scheduleRuns } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
-import { assertValidCron, nextOccurrence } from "../../domain/schedules";
+import {
+  assertValidCron,
+  nextOccurrence,
+  usageBySchedule,
+  type ScheduleUsageSummary,
+} from "../../domain/schedules";
 import { dispatchScheduleNow } from "../../services/schedule-dispatcher";
+
+/** Trailing window of the per-schedule token spend the list reports. */
+const USAGE_WINDOW_DAYS = 7;
+
+/** Spend a task was reported to use over the window (zeroed when it ran no EVE turn). */
+const EMPTY_USAGE: ScheduleUsageSummary = {
+  runs: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+};
 
 /**
  * Agent cronjob CRUD (ops scope; owner passes any scope check). The desktop
@@ -37,13 +53,16 @@ async function latestRunFor(scheduleId: string) {
   return run ?? null;
 }
 
-// List all schedules with their next/last execution and the server clock, so
-// the desktop can render cadence and flag timezone drift against the client.
+// List all schedules with their next/last execution, the server clock (so the
+// desktop can render cadence and flag timezone drift against the client) and
+// the token spend of the trailing week.
 schedulesRouter.get("/", requireScope(["ops"]), async (c) => {
   const rows = await db.select().from(schedules).orderBy(schedules.name);
+  const usage = await usageBySchedule(USAGE_WINDOW_DAYS);
   const withRuns = await Promise.all(
     rows.map(async (row) => ({
       ...row,
+      usage7d: usage.get(row.id) ?? EMPTY_USAGE,
       lastRun: await latestRunFor(row.id),
     }))
   );

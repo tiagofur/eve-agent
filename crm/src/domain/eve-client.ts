@@ -63,6 +63,14 @@ export interface ParsedEveError {
   message: string;
 }
 
+/** Token spend of one EVE turn: its own model runs plus what delegated agents spent. */
+export interface EveUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
 export interface ParsedEveStream {
   messages: ParsedEveMessage[];
   /** Full assistant text: completed messages, or concatenated deltas. */
@@ -71,6 +79,11 @@ export interface ParsedEveStream {
   sessionWaiting: boolean;
   turnId?: string;
   error?: ParsedEveError;
+  /**
+   * Tokens the parsed scope spent, summed from `usage.recorded` facts. NULL
+   * when none arrived: the scope ran no model, or it never settled.
+   */
+  usage: EveUsage | null;
 }
 
 /**
@@ -83,6 +96,13 @@ export interface ParsedEveStream {
  */
 export interface ParseEveStreamOptions {
   deliveryId?: string;
+  /**
+   * Prefixes v27 message ids with the session. Part ids (`run_0.0`) are only
+   * unique within one session, and a thread's session is replaced whenever
+   * the old one dies: unprefixed, the first reply of a replacement session
+   * reads as already persisted and is dropped.
+   */
+  sessionId?: string;
 }
 
 interface RawEnvelope {
@@ -100,6 +120,25 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function asCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+type UsageRecord = EveUsage & { turnId?: string };
+
+function sumUsage(records: UsageRecord[]): EveUsage | null {
+  if (records.length === 0) return null;
+  return records.reduce(
+    (total, record) => ({
+      inputTokens: total.inputTokens + record.inputTokens,
+      outputTokens: total.outputTokens + record.outputTokens,
+      cacheReadTokens: total.cacheReadTokens + record.cacheReadTokens,
+      cacheWriteTokens: total.cacheWriteTokens + record.cacheWriteTokens,
+    }),
+    { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  );
 }
 
 function parseErrorInfo(value: unknown): ParsedEveError | undefined {
@@ -165,6 +204,7 @@ export function parseEveStream(
   const v27TurnErrors = new Map<string, ParsedEveError>();
   const v27TurnPaused = new Set<string>();
   const v27DeliverySettlements = new Map<string, V27DeliverySettlement>();
+  const v27Usage: UsageRecord[] = [];
   let v27SessionEnded = false;
   let v27SessionError: ParsedEveError | undefined;
   let v27LatestTurnId: string | undefined;
@@ -245,8 +285,25 @@ export function parseEveStream(
         const phase = typeof data.phase === "string" ? data.phase : "reply";
         const text = typeof data.value === "string" ? data.value : "";
         const turnId = resolveTurnId(scope, data);
+        const id = options?.sessionId ? `${options.sessionId}:${partId}` : partId;
         if (!v27Parts.has(partId)) v27PartOrder.push(partId);
-        v27Parts.set(partId, { id: partId, kind, phase, text, turnId });
+        v27Parts.set(partId, { id, kind, phase, text, turnId });
+        break;
+      }
+      case "usage.recorded": {
+        // A turn's own model runs and what its delegated agents spent all
+        // land here before the turn settles, scoped to the turn.
+        const usage = asRecord(data.usage);
+        const ownerTurnId = asRecord(data.owner).turnId;
+        v27Usage.push({
+          turnId:
+            resolveTurnId(scope, data) ??
+            (typeof ownerTurnId === "string" ? ownerTurnId : undefined),
+          inputTokens: asCount(usage.inputTokens),
+          outputTokens: asCount(usage.outputTokens),
+          cacheReadTokens: asCount(usage.cacheReadTokens),
+          cacheWriteTokens: asCount(usage.cacheWriteTokens),
+        });
         break;
       }
       case "turn.paused": {
@@ -394,6 +451,7 @@ export function parseEveStream(
       turnCompleted: v26TurnCompleted,
       sessionWaiting: v26SessionWaiting,
       turnId: v26TurnId,
+      usage: null,
     };
   }
 
@@ -481,6 +539,7 @@ export function parseEveStream(
       turnCompleted,
       sessionWaiting,
       turnId: targetTurnId,
+      usage: sumUsage(v27Usage.filter((record) => record.turnId === targetTurnId)),
       ...(error ? { error } : {}),
     };
   }
@@ -523,16 +582,24 @@ export function parseEveStream(
     turnCompleted: v27TurnOutcomes.size > 0 || v27SessionEnded,
     sessionWaiting: v27TurnPaused.size > 0,
     turnId: v27LatestTurnId,
+    usage: sumUsage(v27Usage),
     ...(error ? { error } : {}),
   };
 }
 
+/**
+ * Messages not persisted yet. `knownTexts` is the history sync's safety net:
+ * ids changed scheme across eve versions (v26 event ids, then bare part ids,
+ * now session-scoped ones), so a reply whose text is already in the thread is
+ * not inserted again.
+ */
 export function findMissingEveMessages(
   knownIds: Set<string> | string[],
-  messages: ParsedEveMessage[]
+  messages: ParsedEveMessage[],
+  knownTexts: Set<string> = new Set()
 ): ParsedEveMessage[] {
   const known = knownIds instanceof Set ? knownIds : new Set(knownIds);
-  return messages.filter((m) => !known.has(m.id));
+  return messages.filter((m) => !known.has(m.id) && !knownTexts.has(m.text));
 }
 
 export class EveClientError extends Error {

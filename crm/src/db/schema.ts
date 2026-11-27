@@ -860,6 +860,12 @@ export const scheduleRuns = pgTable(
     threadId: uuid("thread_id").references(() => chatThreads.id, { onDelete: "set null" }),
     resultSummary: text("result_summary"),
     error: text("error"),
+    // Token spend of the run's EVE turn, delegated subagents included, as
+    // eve reported it before the turn settled. NULL = unknown: the run never
+    // settled a turn, or it is not an EVE turn at all.
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    cacheReadTokens: integer("cache_read_tokens"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: createdAt(),

@@ -184,6 +184,15 @@ describe("findMissingEveMessages", () => {
       { id: "evt_msg", text: "SPIKE-OK" },
     ]);
   });
+
+  it("drops messages whose text is already in the thread when knownTexts is given", () => {
+    // Rows persisted before a session-scoped id scheme keep their old ids:
+    // the history sync must not insert them a second time.
+    const parsed = parseEveStream(V27_TWO_TURN_REPLAY, { sessionId: "wrun_A" });
+    expect(findMissingEveMessages(new Set(), parsed.messages, new Set(["V27-OK"]))).toEqual([
+      { id: "wrun_A:part_1", text: "SEGUNDO" },
+    ]);
+  });
 });
 
 describe("eve transport", () => {
@@ -338,6 +347,23 @@ const V27_TWO_TURN_REPLAY = [
   '{"at":"2026-11-26T20:01:01.010Z","facts":[{"type":"turn.settled","scope":{"turnId":"turn_1"},"data":{"turnId":"turn_1","outcome":"completed","reply":["part_1"]}},{"type":"delivery.settled","data":{"deliveryId":"d-1","outcome":"handled","turnId":"turn_1"}}]}',
 ].join("\n");
 
+/**
+ * Real eve 1.1 capture of a delegated turn (orchestrator → `strategist`),
+ * trimmed: the child's spend arrives in the parent stream as a
+ * `usage.recorded` owned by the call, before the turn settles.
+ */
+const V27_DELEGATED_TURN = [
+  '{"at":"2026-11-27T00:00:00.000Z","facts":[{"type":"turn.started","scope":{"turnId":"turn_0"},"data":{"turnId":"turn_0","cause":{"deliveryId":"d-del"},"follows":null}},{"type":"delivery.consumed","scope":{"turnId":"turn_0"},"data":{"deliveryId":"d-del","turnId":"turn_0","parts":[]}}]}',
+  '{"at":"2026-11-27T00:00:01.000Z","facts":[{"type":"model.settled","scope":{"runId":"run_0","turnId":"turn_0"},"data":{"finishReason":"tool-calls","outcome":"completed","runId":"run_0"}},{"type":"usage.recorded","scope":{"runId":"run_0","turnId":"turn_0"},"data":{"kind":"model","owner":{"runId":"run_0"},"usage":{"cacheReadTokens":0,"cacheWriteTokens":0,"inputTokens":20066,"outputTokens":381}}}]}',
+  '{"at":"2026-11-27T00:00:03.000Z","facts":[{"type":"model.settled","scope":{"runId":"run_1","turnId":"turn_0"},"data":{"finishReason":"tool-calls","outcome":"completed","runId":"run_1"}},{"type":"usage.recorded","scope":{"runId":"run_1","turnId":"turn_0"},"data":{"kind":"model","owner":{"runId":"run_1"},"usage":{"cacheReadTokens":18026,"cacheWriteTokens":0,"inputTokens":20543,"outputTokens":33}}}]}',
+  '{"at":"2026-11-27T00:00:05.000Z","facts":[{"type":"call.settled","scope":{"taskId":"strategist-7cr0k2","runId":"run_0","turnId":"turn_0"},"data":{"callId":"call_1","outcome":"completed","output":"recibido"}},{"type":"usage.recorded","scope":{"taskId":"strategist-7cr0k2","runId":"run_0","turnId":"turn_0"},"data":{"kind":"model","owner":{"callId":"call_1"},"usage":{"cacheReadTokens":0,"cacheWriteTokens":0,"inputTokens":2697,"outputTokens":144}}}]}',
+  '{"at":"2026-11-27T00:00:06.000Z","facts":[{"type":"content.completed","scope":{"runId":"run_2","turnId":"turn_0"},"data":{"kind":"text","partId":"run_2.0","phase":"reply","runId":"run_2","value":"El subagente respondió \\"recibido\\"."}},{"type":"model.settled","scope":{"runId":"run_2","turnId":"turn_0"},"data":{"finishReason":"stop","outcome":"completed","runId":"run_2"}},{"type":"usage.recorded","scope":{"runId":"run_2","turnId":"turn_0"},"data":{"kind":"model","owner":{"runId":"run_2"},"usage":{"cacheReadTokens":18507,"cacheWriteTokens":0,"inputTokens":20687,"outputTokens":71}}}]}',
+  '{"at":"2026-11-27T00:00:06.100Z","facts":[{"type":"turn.settled","scope":{"turnId":"turn_0"},"data":{"outcome":"completed","reply":["run_2.0"],"turnId":"turn_0"}},{"type":"delivery.settled","data":{"deliveryId":"d-del","outcome":"handled","turnId":"turn_0"}}]}',
+  // A later turn in the same session: its spend must stay out of turn_0's.
+  '{"at":"2026-11-27T00:01:00.000Z","facts":[{"type":"turn.started","scope":{"turnId":"turn_1"},"data":{"turnId":"turn_1","cause":{"deliveryId":"d-next"},"follows":"turn_0"}},{"type":"delivery.consumed","scope":{"turnId":"turn_1"},"data":{"deliveryId":"d-next","turnId":"turn_1","parts":[]}}]}',
+  '{"at":"2026-11-27T00:01:02.000Z","facts":[{"type":"content.completed","scope":{"runId":"run_3","turnId":"turn_1"},"data":{"kind":"text","partId":"run_3.0","phase":"reply","runId":"run_3","value":"Otra respuesta"}},{"type":"usage.recorded","scope":{"runId":"run_3","turnId":"turn_1"},"data":{"kind":"model","owner":{"runId":"run_3"},"usage":{"cacheReadTokens":0,"cacheWriteTokens":64,"inputTokens":1000,"outputTokens":10}}},{"type":"turn.settled","scope":{"turnId":"turn_1"},"data":{"outcome":"completed","reply":["run_3.0"],"turnId":"turn_1"}},{"type":"delivery.settled","data":{"deliveryId":"d-next","outcome":"handled","turnId":"turn_1"}}]}',
+].join("\n");
+
 describe("parseEveStream (v27 / eve 1.x)", () => {
   it("parses a full v27 turn, ignoring reasoning and narration parts", () => {
     const parsed = parseEveStream(V27_TURN_0, { deliveryId: "d-0" });
@@ -346,6 +372,42 @@ describe("parseEveStream (v27 / eve 1.x)", () => {
     expect(parsed.sessionWaiting).toBe(false);
     expect(parsed.turnId).toBe("turn_0");
     expect(parsed.messages).toEqual([{ id: "part_0", text: "V27-OK" }]);
+    // No usage.recorded fact in the stream: the spend is unknown, not zero.
+    expect(parsed.usage).toBeNull();
+  });
+
+  it("sums a turn's usage.recorded facts, delegated spend included", () => {
+    const parsed = parseEveStream(V27_DELEGATED_TURN, { deliveryId: "d-del" });
+    expect(parsed.usage).toEqual({
+      inputTokens: 20066 + 20543 + 2697 + 20687,
+      outputTokens: 381 + 33 + 144 + 71,
+      cacheReadTokens: 0 + 18026 + 0 + 18507,
+      cacheWriteTokens: 0,
+    });
+  });
+
+  it("keeps a later turn's spend out of the scoped one, and sums all on unscoped reads", () => {
+    const later = parseEveStream(V27_DELEGATED_TURN, { deliveryId: "d-next" });
+    expect(later.usage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 10,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 64,
+    });
+    const wholeSession = parseEveStream(V27_DELEGATED_TURN);
+    expect(wholeSession.usage?.inputTokens).toBe(20066 + 20543 + 2697 + 20687 + 1000);
+  });
+
+  it("scopes message ids to the session when sessionId is given", () => {
+    // Part ids restart at run_0 in every session, so a thread whose session
+    // was replaced would otherwise drop its next reply as already persisted.
+    const scoped = parseEveStream(V27_TWO_TURN_REPLAY, {
+      deliveryId: "d-1",
+      sessionId: "wrun_A",
+    });
+    expect(scoped.messages).toEqual([{ id: "wrun_A:part_1", text: "SEGUNDO" }]);
+    const history = parseEveStream(V27_TWO_TURN_REPLAY, { sessionId: "wrun_A" });
+    expect(history.messages.map((m) => m.id)).toEqual(["wrun_A:part_0", "wrun_A:part_1"]);
   });
 
   it("concatenates text content.delta records before content.completed arrives", () => {
