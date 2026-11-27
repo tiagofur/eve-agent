@@ -89,6 +89,9 @@ marketingRouter.post(
       tone: z.string().optional(),
       targetAudience: z.string().optional(),
       format: z.enum(["image", "video"]).optional().default("image"),
+      // Content-pipeline brand: resolves the per-brand Meta credentials when
+      // the post is published (IG Reel/FB video for video posts).
+      brand: z.enum(["creapolis", "pepinillo", "solennix"]).optional(),
       productSlug: z
         .string()
         .regex(/^[a-z0-9-]+$/)
@@ -96,7 +99,7 @@ marketingRouter.post(
     })
   ),
   async (c) => {
-    const { platform, topic, tone, targetAudience, format, productSlug } = c.req.valid("json");
+    const { platform, topic, tone, targetAudience, format, brand, productSlug } = c.req.valid("json");
     const actor = c.get("actor");
     const model = getModel();
 
@@ -259,6 +262,7 @@ Respond ONLY with valid JSON following this schema:
         hashtags: parsed.hashtags || [],
         imagePrompt: visualPrompt,
         imageUrl,
+        brand,
         actor,
       });
 
@@ -312,8 +316,26 @@ marketingRouter.post(
     if (!id) return c.json({ error: "Missing post id" }, 400);
     const actor = c.get("actor");
 
+  try {
+    const result = await publishSocialPost(id, actor);
+    return c.json(result);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 400);
+  }
+});
+
+// 5. Share a video post to the Instagram Story surface (24h, after approval)
+marketingRouter.post(
+  "/:id/story",
+  requireScope(["owner"]),
+  async (c) => {
+    const id = c.req.param("id");
+    if (!id) return c.json({ error: "Missing post id" }, 400);
+    const actor = c.get("actor");
+
     try {
-      const result = await publishSocialPost(id, actor);
+      const { publishSocialStory } = await import("../../domain/marketing");
+      const result = await publishSocialStory(id, actor);
       return c.json(result);
     } catch (err: any) {
       return c.json({ error: err.message }, 400);
