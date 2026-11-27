@@ -76,17 +76,21 @@ export const WebContactsView: React.FC = () => {
   const openDetail = async (contact: WebContactItem) => {
     setSelectedId(contact.id);
     selectedRef.current = contact.id;
-    if (!contact.reviewedAt) void setReviewed(contact.id, true);
     setMessages(null);
     setMessagesLoading(true);
     try {
       const res = await crmApi.getWebContact(contact.id);
       // Another contact may have been opened while this one was loading.
-      if (selectedRef.current === contact.id) setMessages(res.messages);
+      if (selectedRef.current === contact.id) {
+        setMessages(res.messages);
+        // Mark reviewed only once the conversation is actually on screen: a
+        // failed load must not silently drop the contact from "Sin revisar".
+        if (!contact.reviewedAt) void setReviewed(contact.id, true);
+      }
     } catch (err) {
       setBanner({ ok: false, text: `No se pudo cargar la conversación: ${(err as Error).message}` });
     } finally {
-      setMessagesLoading(false);
+      if (selectedRef.current === contact.id) setMessagesLoading(false);
     }
   };
 
