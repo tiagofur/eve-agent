@@ -17,7 +17,10 @@ import {
   fetchContentPackCoverUrl,
   fetchContentPackZip,
   type ContentPackItem,
+  type VisualConfigItem,
 } from "../api";
+import { Modal } from "../components/ui";
+import { inputClass, labelClass } from "./CrmForms";
 
 type StatusFilter = "pending_approval" | "approved" | "rejected" | "published" | "all";
 type BrandFilter = "all" | ContentPackItem["brand"];
@@ -196,6 +199,8 @@ export const ContentView: React.FC = () => {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("pending_approval");
   const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
+  const [showVisualConfig, setShowVisualConfig] = useState(false);
+  const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
 
   const loadPacks = useCallback(async () => {
     try {
@@ -328,6 +333,13 @@ export const ContentView: React.FC = () => {
             ))}
           </div>
           <button
+            onClick={() => setShowVisualConfig(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 text-xs font-semibold"
+            title="Configuración visual por marca (portadas IA)"
+          >
+            <ImageIcon className="w-4 h-4" /> Configuración visual
+          </button>
+          <button
             onClick={loadPacks}
             className="p-2 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700"
             title="Recargar"
@@ -336,6 +348,30 @@ export const ContentView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {showVisualConfig && (
+        <VisualConfigModal
+          onClose={() => setShowVisualConfig(false)}
+          onSaved={() => {
+            setBanner({ ok: true, text: "Configuración visual guardada — aplica en el próximo pack" });
+          }}
+          onError={(text) => setBanner({ ok: false, text })}
+        />
+      )}
+      {banner && (
+        <div
+          className={`rounded-lg px-3.5 py-2 text-xs flex items-start justify-between gap-3 border ${
+            banner.ok
+              ? "bg-emerald-950/50 border-emerald-800 text-emerald-300"
+              : "bg-rose-950/50 border-rose-800 text-rose-300"
+          }`}
+        >
+          <span>{banner.text}</span>
+          <button onClick={() => setBanner(null)} className="text-zinc-400 hover:text-white shrink-0">
+            ✕
+          </button>
+        </div>
+      )}
 
       {loading && packs.length === 0 ? (
         <div className="flex items-center justify-center py-16 text-zinc-500">
@@ -361,5 +397,185 @@ export const ContentView: React.FC = () => {
         </div>
       )}
     </div>
+  );
+};
+
+/* ------------------------------------------------------------------ */
+/* Configuración visual por marca (portadas del pipeline)              */
+/* ------------------------------------------------------------------ */
+
+const VISUAL_MODES: Array<{ value: VisualConfigItem["mode"]; label: string; hint: string }> = [
+  { value: "editorial", label: "Editorial tipográfico", hint: "Sin costo de imagen — portada de tipografía como siempre" },
+  { value: "hybrid", label: "Híbrido (IA + titular)", hint: "Arte IA de Gemini + titular corto compuesto; ~US$0.03 por portada" },
+  { value: "image_only", label: "Solo imagen IA", hint: "Arte a sangre completa sin texto; el mensaje vive en el caption" },
+];
+
+const BRAND_META: Record<string, { label: string; tone: string }> = {
+  creapolis: { label: "Creapolis.Dev", tone: "text-cyan-300" },
+  pepinillo: { label: "Pepinillo", tone: "text-lime-300" },
+  solennix: { label: "Solennix", tone: "text-violet-300" },
+};
+
+const VisualConfigModal: React.FC<{
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (text: string) => void;
+}> = ({ onClose, onSaved, onError }) => {
+  const [configs, setConfigs] = useState<VisualConfigItem[] | null>(null);
+  const [savingBrand, setSavingBrand] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const res = await crmApi.getVisualConfigs();
+      setConfigs(res.configs);
+    } catch (err) {
+      onError(`No se pudo cargar la configuración: ${(err as Error).message}`);
+      onClose();
+    }
+  };
+
+  React.useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const patch = (brand: string, changes: Partial<VisualConfigItem>) => {
+    setConfigs((prev) => (prev ?? []).map((cfg) => (cfg.brand === brand ? { ...cfg, ...changes } : cfg)));
+  };
+
+  const save = async (brand: string) => {
+    const cfg = (configs ?? []).find((c) => c.brand === brand);
+    if (!cfg) return;
+    try {
+      setSavingBrand(brand);
+      await crmApi.updateVisualConfig(brand, {
+        mode: cfg.mode,
+        artDirection: cfg.artDirection,
+        coverTitleMaxWords: cfg.coverTitleMaxWords,
+        showLogo: cfg.showLogo,
+        imageModel: cfg.imageModel,
+      });
+      onSaved();
+      await load();
+    } catch (err) {
+      onError(`No se pudo guardar ${brand}: ${(err as Error).message}`);
+    } finally {
+      setSavingBrand(null);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} title="Configuración visual por marca" width="max-w-3xl">
+      {!configs ? (
+        <div className="flex items-center justify-center py-10 text-zinc-500">
+          <Loader2 className="w-5 h-5 animate-spin" />
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <p className="text-xs text-zinc-500">
+            Decide cómo nace la portada de cada marca. Los cambios aplican en el próximo pack — el
+            pipeline lee esta configuración en cada corrida. Modo editorial no gasta imagen; los otros
+            dos generan arte con el modelo configurado.
+          </p>
+          {configs.map((cfg) => {
+            const meta = BRAND_META[cfg.brand] ?? { label: cfg.brand, tone: "text-zinc-300" };
+            return (
+              <div key={cfg.brand} className="border border-zinc-800 rounded-xl p-4 space-y-3 bg-zinc-900/40">
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-bold ${meta.tone}`}>{meta.label}</span>
+                  <span className="font-mono text-[10px] text-zinc-600">{cfg.brand}</span>
+                  {!cfg.configured && <span className="text-[10px] text-zinc-600">sin perfil guardado</span>}
+                </div>
+                <div>
+                  <label className={labelClass}>Modo de portada</label>
+                  <div className="space-y-1.5">
+                    {VISUAL_MODES.map((mode) => (
+                      <label
+                        key={mode.value}
+                        className={`flex items-start gap-2.5 rounded-lg border px-3 py-2 cursor-pointer transition ${
+                          cfg.mode === mode.value
+                            ? "border-violet-500/50 bg-violet-500/10"
+                            : "border-zinc-800 hover:border-zinc-700"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name={`mode-${cfg.brand}`}
+                          checked={cfg.mode === mode.value}
+                          onChange={() => patch(cfg.brand, { mode: mode.value })}
+                          className="mt-0.5 accent-violet-400"
+                        />
+                        <span>
+                          <span className="text-xs font-semibold text-zinc-200">{mode.label}</span>
+                          <span className="block text-[11px] text-zinc-500">{mode.hint}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                {cfg.mode !== "editorial" && (
+                  <>
+                    <div>
+                      <label className={labelClass}>
+                        Dirección de arte (estilo, paleta, qué evitar — el designer aporta la escena)
+                      </label>
+                      <textarea
+                        value={cfg.artDirection}
+                        onChange={(e) => patch(cfg.brand, { artDirection: e.target.value })}
+                        rows={2}
+                        maxLength={2000}
+                        placeholder="Ej.: 3D minimalista editorial, fondo azul petróleo, un solo objeto hero, sin texto"
+                        className={`${inputClass} resize-y`}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelClass}>Máx. palabras del titular</label>
+                        <input
+                          type="number"
+                          min={2}
+                          max={15}
+                          value={cfg.coverTitleMaxWords}
+                          onChange={(e) =>
+                            patch(cfg.brand, { coverTitleMaxWords: Number(e.target.value) || 8 })
+                          }
+                          className={inputClass}
+                        />
+                      </div>
+                      <div>
+                        <label className={labelClass}>Modelo de imagen</label>
+                        <input
+                          value={cfg.imageModel}
+                          onChange={(e) => patch(cfg.brand, { imageModel: e.target.value })}
+                          className={`${inputClass} font-mono text-xs`}
+                        />
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-zinc-400">
+                      <input
+                        type="checkbox"
+                        checked={cfg.showLogo}
+                        onChange={(e) => patch(cfg.brand, { showLogo: e.target.checked })}
+                        className="accent-emerald-400"
+                      />
+                      Mostrar el badge de la marca sobre el arte
+                    </label>
+                  </>
+                )}
+                <div className="flex justify-end pt-1">
+                  <button
+                    onClick={() => void save(cfg.brand)}
+                    disabled={savingBrand === cfg.brand}
+                    className="px-4 py-2 text-xs font-semibold text-black bg-emerald-400 hover:bg-emerald-300 rounded-lg transition disabled:opacity-50"
+                  >
+                    {savingBrand === cfg.brand ? "Guardando…" : `Guardar ${meta.label}`}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
   );
 };
