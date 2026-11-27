@@ -787,7 +787,8 @@ export const crmApi = {
       method: "POST",
       body: JSON.stringify(threadId ? { messages, threadId } : { messages }),
     }),
-  getChatThreads: () => request<{ threads: ChatThread[] }>("/api/chat/threads"),
+  // Only the owner's own conversations: web chats live in "Contactos web".
+  getChatThreads: () => request<{ threads: ChatThread[] }>("/api/chat/threads?origin=internal"),
   createChatThread: (title?: string) =>
     request<{ thread: ChatThread }>("/api/chat/threads", {
       method: "POST",
@@ -1018,6 +1019,18 @@ export const crmApi = {
       method: "POST",
       body: JSON.stringify({ read }),
     }),
+  /* ---- Contactos web (chats de visitantes de creapolis.dev) ---- */
+  getWebContacts: (limit = 100) =>
+    request<{ contacts: WebContactItem[] }>(`/api/web-contacts?limit=${limit}`),
+  getUnreadWebContactCount: () => request<{ unread: number }>("/api/web-contacts/unread-count"),
+  /** Marca revisado / sin revisar (la vista auto-marca al abrir). */
+  markWebContactReviewed: (id: string, read: boolean) =>
+    request<{ success: boolean; reviewedAt: string | null }>(`/api/web-contacts/${id}/read`, {
+      method: "POST",
+      body: JSON.stringify({ read }),
+    }),
+  getWebContact: (id: string) =>
+    request<{ contact: WebContactItem; messages: WebContactMessage[] }>(`/api/web-contacts/${id}`),
 };
 
 export interface ChatMessage {
@@ -1050,6 +1063,24 @@ export interface ChatThreadDetails {
     toolCalls?: Array<{ toolName: string; args: any }> | null;
     createdAt: string;
   }>;
+}
+
+export interface WebContactItem {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  /** NULL mientras el contacto esté sin revisar. */
+  reviewedAt: string | null;
+  firstMessage: string | null;
+  messageCount: number;
+}
+
+export interface WebContactMessage {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt: string;
 }
 
 export interface SocialPostItem {
