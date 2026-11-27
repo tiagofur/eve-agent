@@ -430,7 +430,7 @@ export async function notifyContentPackCreated(
   const keyboard = publishable
     ? [
         [
-          { text: "✅ Aprobar y publicar (IG)", callback_data: `approve_publish_pack:${packId}` },
+          { text: "✅ Aprobar y publicar (IG+FB)", callback_data: `approve_publish_pack:${packId}` },
           { text: "👁 Aprobar solo", callback_data: `approve_pack:${packId}` },
         ],
         [{ text: "❌ Rechazar", callback_data: `reject_pack:${packId}` }],
@@ -756,15 +756,21 @@ export async function startTelegramPolling() {
                   if (!/already reviewed/.test(String((err as Error).message))) throw err;
                 }
 
-                await answerCallbackQuery(cq.id, "🚀 Publicando en Instagram...");
+                await answerCallbackQuery(cq.id, "🚀 Publicando en Instagram y Facebook...");
                 await removeTelegramKeyboard(msg.message_id, msg.chat.id);
                 try {
                   const pub = await publishContentPack(packId, "telegram_admin");
                   const url = pub.pack.externalPostUrl ?? "";
+                  const fbLine =
+                    "fbUrl" in pub && pub.fbUrl
+                      ? `\n📘 <b>Facebook:</b> <a href="${pub.fbUrl}">ver publicación</a>`
+                      : "fbError" in pub && pub.fbError
+                        ? `\n📘 <b>Facebook falló</b> (IG quedó publicado): ${escapeHtml(String(pub.fbError).slice(0, 200))}`
+                        : "";
                   await editTelegramMessage(
                     msg.message_id,
                     msg.chat.id,
-                    `${originalContent}\n\n🚀 <b>¡PUBLICADO EN INSTAGRAM!</b>${url ? `\n🔗 <a href="${url}">Ver publicación</a>` : ""}`,
+                    `${originalContent}\n\n🚀 <b>¡PUBLICADO EN INSTAGRAM!</b>${url ? `\n🔗 <a href="${url}">Ver publicación</a>` : ""}${fbLine}`,
                     undefined,
                     "HTML",
                     hasPhoto

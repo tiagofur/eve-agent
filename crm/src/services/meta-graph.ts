@@ -104,15 +104,8 @@ async function graphError(data: Record<string, unknown>, res: { ok: boolean; sta
 }
 
 export async function publishToFacebook(content: PublishContent, config?: PublishConfig): Promise<PublishResult> {
-  const cfg = config ?? legacyEnvConfig();
-  const { version, pageId, pageAccessToken } = cfg;
-
-  if (!pageId || !pageAccessToken) {
-    throw new Error(
-      "Meta Facebook credentials missing. Please set META_FACEBOOK_PAGE_ID and META_PAGE_ACCESS_TOKEN."
-    );
-  }
-
+  // Dry-run precedes the credential check: rehearsing the flow is exactly
+  // what you do when no real accounts are configured yet.
   if (process.env.PUBLISH_DRY_RUN === "true") {
     console.warn("[MetaGraph] PUBLISH_DRY_RUN: skipping Facebook publish for", content.caption.slice(0, 40));
     return {
@@ -121,6 +114,15 @@ export async function publishToFacebook(content: PublishContent, config?: Publis
       externalPostUrl: "https://facebook.com/dryrun",
       platform: "facebook",
     };
+  }
+
+  const cfg = config ?? legacyEnvConfig();
+  const { version, pageId, pageAccessToken } = cfg;
+
+  if (!pageId || !pageAccessToken) {
+    throw new Error(
+      "Meta Facebook credentials missing. Please set META_FACEBOOK_PAGE_ID and META_PAGE_ACCESS_TOKEN."
+    );
   }
 
   const message = withHashtags(content.caption, content.hashtags);
@@ -194,6 +196,16 @@ export async function publishToFacebook(content: PublishContent, config?: Publis
 }
 
 export async function publishToInstagram(content: PublishContent, config?: PublishConfig): Promise<PublishResult> {
+  if (process.env.PUBLISH_DRY_RUN === "true") {
+    console.warn("[MetaGraph] PUBLISH_DRY_RUN: skipping Instagram publish");
+    return {
+      success: true,
+      externalPostId: `dryrun_ig_${Date.now()}`,
+      externalPostUrl: "https://instagram.com/p/dryrun",
+      platform: "instagram",
+    };
+  }
+
   const cfg = config ?? legacyEnvConfig();
   const { version, pageAccessToken, instagramAccountId } = cfg;
 

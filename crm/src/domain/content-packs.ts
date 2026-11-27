@@ -11,7 +11,7 @@ import {
   type ContentPackStatus,
 } from "../db/schema";
 import { logEvent } from "./events";
-import { publishInstagramMedia, type PublishBrand } from "../services/meta-graph";
+import { publishInstagramMedia, publishToFacebook, resolveBrandConfig, type PublishBrand } from "../services/meta-graph";
 import { notifyContentPackCreated } from "../services/telegram";
 
 /**
@@ -68,6 +68,8 @@ export interface ContentPackSummary {
   downloadedAt: string | null;
   publishedAt: string | null;
   externalPostUrl: string | null;
+  fbPostUrl: string | null;
+  fbPublishedAt: string | null;
   createdBy: string;
   createdAt: string;
 }
@@ -94,6 +96,8 @@ const toSummary = (row: ContentPackRow): ContentPackSummary => ({
   downloadedAt: row.downloadedAt ? row.downloadedAt.toISOString() : null,
   publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
   externalPostUrl: row.externalPostUrl ?? null,
+  fbPostUrl: row.fbPostUrl ?? null,
+  fbPublishedAt: row.fbPublishedAt ? row.fbPublishedAt.toISOString() : null,
   createdBy: row.createdBy,
   createdAt: row.createdAt.toISOString(),
 });
@@ -319,9 +323,10 @@ export class PackPublishError extends Error {
 
 /**
  * Publishes an APPROVED pack to its brand's Instagram account (single image
- * or carousel — the public slide URLs are what Meta downloads). The caption
- * uses the Instagram variant when the pack carries one. Idempotent guard:
- * an already-published pack fails loudly instead of double-posting.
+ * or carousel — the public slide URLs are what Meta downloads) and, best
+ * effort, to its Facebook Page (cover photo + caption). The caption uses the
+ * per-platform variant when the pack carries one. Idempotent guard: an
+ * already-published pack fails loudly instead of double-posting.
  */
 export async function publishContentPack(packId: string, actor = "owner:telegram") {
   const pack = await getPackOrThrow(packId);
@@ -356,6 +361,34 @@ export async function publishContentPack(packId: string, actor = "owner:telegram
     hashtags: pack.hashtags,
   });
 
+  // Facebook: cover photo + caption with the brand's page credentials.
+  // Best effort — an FB failure must not un-publish the IG post; the owner
+  // sees the error in the Telegram confirmation and can re-post manually.
+  const brand = pack.brand as PublishBrand;
+  let fbError: string | undefined;
+  let fb: { url: string | null } | undefined;
+  try {
+    const fbResult = await publishToFacebook(
+      {
+        caption: pack.captionsByPlatform?.facebook ?? pack.caption,
+        hashtags: pack.hashtags,
+        imageUrl: imageUrls[0]!,
+      },
+      resolveBrandConfig(brand)
+    );
+    fb = { url: fbResult.externalPostUrl ?? null };
+  } catch (err) {
+    fbError = err instanceof Error ? err.message : "Facebook publish failed";
+    await logEvent({
+      entity: "content_pack",
+      entityId: packId,
+      action: "pack_fb_failed",
+      actor,
+      after: { brand, error: fbError },
+      reason: "La publicación de Facebook falló después de publicar en Instagram",
+    });
+  }
+
   const [updated] = await db
     .update(contentPacks)
     .set({
@@ -363,6 +396,13 @@ export async function publishContentPack(packId: string, actor = "owner:telegram
       publishedAt: new Date(),
       externalPostId: result.externalPostId,
       externalPostUrl: result.externalPostUrl ?? null,
+      ...(fb
+        ? {
+            fbPostId: null,
+            fbPostUrl: fb.url,
+            fbPublishedAt: new Date(),
+          }
+        : {}),
     })
     .where(eq(contentPacks.id, packId))
     .returning();
@@ -373,9 +413,15 @@ export async function publishContentPack(packId: string, actor = "owner:telegram
     action: "pack_published",
     actor,
     before: { status: "approved" },
-    after: { status: "published", brand: pack.brand, externalPostUrl: result.externalPostUrl ?? null },
-    reason: `Published ${KIND_LABEL[pack.kind]} to Instagram (${pack.brand}): ${pack.topic}`,
+    after: {
+      status: "published",
+      brand: pack.brand,
+      externalPostUrl: result.externalPostUrl ?? null,
+      ...(fb ? { fbPostUrl: fb.url } : {}),
+      ...(fbError ? { fbError } : {}),
+    },
+    reason: `Published ${KIND_LABEL[pack.kind]} to Instagram${fb ? "+Facebook" : ""} (${pack.brand}): ${pack.topic}`,
   });
 
-  return { success: true, pack: toSummary(updated!) };
+  return { success: true, pack: toSummary(updated!), ...(fbError ? { fbError } : { fbUrl: fb?.url ?? null }) };
 }

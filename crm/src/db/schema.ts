@@ -734,6 +734,10 @@ export const contentPacks = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     externalPostId: text("external_post_id"),
     externalPostUrl: text("external_post_url"),
+    // Second destination: the Facebook Page (the fields above stay Instagram's).
+    fbPostId: text("fb_post_id"),
+    fbPostUrl: text("fb_post_url"),
+    fbPublishedAt: timestamp("fb_published_at", { withTimezone: true }),
     createdBy: text("created_by").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

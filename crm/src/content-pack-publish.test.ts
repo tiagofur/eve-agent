@@ -20,6 +20,21 @@ vi.mock("./services/telegram", async (importOriginal) => {
   };
 });
 
+// Facebook is mocked separately so the FB-failure path can be rehearsed:
+// by default it runs the real (dry-run) publisher. vi.hoisted keeps the
+// mock fn available inside the hoisted vi.mock factory.
+const { publishToFacebookMock } = vi.hoisted(() => ({ publishToFacebookMock: vi.fn() }));
+vi.mock("./services/meta-graph", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./services/meta-graph")>();
+  publishToFacebookMock.mockImplementation((...args: unknown[]) =>
+    (original.publishToFacebook as (...a: unknown[]) => unknown)(...args)
+  );
+  return {
+    ...original,
+    publishToFacebook: publishToFacebookMock,
+  };
+});
+
 /** Minimal 1x1 PNG (real magic bytes: the extractor only matches names). */
 const TINY_PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49,
@@ -34,7 +49,7 @@ function packZip(slideCount: number): Buffer {
   return Buffer.from(zipSync(entries));
 }
 
-async function uploadPack(brand: "pepinillo" | "solennix", slides = 2) {
+async function uploadPack(brand: "creapolis" | "pepinillo" | "solennix", slides = 2) {
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(packZip(slides))], { type: "application/zip" }), "pack.zip");
   form.append(
@@ -113,7 +128,9 @@ describe("Content packs: slides públicas y publish 1-click", () => {
   });
 
   it("publish exige aprobación previa y luego publica (dry-run) con guard de doble publish", async () => {
-    const created = await uploadPack("pepinillo", 2);
+    // creapolis: the only brand with FB page credentials in the test env —
+    // dry-run must publish BOTH destinations for it.
+    const created = await uploadPack("creapolis", 2);
     createdIds.push(created.pack.id);
     const base = `/api/content-packs/${created.pack.id}`;
 
@@ -130,12 +147,45 @@ describe("Content packs: slides públicas y publish 1-click", () => {
 
     const publish = await app.request(`${base}/publish`, { method: "POST", headers: ownerHeaders });
     expect(publish.status).toBe(200);
-    const body = (await publish.json()) as { pack: { status: string; externalPostUrl: string | null } };
+    const body = (await publish.json()) as {
+      pack: { status: string; externalPostUrl: string | null; fbPostUrl: string | null; fbPublishedAt: string | null };
+      fbUrl: string | null;
+    };
     expect(body.pack.status).toBe("published");
     expect(body.pack.externalPostUrl).toContain("instagram.com");
+    // Dry-run publishes both: FB gets the cover + caption too.
+    expect(body.pack.fbPostUrl).toContain("facebook.com");
+    expect(body.pack.fbPublishedAt).toBeTruthy();
+    expect(body.fbUrl).toContain("facebook.com");
 
     const again = await app.request(`${base}/publish`, { method: "POST", headers: ownerHeaders });
     expect(again.status).toBe(409);
+  });
+
+  it("un fallo de Facebook no des-publica el pack: IG queda publicado y el error se reporta", async () => {
+    const created = await uploadPack("solennix", 2);
+    createdIds.push(created.pack.id);
+    const base = `/api/content-packs/${created.pack.id}`;
+    publishToFacebookMock.mockImplementationOnce(() => {
+      throw new Error("(#200) Permissions error: la página de la marca no está configurada");
+    });
+
+    await app.request(`${base}/review`, {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({ decision: "approved" }),
+    });
+    const publish = await app.request(`${base}/publish`, { method: "POST", headers: ownerHeaders });
+    expect(publish.status).toBe(200);
+    const body = (await publish.json()) as {
+      pack: { status: string; externalPostUrl: string | null; fbPostUrl: string | null };
+      fbError?: string;
+    };
+    expect(body.pack.status).toBe("published");
+    expect(body.pack.externalPostUrl).toContain("instagram.com");
+    expect(body.pack.fbPostUrl).toBeNull();
+    expect(body.fbError).toContain("Permissions error");
+    publishToFacebookMock.mockClear();
   });
 
   it("review rechaza doble revisión (el botón de Telegram la tolera)", async () => {
@@ -163,7 +213,7 @@ describe("Content packs: slides públicas y publish 1-click", () => {
     const body = (await res.json()) as { packs: Array<{ brand: string; status: string }> };
     expect(body.packs.length).toBeGreaterThan(0);
     expect(body.packs.every((p) => p.status === "published")).toBe(true);
-    expect(body.packs.some((p) => p.brand === "pepinillo")).toBe(true);
+    expect(body.packs.some((p) => p.brand === "creapolis")).toBe(true);
   });
 
   it("packs de video no son auto-publicables", async () => {
