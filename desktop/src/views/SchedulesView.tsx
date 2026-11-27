@@ -453,6 +453,7 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
                           <Badge tone={s.source === "system" ? "indigo" : "zinc"}>
                             {s.source === "system" ? "Sistema" : "Custom"}
                           </Badge>
+                          {s.kind === "local" && <Badge tone="emerald">Sin LLM</Badge>}
                           {s.lastRun && (
                             <Badge tone={statusTone[s.lastRun.status]}>{statusLabel[s.lastRun.status]}</Badge>
                           )}
@@ -589,9 +590,13 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
                     : "sin ejecuciones",
                 },
                 {
-                  label: "Categoría",
-                  value: CATEGORY_META[selected.category].label,
+                  label: "Tipo",
+                  value:
+                    selected.kind === "local"
+                      ? `Job local del CRM (sin LLM) — handler ${selected.handler ?? "—"}`
+                      : "Agente (turno EVE, consume tokens)",
                 },
+                { label: "Categoría", value: CATEGORY_META[selected.category].label },
                 {
                   label: "Gasto 7 días",
                   value:

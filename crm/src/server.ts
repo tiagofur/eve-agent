@@ -5,9 +5,7 @@ import { serve } from "@hono/node-server";
 import { app } from "./app";
 import { ensureDefaultApiKeys } from "./auth/keys";
 import { startTelegramPolling } from "./services/telegram";
-import { startFollowupDigest } from "./services/followup-digest";
 import { startScheduleDispatcher } from "./services/schedule-dispatcher";
-import { startMetricsCollector } from "./services/metrics-collector";
 
 const port = Number(process.env.PORT ?? 8787);
 
@@ -31,9 +29,10 @@ async function start() {
     (info) => {
       console.log(`Creapolis CRM API running at http://localhost:${info.port}`);
       startTelegramPolling();
-      startFollowupDigest();
+      // followup_digest + metrics_collector now live in the schedules table
+      // (kind=local); the dispatcher minute tick runs them, and its 12h local
+      // grace replaces the boot catch-up the daemons used to do themselves.
       startScheduleDispatcher();
-      startMetricsCollector();
     }
   );
 }

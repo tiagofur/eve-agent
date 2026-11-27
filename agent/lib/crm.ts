@@ -1047,6 +1047,9 @@ export interface ScheduleItem {
   source: string;
   /** Block the task belongs to; the desktop pauses whole categories. */
   category: ScheduleCategory;
+  /** local = CRM handler (no tokens); agent = EVE orchestrator turn. */
+  kind: "agent" | "local";
+  handler: string | null;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;
