@@ -965,7 +965,7 @@ export const crmApi = {
   /** Lista con próxima/última ejecución y el reloj del servidor (hint de zona horaria). */
   getSchedules: () =>
     request<{ schedules: ScheduleItem[]; serverNow: string; timezone: string }>("/api/schedules"),
-  createSchedule: (data: { title: string; cron: string; prompt: string; name?: string }) =>
+  createSchedule: (data: { title: string; cron: string; prompt: string; name?: string; category?: ScheduleCategory }) =>
     request<{ success: boolean; schedule: ScheduleItem }>("/api/schedules", {
       method: "POST",
       body: JSON.stringify(data),
@@ -973,11 +973,22 @@ export const crmApi = {
   /** Cambiar cron o reactivar re-arma la próxima ejecución desde ahora. */
   updateSchedule: (
     id: string,
-    data: { title?: string; cron?: string; prompt?: string; enabled?: boolean }
+    data: { title?: string; cron?: string; prompt?: string; enabled?: boolean; category?: ScheduleCategory }
   ) =>
     request<{ success: boolean; schedule: ScheduleItem }>(`/api/schedules/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    }),
+  /** Apaga o enciende un bloque entero de tareas (cada cambio queda auditado). */
+  setScheduleCategory: (category: ScheduleCategory, enabled: boolean) =>
+    request<{
+      success: boolean;
+      category: ScheduleCategory;
+      changed: number;
+      changes: Array<{ scheduleId: string; title: string; after: boolean }>;
+    }>(`/api/schedules/category/${category}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
     }),
   deleteSchedule: (id: string) =>
     request<{ success: boolean }>(`/api/schedules/${id}`, { method: "DELETE" }),
@@ -1060,7 +1071,21 @@ export interface ScheduleRunItem {
   error: string | null;
   startedAt: string;
   finishedAt: string | null;
+  /** Lo que el turno de esta corrida gastó; null = nunca llegó a asentarse. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
 }
+
+/** Gasto de una tarea en los últimos 7 días (subagentes delegados incluidos). */
+export interface ScheduleUsageSummary {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+}
+
+export type ScheduleCategory = "content" | "reports" | "sales" | "system" | "other";
 
 /** Tarea programada del agente (cronjob): cadencia + prompt que se ejecuta solo. */
 export interface ScheduleItem {
@@ -1071,10 +1096,12 @@ export interface ScheduleItem {
   prompt: string;
   enabled: boolean;
   source: "system" | "user";
+  category: ScheduleCategory;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;
   lastRun: ScheduleRunItem | null;
+  usage7d: ScheduleUsageSummary;
 }
 
 /** Reporte markdown del agente (brief de IA, plan editorial, operación…). */
