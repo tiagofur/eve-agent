@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { renderPackPngs, renderSlidePng, SLIDE_HEIGHT, SLIDE_WIDTH, type PackRenderSpec } from "../lib/content-renderer";
+import {
+  countWords,
+  renderPackPngs,
+  renderSlidePng,
+  SLIDE_HEIGHT,
+  SLIDE_WIDTH,
+  type PackRenderSpec,
+} from "../lib/content-renderer";
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -93,5 +100,39 @@ describe("content-renderer (posts de imagen y carrusel)", () => {
       // @ts-expect-error provocar slide sin title
       renderPackPngs({ topic: "x", brand: "creapolis", slides: [{ variant: "cover" }] })
     ).rejects.toThrow(/invalid/);
+  });
+
+  it("countWords mide palabras reales (el cap de portada lo usa el tool)", () => {
+    expect(countWords("El 80% de los equipos pierde tiempo")).toBe(7);
+    expect(countWords("  hola   mundo  ")).toBe(2);
+    expect(countWords("")).toBe(0);
+  });
+
+  it("la portada híbrida compone el arte IA (4:5 → 1080x1350) y difiere de la tipográfica", async () => {
+    // 864x1080 solid-ish PNG built via resvg (no network in tests).
+    const { Resvg } = await import("@resvg/resvg-js");
+    const art = Buffer.from(
+      new Resvg(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="864" height="1080"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#164e63"/><stop offset="1" stop-color="#0e7490"/></linearGradient></defs><rect width="864" height="1080" fill="url(#g)"/><circle cx="700" cy="260" r="140" fill="#22d3ee" opacity="0.7"/></svg>'
+      ).render().asPng()
+    );
+    const typographic = await renderSlidePng(carouselSpec.slides[0]!, 1, 5);
+    const hybrid = await renderSlidePng(carouselSpec.slides[0]!, 1, 5, "creapolis", { coverImage: art });
+    expect(hybrid.subarray(0, 8).equals(PNG_MAGIC)).toBe(true);
+    expect(pngDimensions(hybrid)).toEqual({ width: SLIDE_WIDTH, height: SLIDE_HEIGHT });
+    expect(hybrid.equals(typographic)).toBe(false);
+
+    // image_only: sin texto de titular; aún PNG válido y distinto al híbrido.
+    const imageOnly = await renderSlidePng(carouselSpec.slides[0]!, 1, 5, "creapolis", {
+      coverImage: art,
+      textOnCover: false,
+    });
+    expect(imageOnly.subarray(0, 8).equals(PNG_MAGIC)).toBe(true);
+    expect(imageOnly.equals(hybrid)).toBe(false);
+
+    // Solo el slide 1 lleva arte: renderPackPngs lo aplica y las interiores no.
+    const pack = await renderPackPngs(carouselSpec, { coverImage: art, showLogo: true });
+    expect(pack).toHaveLength(5);
+    expect(pack[0]!.equals(typographic)).toBe(false);
   });
 });

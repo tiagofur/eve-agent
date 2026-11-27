@@ -360,15 +360,168 @@ function slideBody(spec: SlideSpec, theme: BrandTheme): El {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Maximum words a cover headline may carry (brand visual profile). */
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+export interface CoverRenderOptions {
+  /** AI art behind the cover; undefined = today's typography-only cover. */
+  coverImage?: Buffer;
+  /** Brand badge over the art (visual profile `showLogo`). */
+  showLogo?: boolean;
+  /** false (`image_only` mode): full-bleed art with no headline text. */
+  textOnCover?: boolean;
+}
+
+/** #rrggbb → rgba(...) — satori gradients are safer with explicit rgba stops. */
+function hexToRgba(hex: string, alpha: number): string {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Gemini's image models return JPEG (nano-banana) or PNG depending on the
+ * model; resvg refuses to decode when the data URL's mime lies about the
+ * bytes, so sniff the magic number instead of trusting a label.
+ */
+function imageMime(buf: Buffer): string {
+  if (buf[0] === 0xff && buf[1] === 0xd8) return "image/jpeg";
+  if (buf[0] === 0x89 && buf[1] === 0x50) return "image/png";
+  if (buf.subarray(0, 4).toString("ascii") === "RIFF") return "image/webp";
+  return "image/png";
+}
+
+/**
+ * Cover with AI art: full-bleed image, dark gradient so the headline stays
+ * crisp (satori has no text shadow), text anchored at the bottom. `image_only`
+ * mode passes an empty title and gets pure art with just the brand badge.
+ */
+function coverFrame(image: Buffer, spec: SlideSpec, theme: BrandTheme, options: CoverRenderOptions): El {
+  const dataUrl = `url(data:${imageMime(image)};base64,${image.toString("base64")})`;
+  const kids: El[] = [
+    el("div", {
+      position: "absolute",
+      inset: "0",
+      backgroundImage: dataUrl,
+      backgroundSize: "cover",
+      display: "flex",
+    }),
+    el("div", {
+      position: "absolute",
+      inset: "0",
+      display: "flex",
+      // The art owns the top two thirds; the fade only builds a seat for the
+      // headline in the bottom third so it stays crisp without eating the art.
+      background: `linear-gradient(180deg, rgba(0,0,0,0.10) 0%, rgba(0,0,0,0) 22%, ${hexToRgba(theme.bg, 0)} 55%, ${hexToRgba(theme.bg, 0.55)} 72%, ${hexToRgba(theme.bg, 0.97)} 93%)`,
+    }),
+  ];
+  // Brand badge, top-left, on a dark pill so it reads over any art.
+  if (options.showLogo ?? true) {
+    kids.push(
+      el(
+        "div",
+        {
+          position: "absolute",
+          top: "48px",
+          left: "56px",
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          backgroundColor: "rgba(0,0,0,0.55)",
+          border: `1px solid ${theme.panelBorder}`,
+          borderRadius: "999px",
+          padding: "12px 24px",
+        },
+        [
+          el("div", {
+            width: "14px",
+            height: "14px",
+            borderRadius: "4px",
+            background: `linear-gradient(135deg, ${theme.accent2}, ${theme.accent})`,
+          }),
+          text(theme.name, { fontSize: "24px", fontWeight: 700, color: "#ffffff", letterSpacing: "1px" }),
+        ]
+      )
+    );
+  }
+  const withText = options.textOnCover ?? true;
+  const textKids: El[] = [];
+  if (withText && spec.kicker) {
+    textKids.push(
+      text(spec.kicker.toUpperCase(), {
+        fontSize: "26px",
+        fontWeight: 700,
+        color: theme.accent,
+        letterSpacing: "4px",
+        marginBottom: "22px",
+      })
+    );
+  }
+  if (withText && spec.title) {
+    textKids.push(
+      text(spec.title, {
+        fontSize: "76px",
+        fontWeight: 900,
+        color: "#ffffff",
+        lineHeight: 1.1,
+      })
+    );
+  }
+  if (withText && spec.subtitle) {
+    textKids.push(
+      text(spec.subtitle, {
+        fontSize: "32px",
+        fontWeight: 400,
+        color: "#e4e4e7",
+        lineHeight: 1.4,
+        marginTop: "26px",
+      })
+    );
+  }
+  if (textKids.length > 0) {
+    kids.push(
+      el(
+        "div",
+        {
+          position: "absolute",
+          left: "64px",
+          right: "64px",
+          bottom: "88px",
+          display: "flex",
+          flexDirection: "column",
+        },
+        textKids
+      )
+    );
+  }
+  return el("div", {
+    width: `${SLIDE_WIDTH}px`,
+    height: `${SLIDE_HEIGHT}px`,
+    boxSizing: "border-box",
+    position: "relative",
+    display: "flex",
+    backgroundColor: theme.bg,
+  }, kids);
+}
+
 export async function renderSlidePng(
   spec: SlideSpec,
   pageIndex: number,
   pageCount: number,
-  brand: Brand = "creapolis"
+  brand: Brand = "creapolis",
+  coverOptions?: CoverRenderOptions
 ): Promise<Buffer> {
   const theme = getBrandTheme(brand);
   const fonts = await loadFonts();
-  const svg = await satori(slideFrame(slideBody(spec, theme), pageIndex, pageCount, theme), {
+  const isCoverWithArt = pageIndex === 1 && coverOptions?.coverImage !== undefined;
+  const tree = isCoverWithArt
+    ? coverFrame(coverOptions!.coverImage!, spec, theme, coverOptions!)
+    : slideFrame(slideBody(spec, theme), pageIndex, pageCount, theme);
+  const svg = await satori(tree, {
     width: SLIDE_WIDTH,
     height: SLIDE_HEIGHT,
     fonts,
@@ -377,7 +530,12 @@ export async function renderSlidePng(
   return Buffer.from(resvg.render().asPng());
 }
 
-export async function renderPackPngs(spec: PackRenderSpec): Promise<Buffer[]> {
+export interface PackRenderOptions extends CoverRenderOptions {}
+
+export async function renderPackPngs(
+  spec: PackRenderSpec,
+  options?: PackRenderOptions
+): Promise<Buffer[]> {
   if (!spec.slides?.length) throw new Error("Pack needs at least 1 slide");
   if (spec.slides.length > MAX_SLIDES) throw new Error(`Pack exceeds ${MAX_SLIDES} slides`);
   const pngs: Buffer[] = [];
@@ -386,7 +544,8 @@ export async function renderPackPngs(spec: PackRenderSpec): Promise<Buffer[]> {
     if (!slide?.variant || !slide.title) {
       throw new Error(`Slide ${i + 1} invalid: needs variant and title`);
     }
-    pngs.push(await renderSlidePng(slide, i + 1, spec.slides.length, spec.brand));
+    // The AI art belongs to the cover only; interior slides stay typography.
+    pngs.push(await renderSlidePng(slide, i + 1, spec.slides.length, spec.brand, i === 0 ? options : undefined));
   }
   return pngs;
 }

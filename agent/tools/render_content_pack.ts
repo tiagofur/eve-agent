@@ -4,12 +4,14 @@ import { z } from "zod";
 import { crmUploadContentPack } from "../lib/crm";
 import {
   MAX_SLIDES,
+  countWords,
   renderPackPngs,
   type Brand,
   type PackRenderSpec,
   type SlideSpec,
 } from "../lib/content-renderer";
 import { requireStaff } from "../lib/guard";
+import { fetchBrandVisualConfig } from "../lib/visual-config";
 
 const slideSchema = z.object({
   variant: z.enum(["cover", "news", "problema_solucion", "lista", "cta"]),
@@ -62,6 +64,18 @@ export default defineTool({
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional(),
+    // Scene for the AI cover (brand profile hybrid/image_only). Describe the
+    // IMAGE ONLY: composition, subject, mood — text is composited on top by
+    // the renderer, and asking for text inside the image is forbidden.
+    cover: z
+      .object({
+        visualPrompt: z
+          .string()
+          .min(10)
+          .max(600)
+          .describe("Scene for the cover art, in English, no text in image"),
+      })
+      .optional(),
     slides: z.array(slideSchema).min(1).max(MAX_SLIDES),
   }),
   async execute(input, ctx) {
@@ -74,13 +88,42 @@ export default defineTool({
       return { status: "error", error: "kind=carousel requires at least 2 slides" };
     }
 
+    // The owner's per-brand visual profile decides whether the cover gets AI
+    // art and how long the headline may be. Editorial = today's typography.
+    const visual = await fetchBrandVisualConfig(input.brand);
+    const coverSlide = input.slides[0];
+    const titleWords = countWords(coverSlide.title);
+    if (visual.mode !== "image_only" && titleWords > visual.coverTitleMaxWords) {
+      return {
+        status: "error",
+        error: `Cover headline carries ${titleWords} words; the ${input.brand} visual profile caps it at ${visual.coverTitleMaxWords}. Shorten it to the hook alone and call again.`,
+      };
+    }
+
+    let coverImage: Buffer | undefined;
+    let coverFallback: string | undefined;
+    if (visual.mode !== "editorial" && coverSlide.variant === "cover" && input.cover?.visualPrompt) {
+      try {
+        coverImage = await generateCoverImage(visual, input.cover.visualPrompt);
+      } catch (err) {
+        // A failed generation must never block the pack: typography cover.
+        coverFallback = err instanceof Error ? err.message : "cover generation failed";
+      }
+    } else if (visual.mode !== "editorial" && !input.cover?.visualPrompt) {
+      coverFallback = `brand profile is ${visual.mode} but no cover.visualPrompt was provided`;
+    }
+
     try {
       const spec: PackRenderSpec = {
         topic: input.topic,
         brand: input.brand as Brand,
         slides: input.slides as SlideSpec[],
       };
-      const pngs = await renderPackPngs(spec);
+      const pngs = await renderPackPngs(spec, {
+        coverImage,
+        showLogo: visual.showLogo,
+        textOnCover: visual.mode !== "image_only",
+      });
 
       const entries: Array<{ name: string; data: Buffer }> = pngs.map((png, i) => ({
         name: `slides/slide-${String(i + 1).padStart(2, "0")}.png`,
@@ -99,7 +142,9 @@ export default defineTool({
       entries.push({
         name: "LICENSES.txt",
         data: Buffer.from(
-          "Imágenes generadas programáticamente (tipografía Inter, SIL OFL) por Creapolis.Dev.\nSin material de terceros: seguro para uso comercial.\n",
+          coverImage
+            ? "Portada generada con IA (Gemini image) compuesta con tipografía Inter (SIL OFL) por Creapolis.Dev.\nSin material de terceros: seguro para uso comercial.\n"
+            : "Imágenes generadas programáticamente (tipografía Inter, SIL OFL) por Creapolis.Dev.\nSin material de terceros: seguro para uso comercial.\n",
           "utf8"
         ),
       });
@@ -128,6 +173,8 @@ export default defineTool({
         packId: result.pack.id,
         packStatus: result.pack.status,
         slides: pngs.length,
+        coverMode: coverImage ? visual.mode : "editorial",
+        ...(coverFallback ? { coverFallback } : {}),
         message: "Pack pending owner approval in Desktop → Contenido.",
       };
     } catch (err) {
@@ -135,3 +182,38 @@ export default defineTool({
     }
   },
 });
+
+/**
+ * One AI image for the cover (1:1.25 → 4:5 portrait), Gemini image models
+ * through the same GEMINI_API_KEY the agent already uses. Imported here so
+ * the bundle keeps the SDK out of the cold path (eve tools guidance).
+ */
+async function generateCoverImage(
+  visual: { mode: string; artDirection: string; imageModel: string },
+  scene: string
+): Promise<Buffer> {
+  const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
+  const { generateImage } = await import("ai");
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY not configured — cannot generate cover art");
+  }
+  const google = createGoogleGenerativeAI({ apiKey });
+  const parts = [
+    `Editorial cover art for a social media post, portrait 4:5.`,
+    visual.artDirection ? `Brand art direction: ${visual.artDirection}.` : "",
+    `Scene: ${scene}`,
+    "Absolutely no text, letters, numbers, watermarks or logos inside the image.",
+    "Leave the lower third visually calm (soft focus or simple surfaces) so a headline can sit on top.",
+  ].filter(Boolean);
+  const result = await generateImage({
+    model: google.image(visual.imageModel),
+    prompt: parts.join(" "),
+    n: 1,
+    aspectRatio: "4:5",
+    providerOptions: { google: { imageSize: "1K" } },
+  });
+  const image = result.images[0];
+  if (!image) throw new Error("image model returned no image");
+  return Buffer.from(image.uint8Array);
+}
