@@ -18,6 +18,7 @@ import {
   sendEveMessage,
   type EnabledEveProxyConfig,
 } from "../../domain/eve-client";
+import { WEB_THREAD_KEY_PREFIX } from "../../domain/chat-origin";
 
 // Simple in-memory rate limiter for public chat turns per IP (e.g. 20 requests per 10 minutes)
 const ipRateMap = new Map<string, { count: number; resetAt: number }>();
@@ -26,8 +27,8 @@ const RATE_LIMIT_MAX_TURNS = 20;
 
 // Cost guardrails. Public threads are tagged with a "public:" externalKey so
 // the daily budget counts only visitor traffic (staff threads carry keys like
-// "telegram:<id>"), and per-thread caps bound any single conversation.
-const PUBLIC_KEY_PREFIX = "public:";
+// "telegram:<id>"), and per-thread caps bound any single conversation. The
+// prefix lives in chat-origin, which tells web and internal threads apart.
 const MAX_TURNS_PER_THREAD = Number(process.env.PUBLIC_CHAT_MAX_TURNS_PER_THREAD ?? 60);
 const DAILY_TURN_BUDGET = Number(process.env.PUBLIC_CHAT_DAILY_TURN_BUDGET ?? 400);
 
@@ -65,7 +66,7 @@ async function countUserTurnsToday(): Promise<number> {
       and(
         eq(chatMessages.role, "user"),
         gte(chatMessages.createdAt, utcDayStart()),
-        like(chatThreads.externalKey, `${PUBLIC_KEY_PREFIX}%`)
+        like(chatThreads.externalKey, `${WEB_THREAD_KEY_PREFIX}%`)
       )
     );
   return rows[0]?.n ?? 0;
@@ -200,7 +201,7 @@ publicChatRouter.post(
       .insert(chatThreads)
       .values({
         title: title?.trim() || "Chat Web",
-        externalKey: `${PUBLIC_KEY_PREFIX}${randomUUID()}`,
+        externalKey: `${WEB_THREAD_KEY_PREFIX}${randomUUID()}`,
       })
       .returning();
 
@@ -238,7 +239,7 @@ publicChatRouter.post(
       if (existing) {
         // This route only serves its own public threads: a staff thread id
         // (telegram/desktop) must never be continued by an anonymous visitor.
-        if (!existing.externalKey?.startsWith(PUBLIC_KEY_PREFIX)) {
+        if (!existing.externalKey?.startsWith(WEB_THREAD_KEY_PREFIX)) {
           return c.json({ error: "Conversación no encontrada" }, 404);
         }
       } else {
@@ -253,7 +254,7 @@ publicChatRouter.post(
         .insert(chatThreads)
         .values({
           title: message.slice(0, 50),
-          externalKey: `${PUBLIC_KEY_PREFIX}${randomUUID()}`,
+          externalKey: `${WEB_THREAD_KEY_PREFIX}${randomUUID()}`,
         })
         .returning();
       if (!created) return c.json({ error: "Error al crear conversación" }, 500);
