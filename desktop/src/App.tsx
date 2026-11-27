@@ -341,7 +341,7 @@ export const App: React.FC = () => {
           )}
           {activeTab === "programadas" && <SchedulesView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "reportes" && <ReportsView />}
-          {activeTab === "contactos" && <WebContactsView />}
+          {activeTab === "contactos" && <WebContactsView onAskOrchestrator={askOrchestrator} />}
           {activeTab === "marketing" && <MarketingView />}
           {activeTab === "content" && <ContentView />}
           {activeTab === "outbox" && <OutboxView />}

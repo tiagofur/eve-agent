@@ -13,7 +13,7 @@ detail of shipped work lives in git history and PR descriptions.
 | **Hono REST API** | ✅ Complete | Leads, outbox, tickets, projects, billing, reports (weekly/funnel/daily), schedules, marketing, products, inbound |
 | **Meta Model API (Text)** | ✅ Complete | `muse-spark-1.3-contributor` for Orchestrator & subagents; Gemini Flash when `GEMINI_API_KEY` is set |
 | **Telegram Bot Channel** | ✅ Complete | Long-polling daemon, HITL interactive approval buttons, digest anti-reenvío |
-| **macOS Desktop App** | ✅ Complete | Tauri v2: Dashboard, Ventas (Cobros con facturas/pagos/suscripciones), Outbox, Programadas, Reportes, Chat |
+| **macOS Desktop App** | ✅ Complete | Tauri v2: Dashboard, Ventas (Cobros con facturas/pagos/suscripciones), Outbox, Programadas, Reportes, Chat, Contactos web |
 | **Outbox HITL Workflow** | ✅ Complete | Approval gates + auto-send of approved email drafts via Resend (#50) |
 | **Inbound Email (Resend Receiving)** | ✅ Complete | Svix-signed webhook → interactions; replies pause follow-ups (#51); pending VPS creds `RESEND_WEBHOOK_SECRET` |
 | **Meta Graph API (Facebook)** | ✅ Complete | Live publishing with Muse Image renders |
@@ -22,6 +22,7 @@ detail of shipped work lives in git history and PR descriptions.
 | **Production Deployment** | ✅ Complete | VPS ordo-vps with automatic GitHub Actions deploy + image rollback (since 2026-10-29) |
 | **Weekly Client Reports** | ✅ Complete | `reporter` subagent + `/api/reports/weekly` + Friday schedule (#53) |
 | **Collections (facturas/pagos/suscripciones)** | ✅ Complete | Mechanical paid/overdue/renew rules + biller drafts reminders (#52) |
+| **Web Contacts Inbox (Contactos web)** | ✅ Complete | Web chats separated from internal threads + `reviewed_at` review flag, `/api/web-contacts`, Telegram page on each new contact (capped), desktop tab with «Pedir respuesta» → draft in Outbox |
 | **Outbound WhatsApp** | ⏳ Pending | WhatsApp Cloud API delivery for approved drafts (email already live) |
 | **Store Releases & Reviews** | ⏳ Pending | Release pipeline + store review monitoring for Solennix/Pepinillo |
 | **Batch Prospecting** | ⏳ Pending | Lote de prospectos + secuencias multi-toque |
