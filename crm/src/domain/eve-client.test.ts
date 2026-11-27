@@ -185,12 +185,23 @@ describe("findMissingEveMessages", () => {
     ]);
   });
 
-  it("drops messages whose text is already in the thread when knownTexts is given", () => {
-    // Rows persisted before a session-scoped id scheme keep their old ids:
-    // the history sync must not insert them a second time.
+  it("matches legacy bare part ids so a same-session reply is not duplicated", () => {
+    // Rows persisted by pre-scoped builds carry the bare part id (`part_0`
+    // here); the session-scoped replay of the same turn dedupes against them.
     const parsed = parseEveStream(V27_TWO_TURN_REPLAY, { sessionId: "wrun_A" });
-    expect(findMissingEveMessages(new Set(), parsed.messages, new Set(["V27-OK"]))).toEqual([
+    expect(findMissingEveMessages(new Set(["part_0"]), parsed.messages)).toEqual([
       { id: "wrun_A:part_1", text: "SEGUNDO" },
+    ]);
+  });
+
+  it("never drops a new turn for repeating an old reply's text", () => {
+    // Two turns legitimately answered the same words: ids decide, not text.
+    const messages = [
+      { id: "wrun_A:part_0", text: "Listo." },
+      { id: "wrun_A:part_1", text: "Listo." },
+    ];
+    expect(findMissingEveMessages(new Set(["wrun_A:part_0"]), messages)).toEqual([
+      { id: "wrun_A:part_1", text: "Listo." },
     ]);
   });
 });

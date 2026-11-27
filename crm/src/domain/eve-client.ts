@@ -588,23 +588,31 @@ export function parseEveStream(
 }
 
 /**
- * Messages not persisted yet. `knownTexts` is the history sync's safety net:
- * ids changed scheme across eve versions (v26 event ids, then bare part ids,
- * now session-scoped ones), so a reply whose text is already in the thread is
- * not inserted again.
+ * Messages not persisted yet. A message counts as known when a row stored
+ * its exact session-scoped id, or the bare part id saved by pre-scoped
+ * builds: part ids (`run_0.0`) are unique within a session and only repeat
+ * across sessions, so a bare match always names the same turn — and a
+ * different turn of the current session (even with identical text) keeps
+ * its own id and is never dropped. Text is deliberately not compared:
+ * identical replies are legitimate history.
  */
 export function findMissingEveMessages(
   knownIds: Set<string> | string[],
-  messages: ParsedEveMessage[],
-  knownTexts: Set<string> = new Set()
+  messages: ParsedEveMessage[]
 ): ParsedEveMessage[] {
   const known = knownIds instanceof Set ? knownIds : new Set(knownIds);
-  return messages.filter((m) => !known.has(m.id) && !knownTexts.has(m.text));
+  return messages.filter((m) => {
+    if (known.has(m.id)) return false;
+    const colon = m.id.lastIndexOf(":");
+    return !(colon >= 0 && known.has(m.id.slice(colon + 1)));
+  });
 }
 
 export class EveClientError extends Error {
   status: number;
   code?: string;
+  /** Tokens the turn already spent before failing — billed all the same. */
+  usage?: EveUsage | null;
 
   constructor(message: string, opts: { status: number; code?: string }) {
     super(message);

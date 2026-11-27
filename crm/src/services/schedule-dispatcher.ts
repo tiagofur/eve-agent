@@ -4,7 +4,7 @@ import { db } from "../db/client";
 import { chatMessages, schedules } from "../db/schema";
 import { logEvent } from "../domain/events";
 import { runProxiedTurn } from "../domain/agent-turn";
-import { resolveEveProxyConfig, type EnabledEveProxyConfig } from "../domain/eve-client";
+import { EveClientError, resolveEveProxyConfig, type EnabledEveProxyConfig } from "../domain/eve-client";
 import {
   alignFreshSchedules,
   claimDueSchedules,
@@ -105,7 +105,13 @@ async function driveScheduleRun(
     console.log(`[Schedules] run ${opened.runId} of "${schedule.title}" succeeded`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown schedule run failure";
-    await closeScheduleRun(opened.runId, { status: "failed", error: message });
+    // A failed turn is billed anyway: persist the usage the error carried.
+    const usage = err instanceof EveClientError ? err.usage ?? null : null;
+    await closeScheduleRun(opened.runId, {
+      status: "failed",
+      error: message,
+      ...(usage ? { usage } : {}),
+    });
     await logEvent({
       entity: "schedule",
       entityId: schedule.id,
