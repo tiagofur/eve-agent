@@ -1157,6 +1157,8 @@ export interface VisualConfigItem {
   coverTitleMaxWords: number;
   showLogo: boolean;
   imageModel: string;
+  /** batch = Gemini Batch API (mitad de precio, minutos de latencia). */
+  generationMode: "standard" | "batch";
   /** false = sin fila en la BD (se muestran los defaults editorial). */
   configured: boolean;
 }
