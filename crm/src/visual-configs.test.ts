@@ -60,20 +60,27 @@ describe("Visual configs API", () => {
         coverTitleMaxWords: 6,
         showLogo: true,
         imageModel: "gemini-nano-banana-2.1",
+        generationMode: "batch",
       }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { config: { mode: string; coverTitleMaxWords: number } };
+    const body = (await res.json()) as { config: { mode: string; coverTitleMaxWords: number; generationMode: string } };
     expect(body.config.mode).toBe("hybrid");
     expect(body.config.coverTitleMaxWords).toBe(6);
+    expect(body.config.generationMode).toBe("batch");
 
     const list = await app.request("/api/visual-configs", { headers: opsHeaders });
-    const configs = (await list.json()) as { configs: Array<{ brand: string; mode: string; configured: boolean }> };
+    const configs = (await list.json()) as {
+      configs: Array<{ brand: string; mode: string; configured: boolean; generationMode: string }>;
+    };
     const creapolis = configs.configs.find((cfg) => cfg.brand === "creapolis");
     expect(creapolis?.mode).toBe("hybrid");
     expect(creapolis?.configured).toBe(true);
-    // The other two brands stay editorial.
-    expect(configs.configs.find((cfg) => cfg.brand === "pepinillo")?.mode).toBe("editorial");
+    expect(creapolis?.generationMode).toBe("batch");
+    // The other two brands stay editorial + standard.
+    const pepinillo = configs.configs.find((cfg) => cfg.brand === "pepinillo");
+    expect(pepinillo?.mode).toBe("editorial");
+    expect(pepinillo?.generationMode).toBe("standard");
   });
 
   it("rejects an unknown brand, an invalid mode and an out-of-range word cap", async () => {

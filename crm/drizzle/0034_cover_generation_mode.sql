@@ -1,0 +1,1 @@
+ALTER TABLE "brand_visual_configs" ADD COLUMN "generation_mode" text DEFAULT 'standard' NOT NULL;

@@ -774,6 +774,9 @@ export const brandVisualConfigs = pgTable(
     showLogo: boolean("show_logo").notNull().default(true),
     // Image model id, so a newer/cheaper model is one edit away (no deploy).
     imageModel: text("image_model").notNull().default("gemini-nano-banana-2.1"),
+    // standard = synchronous (seconds); batch = Gemini Batch API at half the
+    // price, at the cost of a few minutes of latency per cover.
+    generationMode: text("generation_mode").notNull().default("standard"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

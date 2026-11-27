@@ -573,6 +573,21 @@ const VisualConfigModal: React.FC<{
                       />
                       Mostrar el badge de la marca sobre el arte
                     </label>
+                    <label className="flex items-start gap-2 text-xs text-zinc-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={cfg.generationMode === "batch"}
+                        onChange={(e) => patch(cfg.brand, { generationMode: e.target.checked ? "batch" : "standard" })}
+                        className="accent-amber-400 mt-0.5"
+                      />
+                      <span>
+                        <span className="font-semibold text-zinc-300">Generar en modo Batch (mitad de precio)</span>
+                        <span className="block text-[11px] text-zinc-500">
+                          La portada tarda ~2-5 minutos en vez de ~15 segundos; si el job falla, cae a generación estándar
+                          automáticamente. Ideal para el pipeline nocturno.
+                        </span>
+                      </span>
+                    </label>
                   </>
                 )}
                 <div className="flex justify-end pt-1">

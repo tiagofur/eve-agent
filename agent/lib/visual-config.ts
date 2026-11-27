@@ -8,6 +8,7 @@
 import { getCrmUrl, getOpsKey } from "./crm";
 
 export type VisualMode = "editorial" | "hybrid" | "image_only";
+export type GenerationMode = "standard" | "batch";
 
 export interface BrandVisualConfig {
   brand: string;
@@ -16,6 +17,8 @@ export interface BrandVisualConfig {
   coverTitleMaxWords: number;
   showLogo: boolean;
   imageModel: string;
+  /** batch = Gemini Batch API (half price, minutes of latency). */
+  generationMode: GenerationMode;
 }
 
 const EDITORIAL_DEFAULT: Omit<BrandVisualConfig, "brand"> = {
@@ -24,6 +27,7 @@ const EDITORIAL_DEFAULT: Omit<BrandVisualConfig, "brand"> = {
   coverTitleMaxWords: 8,
   showLogo: true,
   imageModel: "gemini-nano-banana-2.1",
+  generationMode: "standard",
 };
 
 export const EDITORIAL_FALLBACK = EDITORIAL_DEFAULT;

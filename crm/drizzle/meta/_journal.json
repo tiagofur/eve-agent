@@ -232,6 +232,20 @@
       "when": 1796086000000,
       "tag": "0032_pack_fb_post",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1796087000000,
+      "tag": "0033_video_campaign_slot",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1796088000000,
+      "tag": "0034_cover_generation_mode",
+      "breakpoints": true
     }
   ]
 }

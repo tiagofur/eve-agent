@@ -11,6 +11,7 @@ import {
   type SlideSpec,
 } from "../lib/content-renderer";
 import { requireStaff } from "../lib/guard";
+import { generateCoverImage } from "../lib/cover-image";
 import { fetchBrandVisualConfig } from "../lib/visual-config";
 
 const slideSchema = z.object({
@@ -102,9 +103,12 @@ export default defineTool({
 
     let coverImage: Buffer | undefined;
     let coverFallback: string | undefined;
+    let coverVia: "batch" | "standard" | undefined;
     if (visual.mode !== "editorial" && coverSlide.variant === "cover" && input.cover?.visualPrompt) {
       try {
-        coverImage = await generateCoverImage(visual, input.cover.visualPrompt);
+        const generated = await generateCoverImage(visual, input.cover.visualPrompt);
+        coverImage = generated.image;
+        coverVia = generated.via;
       } catch (err) {
         // A failed generation must never block the pack: typography cover.
         coverFallback = err instanceof Error ? err.message : "cover generation failed";
@@ -174,6 +178,8 @@ export default defineTool({
         packStatus: result.pack.status,
         slides: pngs.length,
         coverMode: coverImage ? visual.mode : "editorial",
+        ...(coverVia ? { coverVia } : {}),
+        ...(coverVia === "batch" ? { coverCost: "batch (half price)" } : {}),
         ...(coverFallback ? { coverFallback } : {}),
         message: "Pack pending owner approval in Desktop → Contenido.",
       };
@@ -184,36 +190,7 @@ export default defineTool({
 });
 
 /**
- * One AI image for the cover (1:1.25 → 4:5 portrait), Gemini image models
- * through the same GEMINI_API_KEY the agent already uses. Imported here so
- * the bundle keeps the SDK out of the cold path (eve tools guidance).
+ * One AI image for the cover (1:1.25 → 4:5 portrait). The heavy lifting
+ * (standard synchronous vs half-price Batch with standard fallback) lives in
+ * lib/cover-image; this tool only wires the brand profile in.
  */
-async function generateCoverImage(
-  visual: { mode: string; artDirection: string; imageModel: string },
-  scene: string
-): Promise<Buffer> {
-  const { createGoogleGenerativeAI } = await import("@ai-sdk/google");
-  const { generateImage } = await import("ai");
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY not configured — cannot generate cover art");
-  }
-  const google = createGoogleGenerativeAI({ apiKey });
-  const parts = [
-    `Editorial cover art for a social media post, portrait 4:5.`,
-    visual.artDirection ? `Brand art direction: ${visual.artDirection}.` : "",
-    `Scene: ${scene}`,
-    "Absolutely no text, letters, numbers, watermarks or logos inside the image.",
-    "Leave the lower third visually calm (soft focus or simple surfaces) so a headline can sit on top.",
-  ].filter(Boolean);
-  const result = await generateImage({
-    model: google.image(visual.imageModel),
-    prompt: parts.join(" "),
-    n: 1,
-    aspectRatio: "4:5",
-    providerOptions: { google: { imageSize: "1K" } },
-  });
-  const image = result.images[0];
-  if (!image) throw new Error("image model returned no image");
-  return Buffer.from(image.uint8Array);
-}

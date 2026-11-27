@@ -14,6 +14,7 @@ import { logEvent } from "../../domain/events";
  */
 
 export const VISUAL_MODES = ["editorial", "hybrid", "image_only"] as const;
+export const GENERATION_MODES = ["standard", "batch"] as const;
 
 const BRANDS = ["creapolis", "pepinillo", "solennix"] as const;
 
@@ -34,6 +35,7 @@ visualConfigsRouter.get("/", requireScope(["ops"]), async (c) => {
       coverTitleMaxWords: row?.coverTitleMaxWords ?? 8,
       showLogo: row?.showLogo ?? true,
       imageModel: row?.imageModel ?? "gemini-nano-banana-2.1",
+      generationMode: row?.generationMode ?? "standard",
       configured: row !== undefined,
     };
   });
@@ -46,6 +48,8 @@ const putSchema = z.object({
   coverTitleMaxWords: z.number().int().min(2).max(15).default(8),
   showLogo: z.boolean().default(true),
   imageModel: z.string().max(80).default("gemini-nano-banana-2.1"),
+  // batch = Gemini Batch API at half price (~2-5 min per cover instead of ~15s).
+  generationMode: z.enum(GENERATION_MODES).default("standard"),
 });
 
 // Upsert one brand's profile; every change leaves an audit event.
