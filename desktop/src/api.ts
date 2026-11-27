@@ -394,6 +394,9 @@ export interface ContentPackItem {
   downloadedAt: string | null;
   publishedAt: string | null;
   externalPostUrl: string | null;
+  /** Segundo destino: la página de Facebook (publicación 1-click IG+FB). */
+  fbPostUrl: string | null;
+  fbPublishedAt: string | null;
   createdBy: string;
   createdAt: string;
 }

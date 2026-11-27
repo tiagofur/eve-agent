@@ -124,6 +124,19 @@ const PackCard: React.FC<{
               Ver publicación en Instagram ↗
             </a>
           )}
+          {pack.status === "published" && pack.fbPostUrl && (
+            <a
+              href={pack.fbPostUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block mt-1 ml-3 text-xs text-blue-300 hover:underline"
+            >
+              Ver publicación en Facebook ↗
+            </a>
+          )}
+          {pack.status === "published" && pack.externalPostUrl && !pack.fbPostUrl && (
+            <span className="inline-block mt-1 ml-3 text-[11px] text-zinc-600">Facebook no publicado</span>
+          )}
         </div>
 
         <p className="text-xs text-zinc-400 leading-relaxed line-clamp-4 whitespace-pre-line">{pack.caption}</p>
