@@ -3,16 +3,21 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
 import { db } from "../../db/client";
-import { schedules, scheduleRuns } from "../../db/schema";
+import { schedules, scheduleRuns, type ScheduleCategory } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { logEvent } from "../../domain/events";
 import {
+  SCHEDULE_CATEGORIES,
   assertValidCron,
+  inferScheduleCategory,
   nextOccurrence,
+  setScheduleCategoryEnabled,
   usageBySchedule,
   type ScheduleUsageSummary,
 } from "../../domain/schedules";
 import { dispatchScheduleNow } from "../../services/schedule-dispatcher";
+
+const categorySchema = z.enum(SCHEDULE_CATEGORIES);
 
 /** Trailing window of the per-schedule token spend the list reports. */
 const USAGE_WINDOW_DAYS = 7;
@@ -79,6 +84,8 @@ const createSchema = z.object({
   prompt: z.string().min(1).max(20000),
   name: z.string().regex(/^[a-z0-9_]+$/).max(60).optional(),
   enabled: z.boolean().optional(),
+  // Omitted: inferred from the slug and title, falling back to "other".
+  category: categorySchema.optional(),
 });
 
 schedulesRouter.post(
@@ -86,7 +93,7 @@ schedulesRouter.post(
   requireScope(["ops"]),
   zValidator("json", createSchema),
   async (c) => {
-    const { title, cron, prompt, name, enabled = true } = c.req.valid("json");
+    const { title, cron, prompt, name, enabled = true, category } = c.req.valid("json");
     const actor = c.get("actor");
     try {
       assertValidCron(cron);
@@ -94,17 +101,19 @@ schedulesRouter.post(
       return c.json({ error: `Invalid cron expression: ${cron}` }, 400);
     }
 
+    const slug = name ?? slugify(title);
     let created: typeof schedules.$inferSelect | undefined;
     try {
       [created] = await db
         .insert(schedules)
         .values({
-          name: name ?? slugify(title),
+          name: slug,
           title,
           cron,
           prompt,
           enabled,
           source: "user",
+          category: category ?? inferScheduleCategory(slug, title),
           nextRunAt: enabled ? nextOccurrence(cron, new Date()) : null,
         })
         .returning();
@@ -112,7 +121,7 @@ schedulesRouter.post(
       // Drizzle wraps the pg unique-violation error; the code lives on .cause.
       const pgCode = (err as { code?: string }).code ?? (err as { cause?: { code?: string } }).cause?.code;
       if (pgCode === "23505") {
-        return c.json({ error: `Schedule name already in use: ${name ?? slugify(title)}` }, 409);
+        return c.json({ error: `Schedule name already in use: ${slug}` }, 409);
       }
       throw err;
     }
@@ -123,7 +132,7 @@ schedulesRouter.post(
       entityId: created.id,
       action: "created",
       actor,
-      after: { name: created.name, title, cron, enabled },
+      after: { name: created.name, title, cron, enabled, category: created.category },
     });
 
     return c.json({ success: true, schedule: created }, 201);
@@ -135,7 +144,40 @@ const patchSchema = z.object({
   cron: z.string().min(1).max(60).optional(),
   prompt: z.string().min(1).max(20000).optional(),
   enabled: z.boolean().optional(),
+  // Re-files the task into another category.
+  category: categorySchema.optional(),
 });
+
+// Pause or resume a whole category with one call. Each task it changes leaves
+// the same audit event and re-arming as patching it by id would.
+schedulesRouter.patch(
+  "/category/:category",
+  requireScope(["ops"]),
+  zValidator("json", z.object({ enabled: z.boolean() })),
+  async (c) => {
+    const parsed = categorySchema.safeParse(c.req.param("category"));
+    if (!parsed.success) {
+      return c.json({ error: `Unknown category: ${c.req.param("category")}` }, 400);
+    }
+    const { enabled } = c.req.valid("json");
+    const actor = c.get("actor");
+
+    const changes = await setScheduleCategoryEnabled(parsed.data as ScheduleCategory, enabled);
+    for (const change of changes) {
+      await logEvent({
+        entity: "schedule",
+        entityId: change.scheduleId,
+        action: "updated",
+        actor,
+        before: { enabled: change.before },
+        after: { enabled: change.after },
+        reason: `Cambio por categoría: ${parsed.data}`,
+      });
+    }
+
+    return c.json({ success: true, category: parsed.data, changed: changes.length, changes });
+  }
+);
 
 schedulesRouter.patch(
   "/:id",
@@ -160,7 +202,7 @@ schedulesRouter.patch(
 
     const before: Record<string, unknown> = {};
     const changed: Record<string, unknown> = {};
-    for (const key of ["title", "cron", "prompt", "enabled"] as const) {
+    for (const key of ["title", "cron", "prompt", "enabled", "category"] as const) {
       const next = patch[key];
       if (next === undefined || next === current[key]) continue;
       before[key] = current[key];

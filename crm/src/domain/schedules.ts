@@ -5,7 +5,14 @@ import cronParser from "cron-parser";
 
 const parseExpression = cronParser.parseExpression;
 import { db } from "../db/client";
-import { chatThreads, schedules, scheduleRuns, type ScheduleRunTrigger } from "../db/schema";
+import {
+  chatThreads,
+  scheduleCategoryEnum,
+  schedules,
+  scheduleRuns,
+  type ScheduleCategory,
+  type ScheduleRunTrigger,
+} from "../db/schema";
 import type { EveUsage } from "./eve-client";
 
 /**
@@ -14,6 +21,26 @@ import type { EveUsage } from "./eve-client";
  * math and the atomic claim that keeps overlapping minute ticks from
  * dispatching the same window twice.
  */
+
+export const SCHEDULE_CATEGORIES = scheduleCategoryEnum.enumValues;
+
+/**
+ * Category of a new schedule when its creator gave none: a keyword match on
+ * the slug and title. Anything unrecognized lands in `other`, where it is
+ * still listed and can be re-filed.
+ */
+export function inferScheduleCategory(name: string, title: string): ScheduleCategory {
+  const haystack = `${name} ${title}`.toLowerCase();
+  if (/(contenid|content|intel|editorial|marketing|post|diseñ|design|pack|redes|social)/.test(haystack)) {
+    return "content";
+  }
+  if (/(report|informe|brief|metric|m[eé]tric|resumen|digest)/.test(haystack)) return "reports";
+  if (/(venta|sale|pipeline|follow|seguimiento|cobro|billing|prospect|lead|outreach)/.test(haystack)) {
+    return "sales";
+  }
+  if (/(backup|sistem|system|salud|health|limpieza|cleanup|migraci)/.test(haystack)) return "system";
+  return "other";
+}
 
 /** Validates a 5-field cron expression; throws (cron-parser) when invalid. */
 export function assertValidCron(expr: string): void {
@@ -104,6 +131,53 @@ export async function claimDueSchedules(now: Date, limit = 20): Promise<ClaimedS
     }
   }
   return claimed;
+}
+
+/** A task whose enabled flag a category-wide toggle actually changed. */
+export interface CategoryToggleChange {
+  scheduleId: string;
+  name: string;
+  title: string;
+  before: boolean;
+  after: boolean;
+}
+
+/**
+ * Pauses or resumes every task of a category. Resuming re-arms each task's
+ * next run from now, exactly like the single-task patch, so a task that was
+ * off for days never fires the window it missed. Returns only the tasks that
+ * actually changed: the audit trail mirrors them one event each.
+ */
+export async function setScheduleCategoryEnabled(
+  category: ScheduleCategory,
+  enabled: boolean,
+  now: Date = new Date()
+): Promise<CategoryToggleChange[]> {
+  const rows = await db.select().from(schedules).where(eq(schedules.category, category));
+  const changes: CategoryToggleChange[] = [];
+  for (const row of rows) {
+    if (row.enabled === enabled) continue;
+    const [updated] = await db
+      .update(schedules)
+      .set({
+        enabled,
+        // A paused row keeps its stale next_run_at; only a resumed one needs a fresh window.
+        ...(enabled ? { nextRunAt: nextOccurrence(row.cron, now) } : {}),
+        updatedAt: now,
+      })
+      .where(eq(schedules.id, row.id))
+      .returning({ enabled: schedules.enabled });
+    if (updated) {
+      changes.push({
+        scheduleId: row.id,
+        name: row.name,
+        title: row.title,
+        before: row.enabled,
+        after: updated.enabled,
+      });
+    }
+  }
+  return changes;
 }
 
 /** Opens a run: dedicated orchestrator thread + running row, linked together. */

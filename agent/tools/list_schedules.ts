@@ -5,7 +5,7 @@ import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
-    "List the scheduled tasks (agent cronjobs): cadence, prompt, next/last run, status and what each one spent in tokens over the last 7 days (usage7d; delegated subagents included). Use this before creating or changing one to avoid duplicates, to see the exact `name` used by the other schedule tools, and to answer what a task costs.",
+    "List the scheduled tasks (agent cronjobs): cadence, prompt, category, next/last run, status and what each one spent in tokens over the last 7 days (usage7d; delegated subagents included). Use this before creating or changing one to avoid duplicates, to see the exact `name` used by the other schedule tools, and to answer what a task costs.",
   inputSchema: z.object({}),
   async execute(_input, ctx) {
     requireStaff(ctx, "list_schedules");
@@ -21,6 +21,7 @@ export default defineTool({
           cron: s.cron,
           enabled: s.enabled,
           source: s.source,
+          category: s.category,
           nextRunAt: s.nextRunAt,
           lastRun: s.lastRun
             ? {

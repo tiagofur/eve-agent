@@ -5,7 +5,7 @@ import { requireStaff } from "../lib/guard";
 
 export default defineTool({
   description:
-    "Change, pause (enabled=false) or resume (enabled=true) a scheduled task, including this schedule's own prompt — you may improve your own cronjobs. Address it by `name` (or id). List first when unsure which one. Changing the cron or resuming re-arms the next run from now.",
+    "Change, pause (enabled=false) or resume (enabled=true) a scheduled task, including this schedule's own prompt — you may improve your own cronjobs. Address it by `name` (or id). List first when unsure which one. Changing the cron or resuming re-arms the next run from now. `category` re-files the task into another block (content/reports/sales/system/other).",
   inputSchema: z.object({
     name: z.string().min(1).max(60).optional(),
     id: z.string().uuid().optional(),
@@ -13,6 +13,7 @@ export default defineTool({
     cron: z.string().min(1).max(60).optional(),
     prompt: z.string().min(1).max(20000).optional(),
     enabled: z.boolean().optional(),
+    category: z.enum(["content", "reports", "sales", "system", "other"]).optional(),
   }),
   async execute(input, ctx) {
     requireStaff(ctx, "update_schedule");
@@ -26,6 +27,7 @@ export default defineTool({
         name: out.schedule.name,
         cron: out.schedule.cron,
         enabled: out.schedule.enabled,
+        category: out.schedule.category,
         nextRunAt: out.schedule.nextRunAt,
       };
     } catch (err) {

@@ -190,6 +190,13 @@
       "when": 1795744064043,
       "tag": "0026_schedule_run_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795755020619,
+      "tag": "0027_schedule_category",
+      "breakpoints": true
     }
   ]
 }

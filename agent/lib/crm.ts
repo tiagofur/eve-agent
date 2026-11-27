@@ -1035,6 +1035,8 @@ export interface ScheduleRunSnapshot {
   cacheReadTokens: number | null;
 }
 
+export type ScheduleCategory = "content" | "reports" | "sales" | "system" | "other";
+
 export interface ScheduleItem {
   id: string;
   name: string;
@@ -1043,6 +1045,8 @@ export interface ScheduleItem {
   prompt: string;
   enabled: boolean;
   source: string;
+  /** Block the task belongs to; the desktop pauses whole categories. */
+  category: ScheduleCategory;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -1071,6 +1075,7 @@ export async function crmCreateSchedule(data: {
   prompt: string;
   name?: string;
   enabled?: boolean;
+  category?: ScheduleCategory;
 }): Promise<{ success: boolean; schedule: ScheduleItem }> {
   const res = await fetch(`${getCrmUrl()}/api/schedules`, {
     method: "POST",
@@ -1105,6 +1110,7 @@ export async function crmUpdateSchedule(data: {
   cron?: string;
   prompt?: string;
   enabled?: boolean;
+  category?: ScheduleCategory;
 }): Promise<{ success: boolean; schedule: ScheduleItem }> {
   const id = await resolveScheduleId(data);
   const res = await fetch(`${getCrmUrl()}/api/schedules/${id}`, {
@@ -1118,6 +1124,7 @@ export async function crmUpdateSchedule(data: {
       cron: data.cron,
       prompt: data.prompt,
       enabled: data.enabled,
+      category: data.category,
     }),
   });
   if (!res.ok) {
