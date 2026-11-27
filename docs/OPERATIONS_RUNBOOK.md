@@ -83,40 +83,58 @@ META_INSTAGRAM_ACCOUNT_ID="17841458937890967"
 
 ### Publicación por marca (Instagram 1-click de los content packs)
 
-Cada marca (`creapolis`, `pepinillo`, `solennix`) publica a **su propia cuenta de Instagram**.
-Variables por marca en el `.env` de producción del CRM (la marca `creapolis` cae a las `META_*`
-legacy de arriba si no se configuran):
+Cada marca (`creapolis`, `pepinillo`, `solennix`) publica a **su propia cuenta de Instagram** y a
+**su propia página de Facebook** (un click aprueba ambas; FB es best-effort). Variables por marca
+en el `.env` de producción del CRM (la marca `creapolis` cae a las `META_*` legacy de arriba si
+no se configuran):
+
+**IDs reales de las marcas (confirmados por el owner 2026-11-27):**
+
+| Marca | Facebook Page ID | Instagram Business ID | Portafolio (Business Manager) |
+|---|---|---|---|
+| Creapolis Dev | `1307077739164874` | `17841458937890967` (@creapolisdev) | `1827051794975037` |
+| Pepinillo | `1359187030619761` | `17841409749246259` (@pepinilloapp) | `1440400127587854` |
+| Solennix | `1440944989098885` | `17841441197890893` (@solennix.app) | `1177372947965151` |
 
 ```bash
-PUBLISH_CREAPOLIS_IG_ACCOUNT_ID="<ig-business-account-id>"
-PUBLISH_CREAPOLIS_ACCESS_TOKEN="<page-access-token>"
-# Opcional (publicación a Facebook de esa marca):
-PUBLISH_CREAPOLIS_FB_PAGE_ID="<page-id>"
+PUBLISH_CREAPOLIS_FB_PAGE_ID="1307077739164874"
+PUBLISH_CREAPOLIS_IG_ACCOUNT_ID="17841458937890967"
+PUBLISH_CREAPOLIS_ACCESS_TOKEN="<system-user-token>"
 
-PUBLISH_PEPINILLO_IG_ACCOUNT_ID="<...>"
-PUBLISH_PEPINILLO_ACCESS_TOKEN="<...>"
+PUBLISH_PEPINILLO_FB_PAGE_ID="1359187030619761"
+PUBLISH_PEPINILLO_IG_ACCOUNT_ID="17841409749246259"
+PUBLISH_PEPINILLO_ACCESS_TOKEN="<system-user-token>"
 
-PUBLISH_SOLENNIX_IG_ACCOUNT_ID="<...>"
-PUBLISH_SOLENNIX_ACCESS_TOKEN="<...>"
+PUBLISH_SOLENNIX_FB_PAGE_ID="1440944989098885"
+PUBLISH_SOLENNIX_IG_ACCOUNT_ID="17841441197890893"
+PUBLISH_SOLENNIX_ACCESS_TOKEN="<system-user-token>"
 
 # Origen público del que Instagram descarga las slides del pack (ya es público por nginx):
 PUBLIC_CONTENT_BASE_URL="https://crm.creapolis.dev"
 ```
 
-**Cómo generar las credenciales de una marca** (una vez por marca):
+**⚠️ Estado de las credenciales (2026-11-27):** el `META_PAGE_ACCESS_TOKEN` legacy está **muerto**
+(Graph API responde error 190 "The session is invalid because the user logged out"): era un token
+de sesión de usuario y murió con el logout. Por eso la generación recomendada es la de abajo con
+**Usuarios de sistema** por portafolio — esos tokens no expiran ni dependen de logins.
+
+**Cómo generar las credenciales de una marca** (una vez por portafolio, ~10 min):
 
 1. La cuenta de Instagram debe ser **Professional (Business)** y estar **vinculada a una página
    de Facebook** de la marca (Instagram → Configuración → Empresa → Página de Facebook vinculada).
-2. En [developers.facebook.com](https://developers.facebook.com) usa la app de Creapolis (o crea
-   una) y obtén un **User Access Token** con los permisos:
-   `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`.
-3. Cambia el token a **Page Access Token** de la página de la marca (Graph API Explorer:
-   GET `/me/accounts` → token de la página; los page tokens no expiran si la app está en modo
-   Live). El token debe poder ver la cuenta IG de la página.
-4. Saca el **IG Business Account ID**: GET `/{page-id}?fields=instagram_business_account` →
-   el campo `instagram_business_account.id`.
-5. Setea `PUBLISH_<MARCA>_IG_ACCOUNT_ID` y `PUBLISH_<MARCA>_ACCESS_TOKEN` en el `.env` del VPS
-   (`docker-compose.prod.yml` los inyecta) y reinicia el contenedor del CRM.
+2. En [business.facebook.com](https://business.facebook.com), dentro del **portafolio** de la marca:
+   **Configuración → Usuarios del sistema → Agregar** (p. ej. `eve-publicador`, rol Administrador).
+3. **Configuración → Cuentas**: asigna al usuario de sistema la página de Facebook Y la cuenta de
+   Instagram profesional de la marca (permiso "Publicar").
+4. **Usuarios del sistema → Generar clave** con los scopes: `pages_manage_posts`,
+   `pages_read_engagement`, `instagram_basic`, `instagram_content_publish`. Elige **sin expiración**
+   (nunca pide login; si la UI solo ofrece 60 días, la clave se regenera igual y dura mientras el
+   portafolio exista).
+5. Pega los tres valores en el `.env` del VPS (`PUBLISH_<MARCA>_FB_PAGE_ID`,
+   `PUBLISH_<MARCA>_IG_ACCOUNT_ID`, `PUBLISH_<MARCA>_ACCESS_TOKEN`) y recrea los contenedores
+   (`docker compose -f /opt/eve-agent/docker-compose.prod.yml up -d eve-agent creapolis-crm`).
+6. Verifica en caliente: `curl -s "https://graph.facebook.com/v20.0/<page-id>?fields=name&access_token=<token>"`
+   debe devolver el nombre de la página; luego smoke real aprobando un pack desde Telegram.
 
 **Smoke test sin tocar cuentas reales**: `PUBLISH_DRY_RUN=true` convierte cualquier publicación en
 éxito simulado. Con el CRM local:
