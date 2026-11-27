@@ -10,7 +10,8 @@ import { chatThreadOrigin } from "../domain/chat-origin";
 /**
  * Web/internal boundary of the chat threads (the "Contactos web" inbox): every
  * thread reports where it comes from, the list can be narrowed to one side,
- * and the internal chat route refuses to continue a visitor's thread.
+ * schedule-run threads stay out of the owner's chat list, and the internal
+ * chat route refuses to continue a visitor's thread.
  */
 describe("Chat threads: web / internal origin", () => {
   const opsKey = "cp_ops_chatorigin1234567890abcdef";
@@ -18,6 +19,7 @@ describe("Chat threads: web / internal origin", () => {
   const createdThreadIds: string[] = [];
   let webId = "";
   let desktopId = "";
+  let scheduleId = "";
 
   beforeAll(async () => {
     await db.insert(apiKeys).values([{ name: "Chat Origin Test", scope: "ops", keyHash: hashApiKey(opsKey) }]);
@@ -27,10 +29,12 @@ describe("Chat threads: web / internal origin", () => {
         { title: "TEST-web", externalKey: `public:${randomUUID()}` },
         { title: "TEST-desktop" },
         { title: "TEST-telegram", externalKey: `telegram:${randomUUID()}` },
+        { title: "TEST-⏰ schedule run", externalKey: `schedule:${randomUUID()}:${Date.now()}` },
       ])
       .returning();
     webId = rows[0]!.id;
     desktopId = rows[1]!.id;
+    scheduleId = rows[3]!.id;
     createdThreadIds.push(...rows.map((t) => t.id));
   });
 
@@ -45,6 +49,8 @@ describe("Chat threads: web / internal origin", () => {
   it("derives the origin from the external key", () => {
     expect(chatThreadOrigin(null)).toBe("internal");
     expect(chatThreadOrigin("telegram:123")).toBe("internal");
+    // Schedule runs are machine turns, still internal staff traffic.
+    expect(chatThreadOrigin("schedule:abc:1732740000000")).toBe("internal");
     expect(chatThreadOrigin("public:abc")).toBe("web");
     // The prefix needs its colon: a key that merely starts with it is internal.
     expect(chatThreadOrigin("public")).toBe("internal");
@@ -75,6 +81,14 @@ describe("Chat threads: web / internal origin", () => {
     // The list is the newest 50 of a shared DB: assert the boundary, not who is in it.
     expect(internalBody.threads.every((t) => t.origin === "internal")).toBe(true);
     expect(internalBody.threads.some((t) => t.id === webId)).toBe(false);
+    // Schedule-run threads are internal staff traffic, but the owner's chat
+    // list only shows their own conversations — machine turns stay out.
+    expect(internalBody.threads.some((t) => t.id === scheduleId)).toBe(false);
+    // The unfiltered list still carries them (with their internal origin).
+    const all = await app.request("/api/chat/threads", { headers: auth });
+    const allBody = (await all.json()) as { threads: Array<{ id: string; origin: string }> };
+    const scheduleRow = allBody.threads.find((t) => t.id === scheduleId);
+    expect(scheduleRow?.origin).toBe("internal");
   });
 
   it("rejects an unknown origin", async () => {
