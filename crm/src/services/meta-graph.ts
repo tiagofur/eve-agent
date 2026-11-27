@@ -28,6 +28,10 @@ export interface PublishConfig {
   version: string;
   pageId?: string;
   pageAccessToken?: string;
+  /** True when pageAccessToken is a system-user token that must be
+   * exchanged for a page token before posting (Facebook rejects page
+   * publishing performed as the user). */
+  tokenIsSystemUser?: boolean;
   instagramAccountId?: string;
 }
 
@@ -69,7 +73,38 @@ export function resolveBrandConfig(brand: PublishBrand): PublishConfig {
     pageAccessToken: brandToken ?? legacy.pageAccessToken,
     instagramAccountId: brandIg ?? legacy.instagramAccountId,
     pageId: brandPage ?? legacy.pageId,
+    tokenIsSystemUser: Boolean(brandToken),
   };
+}
+
+/**
+ * Page access token derived from a system-user token via
+ * GET /{pageId}?fields=access_token. Facebook rejects page posts performed
+ * as the user ("(#200) Unpublished posts must be posted to a page as the
+ * page itself"), so every Facebook publish through a system-user token
+ * exchanges it first. Cached per page for 55 minutes (page tokens from a
+ * never-expiring system-user token last ~1h).
+ */
+const pageTokenCache = new Map<string, { token: string; fetchedAt: number }>();
+
+async function getPageAccessToken(
+  systemUserToken: string,
+  pageId: string,
+  version: string
+): Promise<string> {
+  const cached = pageTokenCache.get(pageId);
+  if (cached && Date.now() - cached.fetchedAt < 55 * 60_000) return cached.token;
+  const res = await fetch(
+    `https://graph.facebook.com/${version}/${pageId}?fields=access_token&access_token=${systemUserToken}`
+  );
+  const data = (await res.json()) as { access_token?: string; error?: { message?: string } };
+  if (!res.ok || !data.access_token) {
+    throw new Error(
+      `Failed to derive page access token: ${data.error?.message ?? `HTTP ${res.status}`}`
+    );
+  }
+  pageTokenCache.set(pageId, { token: data.access_token, fetchedAt: Date.now() });
+  return data.access_token;
 }
 
 const brandMissingMessage = (brand: PublishBrand) => {
@@ -117,7 +152,10 @@ export async function publishToFacebook(content: PublishContent, config?: Publis
   }
 
   const cfg = config ?? legacyEnvConfig();
-  const { version, pageId, pageAccessToken } = cfg;
+  const { version, pageId } = cfg;
+  const pageAccessToken = cfg.tokenIsSystemUser
+    ? await getPageAccessToken(cfg.pageAccessToken ?? "", cfg.pageId ?? "", version)
+    : cfg.pageAccessToken;
 
   if (!pageId || !pageAccessToken) {
     throw new Error(

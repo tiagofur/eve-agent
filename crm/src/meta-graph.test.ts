@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+  publishToFacebook,
   publishInstagramMedia,
   resolveBrandConfig,
   type PublishBrand,
@@ -8,7 +9,8 @@ import {
 /**
  * Instagram pack publishing: brand credential resolution (per-brand vars +
  * creapolis legacy fallback) and the carousel container sequence
- * (children → carousel → status poll → media_publish).
+ * (children → carousel → status poll → media_publish). Facebook publishing
+ * through a system-user token must first exchange it for a page token.
  */
 
 const ORIGINAL_FETCH = globalThis.fetch;
@@ -155,5 +157,55 @@ describe("publishInstagramMedia", () => {
     await expect(
       publishInstagramMedia({ brand: "creapolis", imageUrls: ["https://x/0"], caption: "x" })
     ).rejects.toThrow(/container error/i);
+  });
+});
+
+describe("publishToFacebook con token de usuario de sistema", () => {
+  it("intercambia el token de sistema por un token de página antes de publicar la foto", async () => {
+    vi.stubEnv("PUBLISH_PEPINILLO_FB_PAGE_ID", "page-pep");
+    vi.stubEnv("PUBLISH_PEPINILLO_ACCESS_TOKEN", "tok-sistema");
+    delete process.env.PUBLISH_DRY_RUN;
+
+    const calls = mockGraph([
+      { json: { access_token: "tok-pagina" } }, // GET page?fields=access_token
+      { json: { id: "photo-1", post_id: "post-1" } }, // POST /photos
+    ]);
+
+    const result = await publishToFacebook(
+      {
+        caption: "Hola",
+        imageUrl: "https://x.example/cover.jpg",
+      },
+      {
+        version: "v23.0",
+        pageId: "page-pep",
+        pageAccessToken: "tok-sistema",
+        tokenIsSystemUser: true,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.externalPostUrl).toContain("facebook.com/post-1");
+    // La primera llamada deriva el token de página (GET), la segunda publica.
+    expect(calls[0]!.url).toContain("page-pep?fields=access_token");
+    expect(calls[0]!.url).toContain("tok-sistema");
+    expect(calls[1]!.url).toContain("/photos");
+  });
+
+  it("un token de página ya derivado (legacy META_*) se usa tal cual", async () => {
+    delete process.env.PUBLISH_DRY_RUN;
+
+    const calls = mockGraph([
+      { json: { id: "photo-2", post_id: "post-2" } }, // solo POST /photos
+    ]);
+
+    const result = await publishToFacebook(
+      { caption: "Hola", imageUrl: "https://x.example/cover.jpg" },
+      { version: "v23.0", pageId: "page-legacy", pageAccessToken: "tok-pagina" }
+    );
+
+    expect(result.success).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain("/photos");
   });
 });
