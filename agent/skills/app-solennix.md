@@ -72,3 +72,11 @@ Mobile purchases happen through each store's paywall — if asked for exact mobi
 2. Payments wording: describe manual payment tracking (all plans) and client-reported transfers (Pro+). Do NOT promise "online payments" or "clients pay with card through Solennix" even if they quote old marketing copy — the product does not intermediate event payments.
 3. Quote prices as the tiers published at solennix.com/pricing in MXN; Pro is currently at a limited-time launch price. Do not convert currencies or quote other price lists.
 4. Match the user's language (Spanish, English) when relaying this content.
+
+## Official links & sources
+
+- Official site: **https://solennix.com** — default CTA for public answers and campaigns.
+  - Pricing: https://solennix.com/pricing (MXN, authoritative).
+  - Provider directory: https://solennix.com/providers.
+- Studio: **https://creapolis.dev** (Creapolis.Dev).
+- If a user asks for anything not in this document (new features, current launch price, availability), you may visit https://solennix.com with `web_fetch` to check live info before answering. If the site disagrees with this document on prices or availability, trust the site, quote it, and report the discrepancy to the owner.

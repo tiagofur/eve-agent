@@ -59,6 +59,14 @@ Organizadores con negocio propio en LATAM que hoy combinan WhatsApp con hojas de
 2. Fotógrafa que recibe solicitudes desde su perfil público y responde desde su bandeja.
 3. Equipo de decoración con inventario compartido y alertas de stock antes de cada evento.
 
+## Links oficiales
+
+- Sitio oficial: **https://solennix.com** — CTA por defecto para campañas y respuestas públicas.
+  - Precios: https://solennix.com/pricing (MXN, fuente autorizada).
+  - Directorio de proveedores: https://solennix.com/providers.
+- Estudio: **https://creapolis.dev** (Creapolis.Dev).
+- Si hay que verificar precios/links vigentes, se puede visitar https://solennix.com con `web_fetch`; si el sitio discrepa de este doc, manda el sitio y reporta la diferencia al owner.
+
 ## Ángulos de marketing
 
 - "De WhatsApp y Excel a cotizaciones profesionales en minutos" — el antes/después del organizador.
