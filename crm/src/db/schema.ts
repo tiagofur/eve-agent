@@ -152,6 +152,14 @@ export const socialPostStatusEnum = pgEnum("social_post_status", [
 export const scheduleSourceEnum = pgEnum("schedule_source", ["system", "user"]);
 export const scheduleRunStatusEnum = pgEnum("schedule_run_status", ["running", "succeeded", "failed"]);
 export const scheduleRunTriggerEnum = pgEnum("schedule_run_trigger", ["cron", "manual"]);
+// Groups a whole block of work the owner may want to pause at once.
+export const scheduleCategoryEnum = pgEnum("schedule_category", [
+  "content",
+  "reports",
+  "sales",
+  "system",
+  "other",
+]);
 
 export const contentPackKindEnum = pgEnum("content_pack_kind", ["video", "carousel", "image"]);
 
@@ -187,6 +195,7 @@ export type ContentPackBrand = (typeof contentPackBrandEnum.enumValues)[number];
 export type ScheduleSource = (typeof scheduleSourceEnum.enumValues)[number];
 export type ScheduleRunStatus = (typeof scheduleRunStatusEnum.enumValues)[number];
 export type ScheduleRunTrigger = (typeof scheduleRunTriggerEnum.enumValues)[number];
+export type ScheduleCategory = (typeof scheduleCategoryEnum.enumValues)[number];
 
 /* ------------------------------------------------------------------ */
 /* Shared column helpers                                               */
@@ -836,6 +845,9 @@ export const schedules = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     // system = seeded by the migration (the original 4); user = created later.
     source: scheduleSourceEnum("source").notNull().default("user"),
+    // Block this task belongs to (the desktop groups by it and can pause a
+    // whole category with one switch). Seeded rows were classified by name.
+    category: scheduleCategoryEnum("category").notNull().default("other"),
     // NULL = never computed yet (fresh seed): the first tick aligns it to the
     // next occurrence without firing the schedule out of its cadence.
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),
