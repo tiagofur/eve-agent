@@ -44,14 +44,13 @@ async function syncThreadFromEve(
   const parsed = parseEveStream(raw, { sessionId });
   if (parsed.messages.length === 0) return 0;
   const existing = await db
-    .select({ eveEventId: chatMessages.eveEventId, content: chatMessages.content })
+    .select({ eveEventId: chatMessages.eveEventId })
     .from(chatMessages)
     .where(eq(chatMessages.threadId, threadId));
   const known = new Set(
     existing.map((r) => r.eveEventId).filter((id): id is string => !!id)
   );
-  const knownTexts = new Set(existing.map((r) => r.content));
-  const missing = findMissingEveMessages(known, parsed.messages, knownTexts);
+  const missing = findMissingEveMessages(known, parsed.messages);
   for (const m of missing) {
     await db.insert(chatMessages).values({
       threadId,

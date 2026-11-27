@@ -262,10 +262,10 @@ export async function closeScheduleRun(
   runId: string,
   outcome:
     | { status: "succeeded"; resultSummary: string; usage?: EveUsage | null }
-    | { status: "failed"; error: string },
+    | { status: "failed"; error: string; usage?: EveUsage | null },
   finishedAt: Date = new Date()
 ): Promise<void> {
-  const usage = outcome.status === "succeeded" ? outcome.usage : null;
+  const usage = outcome.usage ?? null;
   await db
     .update(scheduleRuns)
     .set({

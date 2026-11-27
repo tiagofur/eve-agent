@@ -104,10 +104,14 @@ export async function runProxiedTurn(args: {
   });
   const parsed = parseEveStream(raw, { deliveryId, sessionId });
   if (parsed.error && !parsed.text) {
-    throw new EveClientError(parsed.error.message, {
+    // The turn is billed even when it fails: carry whatever usage arrived
+    // before the failure so the schedule run records the real spend.
+    const err = new EveClientError(parsed.error.message, {
       status: 502,
       code: parsed.error.code,
     });
+    err.usage = parsed.usage;
+    throw err;
   }
   if (!parsed.turnCompleted && !parsed.sessionWaiting) {
     throw new EveClientError("EVE turn ended without a terminal event", { status: 502 });
