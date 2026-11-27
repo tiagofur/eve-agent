@@ -9,19 +9,22 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
-  Loader2,
-  Pause,
+  FileText,
+  Megaphone,
+  MoreHorizontal,
   Pencil,
-  Play,
   Plus,
   RefreshCw,
+  Server,
   Sparkles,
   Trash2,
+  TrendingUp,
   Zap,
 } from "lucide-react";
 import {
   crmApi,
   type ChatThreadDetails,
+  type ScheduleCategory,
   type ScheduleItem,
   type ScheduleRunItem,
 } from "../api";
@@ -29,13 +32,62 @@ import { Badge, EmptyState, InfoGrid, Modal, SectionList, Skeleton, SlideOver } 
 import { FormButtons, FormError, inputClass, labelClass } from "./CrmForms";
 
 /**
- * Tareas programadas del agente (cronjobs): listado, CRUD manual (override
- * agent-first), ejecución inmediata e historial con la conversación de cada
- * ejecución. La creación/mejora "con el agente" se deriva al Orquestador Chat
- * con el plumbing externalPrompt.
+ * Tareas programadas del agente (cronjobs): listado agrupado por categoría
+ * (un switch apaga el bloque entero), gasto de tokens por tarea y por bloque,
+ * CRUD manual (override agent-first), ejecución inmediata e historial con la
+ * conversación de cada ejecución. La creación/mejora "con el agente" se
+ * deriva al Orquestador Chat con el plumbing externalPrompt.
  */
 
 const DAY_NAMES = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+/** Orden fijo de los bloques: lo que más se apaga primero, "Otros" al final. */
+const CATEGORY_ORDER: ScheduleCategory[] = ["content", "reports", "sales", "system", "other"];
+
+const CATEGORY_META: Record<ScheduleCategory, { label: string; icon: typeof Megaphone }> = {
+  content: { label: "Contenidos", icon: Megaphone },
+  reports: { label: "Reportes", icon: FileText },
+  sales: { label: "Ventas", icon: TrendingUp },
+  system: { label: "Sistema", icon: Server },
+  other: { label: "Otros", icon: MoreHorizontal },
+};
+
+/** 412K · 3.1M — lo que muestra el badge de gasto (7 días). */
+const fmtTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${Math.round(n / 1_000)}K` : `${n}`;
+
+const usageTitle = (u: ScheduleItem["usage7d"]): string =>
+  `Entrada ${fmtTokens(u.inputTokens)} · salida ${fmtTokens(u.outputTokens)} · caché ${fmtTokens(
+    u.cacheReadTokens
+  )} — últimos 7 días (subagentes incluidos)`;
+
+/** Switch de la app: knob blanco sobre pista esmeralda/zinc, sin librerías. */
+const Switch: React.FC<{
+  on: boolean;
+  busy?: boolean;
+  onChange: () => void;
+  title?: string;
+}> = ({ on, busy, onChange, title }) => (
+  <button
+    type="button"
+    onClick={(e) => {
+      e.stopPropagation();
+      onChange();
+    }}
+    disabled={busy}
+    title={title}
+    aria-pressed={on}
+    className={`relative w-9 h-5 rounded-full transition-colors shrink-0 disabled:opacity-50 ${
+      on ? "bg-emerald-500/80" : "bg-zinc-700"
+    }`}
+  >
+    <span
+      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+        on ? "translate-x-4" : ""
+      }`}
+    />
+  </button>
+);
 
 const dtf = new Intl.DateTimeFormat("es", {
   day: "numeric",
@@ -121,6 +173,7 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const [runMessages, setRunMessages] = useState<Record<string, ChatThreadDetails["messages"]>>({});
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [togglingCategory, setTogglingCategory] = useState<ScheduleCategory | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -183,6 +236,31 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
       setBanner({ ok: false, text: (err as Error).message });
     } finally {
       setTogglingId(null);
+    }
+  };
+
+  /** Switch maestro: si algo del bloque está encendido, apaga todo; si no, enciende todo. */
+  const toggleCategory = async (category: ScheduleCategory) => {
+    const group = schedules.filter((s) => s.category === category);
+    const anyOn = group.some((s) => s.enabled);
+    try {
+      setTogglingCategory(category);
+      const out = await crmApi.setScheduleCategory(category, !anyOn);
+      await load();
+      const meta = CATEGORY_META[category];
+      setBanner({
+        ok: true,
+        text:
+          out.changed === 0
+            ? `«${meta.label}»: nada que cambiar (ya estaba ${anyOn ? "encendido" : "apagado"})`
+            : `«${meta.label}»: ${out.changed} ${out.changed === 1 ? "tarea" : "tareas"} ${
+                anyOn ? "pausada" + (out.changed === 1 ? "" : "s") : "reactivada" + (out.changed === 1 ? "" : "s")
+              }`,
+      });
+    } catch (err) {
+      setBanner({ ok: false, text: (err as Error).message });
+    } finally {
+      setTogglingCategory(null);
     }
   };
 
@@ -297,7 +375,7 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
         </div>
       )}
 
-      {/* List */}
+      {/* List: grouped by category, each block with its master switch + spend */}
       {loading ? (
         <div className="space-y-2">
           <Skeleton className="h-16 w-full" />
@@ -311,72 +389,121 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
           hint="Crea una con el botón Nueva — manualmente o describiéndole al agente qué quieres."
         />
       ) : (
-        <SectionList>
-          {schedules.map((s) => (
-            <div
-              key={s.id}
-              className="py-3.5 flex items-center gap-4 cursor-pointer hover:bg-zinc-900/40 transition -mx-4 px-4 rounded-lg"
-              onClick={() => openDetail(s.id)}
-            >
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  s.enabled ? "bg-emerald-400 shadow-sm shadow-emerald-400/80" : "bg-zinc-600"
-                }`}
-                title={s.enabled ? "Activa" : "Pausada"}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-white truncate">{s.title}</span>
-                  <Badge tone={s.source === "system" ? "indigo" : "zinc"}>
-                    {s.source === "system" ? "Sistema" : "Custom"}
-                  </Badge>
-                  {s.lastRun && (
-                    <Badge tone={statusTone[s.lastRun.status]}>{statusLabel[s.lastRun.status]}</Badge>
-                  )}
-                </div>
-                <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-2 flex-wrap">
-                  <span className="font-mono">{s.name}</span>
-                  <span>·</span>
-                  <span>{humanizeCron(s.cron)}</span>
-                  {s.cron !== humanizeCron(s.cron) && (
-                    <span className="font-mono text-zinc-600">({s.cron})</span>
-                  )}
-                </div>
-              </div>
-              <div className="text-right shrink-0 hidden sm:block">
-                <div className="text-[11px] text-zinc-400">
-                  {s.enabled ? (
-                    <span className="flex items-center gap-1.5 justify-end">
-                      <Clock3 className="w-3.5 h-3.5 text-zinc-500" /> {fmtDateTime(s.nextRunAt)}
+        <div className="space-y-5">
+          {CATEGORY_ORDER.map((category) => {
+            const group = schedules.filter((s) => s.category === category);
+            if (group.length === 0) return null;
+            const meta = CATEGORY_META[category];
+            const enabledCount = group.filter((s) => s.enabled).length;
+            const blockUsage = group.reduce(
+              (acc, s) => ({
+                input: acc.input + s.usage7d.inputTokens,
+                output: acc.output + s.usage7d.outputTokens,
+                cache: acc.cache + s.usage7d.cacheReadTokens,
+              }),
+              { input: 0, output: 0, cache: 0 }
+            );
+            const blockTotal = blockUsage.input + blockUsage.output + blockUsage.cache;
+            const Icon = meta.icon;
+            return (
+              <div key={category}>
+                <div className="flex items-center gap-2.5 -mx-1 px-1 pb-1.5">
+                  <Icon className="w-4 h-4 text-zinc-500 shrink-0" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                    {meta.label}
+                  </span>
+                  <span className="text-[11px] text-zinc-500">
+                    {enabledCount === group.length
+                      ? `${group.length} activa${group.length === 1 ? "" : "s"}`
+                      : `${enabledCount}/${group.length} activa${enabledCount === 1 ? "" : "s"}`}
+                  </span>
+                  {blockTotal > 0 && (
+                    <span
+                      className="text-[11px] text-amber-300/80"
+                      title={`Entrada ${fmtTokens(blockUsage.input)} · salida ${fmtTokens(
+                        blockUsage.output
+                      )} · caché ${fmtTokens(blockUsage.cache)} — últimas 7 días del bloque`}
+                    >
+                      ⚡ {fmtTokens(blockTotal)} tok/7d
                     </span>
-                  ) : (
-                    <span className="text-zinc-600">pausada</span>
                   )}
+                  <span className="ml-auto flex items-center gap-2">
+                    <Switch
+                      on={enabledCount > 0}
+                      busy={togglingCategory === category}
+                      onChange={() => void toggleCategory(category)}
+                      title={
+                        enabledCount > 0
+                          ? `Pausar todo «${meta.label}» (${group.length} ${group.length === 1 ? "tarea" : "tareas"})`
+                          : `Reactivar todo «${meta.label}»`
+                      }
+                    />
+                  </span>
                 </div>
-                <div className="text-[10px] text-zinc-600">
-                  {s.lastRun ? `última: ${fmtDateTime(s.lastRun.startedAt)}` : "sin ejecuciones"}
-                </div>
+                <SectionList>
+                  {group.map((s) => (
+                    <div
+                      key={s.id}
+                      className="py-3.5 flex items-center gap-4 cursor-pointer hover:bg-zinc-900/40 transition -mx-4 px-4 rounded-lg"
+                      onClick={() => openDetail(s.id)}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-white truncate">{s.title}</span>
+                          <Badge tone={s.source === "system" ? "indigo" : "zinc"}>
+                            {s.source === "system" ? "Sistema" : "Custom"}
+                          </Badge>
+                          {s.lastRun && (
+                            <Badge tone={statusTone[s.lastRun.status]}>{statusLabel[s.lastRun.status]}</Badge>
+                          )}
+                          {s.usage7d.inputTokens + s.usage7d.outputTokens + s.usage7d.cacheReadTokens > 0 && (
+                            <span
+                              className="text-[10px] text-amber-300/70 font-medium"
+                              title={usageTitle(s.usage7d)}
+                            >
+                              ⚡ {fmtTokens(
+                                s.usage7d.inputTokens + s.usage7d.outputTokens + s.usage7d.cacheReadTokens
+                              )}{" "}
+                              tok/7d
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-2 flex-wrap">
+                          <span className="font-mono">{s.name}</span>
+                          <span>·</span>
+                          <span>{humanizeCron(s.cron)}</span>
+                          {s.cron !== humanizeCron(s.cron) && (
+                            <span className="font-mono text-zinc-600">({s.cron})</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0 hidden sm:block">
+                        <div className="text-[11px] text-zinc-400">
+                          {s.enabled ? (
+                            <span className="flex items-center gap-1.5 justify-end">
+                              <Clock3 className="w-3.5 h-3.5 text-zinc-500" /> {fmtDateTime(s.nextRunAt)}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-600">pausada</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-zinc-600">
+                          {s.lastRun ? `última: ${fmtDateTime(s.lastRun.startedAt)}` : "sin ejecuciones"}
+                        </div>
+                      </div>
+                      <Switch
+                        on={s.enabled}
+                        busy={togglingId === s.id}
+                        onChange={() => void toggleEnabled(s)}
+                        title={s.enabled ? "Pausar" : "Reactivar"}
+                      />
+                    </div>
+                  ))}
+                </SectionList>
               </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void toggleEnabled(s);
-                }}
-                disabled={togglingId === s.id}
-                title={s.enabled ? "Pausar" : "Reactivar"}
-                className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition shrink-0 disabled:opacity-50"
-              >
-                {togglingId === s.id ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : s.enabled ? (
-                  <Pause className="w-4 h-4" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-              </button>
-            </div>
-          ))}
-        </SectionList>
+            );
+          })}
+        </div>
       )}
 
       {/* Detail drawer */}
@@ -397,20 +524,12 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
           }
           actions={
             <>
-              <button
-                onClick={() => void toggleEnabled(selected)}
-                disabled={togglingId === selected.id}
+              <Switch
+                on={selected.enabled}
+                busy={togglingId === selected.id}
+                onChange={() => void toggleEnabled(selected)}
                 title={selected.enabled ? "Pausar" : "Reactivar"}
-                className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition disabled:opacity-50"
-              >
-                {togglingId === selected.id ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : selected.enabled ? (
-                  <Pause className="w-4 h-4" />
-                ) : (
-                  <Play className="w-4 h-4" />
-                )}
-              </button>
+              />
               <button
                 onClick={() => void runNow(selected)}
                 title="Ejecutar ahora"
@@ -468,6 +587,30 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
                   value: selected.lastRun
                     ? `${fmtDateTime(selected.lastRun.startedAt)} · ${statusLabel[selected.lastRun.status]}`
                     : "sin ejecuciones",
+                },
+                {
+                  label: "Categoría",
+                  value: CATEGORY_META[selected.category].label,
+                },
+                {
+                  label: "Gasto 7 días",
+                  value:
+                    selected.usage7d.inputTokens +
+                      selected.usage7d.outputTokens +
+                      selected.usage7d.cacheReadTokens >
+                    0 ? (
+                      <span title={usageTitle(selected.usage7d)} className="text-amber-300/90">
+                        ⚡{" "}
+                        {fmtTokens(
+                          selected.usage7d.inputTokens +
+                            selected.usage7d.outputTokens +
+                            selected.usage7d.cacheReadTokens
+                        )}{" "}
+                        tokens · {selected.usage7d.runs} corrida{selected.usage7d.runs === 1 ? "" : "s"}
+                      </span>
+                    ) : (
+                      "sin gasto registrado"
+                    ),
                 },
                 { label: "Origen", value: selected.source === "system" ? "Sistema (semilla)" : "Creada por ti / el agente" },
                 { label: "Cadencia", value: <span className="font-mono">{selected.cron}</span> },
@@ -609,6 +752,31 @@ export const SchedulesView: React.FC<{ onAskOrchestrator: (text: string) => void
 /* Modales: alta manual / alta con el agente / edición                 */
 /* ------------------------------------------------------------------ */
 
+const CATEGORY_OPTIONS: Array<{ value: ScheduleCategory | ""; label: string }> = [
+  { value: "", label: "Auto (según el título)" },
+  ...CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_META[c].label })),
+];
+
+const CategorySelect: React.FC<{
+  value: ScheduleCategory | "";
+  onChange: (value: ScheduleCategory | "") => void;
+}> = ({ value, onChange }) => (
+  <div>
+    <label className={labelClass}>Categoría (el switch maestro apaga el bloque entero)</label>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value === "" ? "" : (e.target.value as ScheduleCategory))}
+      className={inputClass}
+    >
+      {CATEGORY_OPTIONS.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  </div>
+);
+
 const NewScheduleModal: React.FC<{
   onClose: () => void;
   onCreated: () => Promise<void>;
@@ -619,6 +787,7 @@ const NewScheduleModal: React.FC<{
   const [title, setTitle] = useState("");
   const [cron, setCron] = useState("0 9 * * *");
   const [prompt, setPrompt] = useState("");
+  const [category, setCategory] = useState<ScheduleCategory | "">("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -629,7 +798,7 @@ const NewScheduleModal: React.FC<{
     if (cronError) return;
     try {
       setSaving(true);
-      await crmApi.createSchedule({ title, cron, prompt });
+      await crmApi.createSchedule({ title, cron, prompt, ...(category ? { category } : {}) });
       await onCreated();
     } catch (err) {
       onError(`No se pudo crear: ${(err as Error).message}`);
@@ -710,6 +879,7 @@ const NewScheduleModal: React.FC<{
               className={inputClass}
             />
           </div>
+          <CategorySelect value={category} onChange={setCategory} />
           <div>
             <label className={labelClass}>Cron (5 campos, hora del servidor)</label>
             <input
@@ -755,18 +925,20 @@ const EditScheduleModal: React.FC<{
   const [title, setTitle] = useState(schedule.title);
   const [cron, setCron] = useState(schedule.cron);
   const [prompt, setPrompt] = useState(schedule.prompt);
+  const [category, setCategory] = useState<ScheduleCategory>(schedule.category);
   const [saving, setSaving] = useState(false);
 
   const cronChanged = cron !== schedule.cron;
   const cronError = cron ? validateCron(cron) : null;
-  const dirty = title !== schedule.title || cronChanged || prompt !== schedule.prompt;
+  const dirty =
+    title !== schedule.title || cronChanged || prompt !== schedule.prompt || category !== schedule.category;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cronError) return;
     try {
       setSaving(true);
-      await crmApi.updateSchedule(schedule.id, { title, cron, prompt });
+      await crmApi.updateSchedule(schedule.id, { title, cron, prompt, category });
       await onSaved();
     } catch (err) {
       onError(`No se pudo guardar: ${(err as Error).message}`);
@@ -782,6 +954,10 @@ const EditScheduleModal: React.FC<{
           <label className={labelClass}>Título</label>
           <input value={title} onChange={(e) => setTitle(e.target.value)} required maxLength={120} className={inputClass} />
         </div>
+        <CategorySelect
+          value={category}
+          onChange={(value) => setCategory(value === "" ? schedule.category : value)}
+        />
         <div>
           <label className={labelClass}>
             Cron (5 campos, hora del servidor) — cambiarlo re-arma la próxima ejecución
