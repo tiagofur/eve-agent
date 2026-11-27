@@ -9,6 +9,7 @@ import { db } from "../../db/client";
 import { chatThreads, chatMessages } from "../../db/schema";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import { runProxiedTurn } from "../../domain/agent-turn";
+import { chatThreadOrigin, internalThreadFilter, webThreadFilter } from "../../domain/chat-origin";
 import {
   findMissingEveMessages,
   parseEveStream,
@@ -66,15 +67,23 @@ async function syncThreadFromEve(
 export const chatRouter = new Hono<{ Variables: AuthContextVariables }>();
 
 
-// List threads (newest first)
-chatRouter.get("/threads", requireScope(["ops"]), async (c) => {
-  const threads = await db
-    .select()
-    .from(chatThreads)
-    .orderBy(desc(chatThreads.updatedAt))
-    .limit(50);
-  return c.json({ threads });
-});
+// List threads (newest first). `origin` narrows the list to one side of the
+// web/internal boundary; every row carries its origin either way.
+chatRouter.get(
+  "/threads",
+  requireScope(["ops"]),
+  zValidator("query", z.object({ origin: z.enum(["web", "internal"]).optional() })),
+  async (c) => {
+    const { origin } = c.req.valid("query");
+    const threads = await db
+      .select()
+      .from(chatThreads)
+      .where(origin === "web" ? webThreadFilter : origin === "internal" ? internalThreadFilter : undefined)
+      .orderBy(desc(chatThreads.updatedAt))
+      .limit(50);
+    return c.json({ threads: threads.map((t) => ({ ...t, origin: chatThreadOrigin(t.externalKey) })) });
+  }
+);
 
 // Create thread
 chatRouter.post(
@@ -98,6 +107,16 @@ chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
   if (!id) return c.json({ error: "Missing thread id" }, 400);
   const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
   if (!thread) return c.json({ error: "Thread not found" }, 404);
+  // Web threads belong to the "Contactos web" inbox. Reading one here would
+  // also run the EVE history sync below, which re-inserts every reply of the
+  // visitor's session as a new row: the public route persists replies without
+  // an eve_event_id, so the sync's dedupe has nothing to match against.
+  if (chatThreadOrigin(thread.externalKey) === "web") {
+    return c.json(
+      { error: "Web chat threads are reviewed in Contactos web", code: "web_thread" },
+      400
+    );
+  }
   // Reconnect support: pull replies completed while no client was attached.
   // Idempotent (dedupe by eve_event_id); skipped for threads without an EVE session.
   const eve = resolveEveProxyConfig(process.env);
@@ -120,6 +139,15 @@ chatRouter.get("/threads/:id", requireScope(["ops"]), async (c) => {
 chatRouter.delete("/threads/:id", requireScope(["ops"]), async (c) => {
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Missing thread id" }, 400);
+  const [thread] = await db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
+  if (!thread) return c.json({ error: "Thread not found" }, 404);
+  // Same boundary as the read above: the inbox owns the web threads' lifecycle.
+  if (chatThreadOrigin(thread.externalKey) === "web") {
+    return c.json(
+      { error: "Web chat threads are reviewed in Contactos web", code: "web_thread" },
+      400
+    );
+  }
   await db.delete(chatThreads).where(eq(chatThreads.id, id));
   return c.json({ success: true });
 });
@@ -151,6 +179,15 @@ chatRouter.post(
         .where(eq(chatThreads.id, threadId))
         .limit(1);
       if (!existing) return c.json({ error: "Thread not found" }, 404);
+      // Web threads belong to the "Contactos web" inbox: continuing one here
+      // would talk to the agent inside a visitor's session (and bill the
+      // public budget) while the visitor never sees the reply.
+      if (chatThreadOrigin(existing.externalKey) === "web") {
+        return c.json(
+          { error: "Web chat threads are reviewed in Contactos web; they cannot be continued here", code: "web_thread" },
+          400
+        );
+      }
     } else {
       const firstUser = messages.find((m) => m.role === "user");
       const title = (firstUser?.content ?? "Nueva conversación").slice(0, 60);
