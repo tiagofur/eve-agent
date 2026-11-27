@@ -112,7 +112,7 @@ export async function runOrchestratorTurn(params: {
       }
 
       const raw = await deps.readStream({ sessionId, deliveryId });
-      const parsed = parseEveStream(raw, { deliveryId });
+      const parsed = parseEveStream(raw, { deliveryId, sessionId });
 
       if (parsed.error && !parsed.text.trim()) {
         return { reply: null, error: parsed.error.message };

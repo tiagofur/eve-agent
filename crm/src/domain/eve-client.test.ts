@@ -184,6 +184,15 @@ describe("findMissingEveMessages", () => {
       { id: "evt_msg", text: "SPIKE-OK" },
     ]);
   });
+
+  it("drops messages whose text is already in the thread when knownTexts is given", () => {
+    // Rows persisted before a session-scoped id scheme keep their old ids:
+    // the history sync must not insert them a second time.
+    const parsed = parseEveStream(V27_TWO_TURN_REPLAY, { sessionId: "wrun_A" });
+    expect(findMissingEveMessages(new Set(), parsed.messages, new Set(["V27-OK"]))).toEqual([
+      { id: "wrun_A:part_1", text: "SEGUNDO" },
+    ]);
+  });
 });
 
 describe("eve transport", () => {
@@ -346,6 +355,18 @@ describe("parseEveStream (v27 / eve 1.x)", () => {
     expect(parsed.sessionWaiting).toBe(false);
     expect(parsed.turnId).toBe("turn_0");
     expect(parsed.messages).toEqual([{ id: "part_0", text: "V27-OK" }]);
+  });
+
+  it("scopes message ids to the session when sessionId is given", () => {
+    // Part ids restart at run_0 in every session, so a thread whose session
+    // was replaced would otherwise drop its next reply as already persisted.
+    const scoped = parseEveStream(V27_TWO_TURN_REPLAY, {
+      deliveryId: "d-1",
+      sessionId: "wrun_A",
+    });
+    expect(scoped.messages).toEqual([{ id: "wrun_A:part_1", text: "SEGUNDO" }]);
+    const history = parseEveStream(V27_TWO_TURN_REPLAY, { sessionId: "wrun_A" });
+    expect(history.messages.map((m) => m.id)).toEqual(["wrun_A:part_0", "wrun_A:part_1"]);
   });
 
   it("concatenates text content.delta records before content.completed arrives", () => {

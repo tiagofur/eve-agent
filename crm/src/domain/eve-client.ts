@@ -83,6 +83,13 @@ export interface ParsedEveStream {
  */
 export interface ParseEveStreamOptions {
   deliveryId?: string;
+  /**
+   * Prefixes v27 message ids with the session. Part ids (`run_0.0`) are only
+   * unique within one session, and a thread's session is replaced whenever
+   * the old one dies: unprefixed, the first reply of a replacement session
+   * reads as already persisted and is dropped.
+   */
+  sessionId?: string;
 }
 
 interface RawEnvelope {
@@ -245,8 +252,9 @@ export function parseEveStream(
         const phase = typeof data.phase === "string" ? data.phase : "reply";
         const text = typeof data.value === "string" ? data.value : "";
         const turnId = resolveTurnId(scope, data);
+        const id = options?.sessionId ? `${options.sessionId}:${partId}` : partId;
         if (!v27Parts.has(partId)) v27PartOrder.push(partId);
-        v27Parts.set(partId, { id: partId, kind, phase, text, turnId });
+        v27Parts.set(partId, { id, kind, phase, text, turnId });
         break;
       }
       case "turn.paused": {
@@ -527,12 +535,19 @@ export function parseEveStream(
   };
 }
 
+/**
+ * Messages not persisted yet. `knownTexts` is the history sync's safety net:
+ * ids changed scheme across eve versions (v26 event ids, then bare part ids,
+ * now session-scoped ones), so a reply whose text is already in the thread is
+ * not inserted again.
+ */
 export function findMissingEveMessages(
   knownIds: Set<string> | string[],
-  messages: ParsedEveMessage[]
+  messages: ParsedEveMessage[],
+  knownTexts: Set<string> = new Set()
 ): ParsedEveMessage[] {
   const known = knownIds instanceof Set ? knownIds : new Set(knownIds);
-  return messages.filter((m) => !known.has(m.id));
+  return messages.filter((m) => !known.has(m.id) && !knownTexts.has(m.text));
 }
 
 export class EveClientError extends Error {

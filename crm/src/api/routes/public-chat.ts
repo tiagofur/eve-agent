@@ -157,7 +157,7 @@ async function runPublicTurn(args: {
     deliveryId,
   });
 
-  const parsed = parseEveStream(raw, { deliveryId });
+  const parsed = parseEveStream(raw, { deliveryId, sessionId });
   if (parsed.error && !parsed.text) {
     throw new EveClientError(parsed.error.message, {
       status: 502,
