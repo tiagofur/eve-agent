@@ -247,7 +247,7 @@ export const WebContactsView: React.FC<{
               </button>
               <button
                 onClick={() => {
-                  if (messages) onAskOrchestrator(buildReplyPrompt(selected, messages));
+                  if (messages) onAskOrchestrator(buildReplyPrompt(messages));
                 }}
                 disabled={!messages}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-500 text-black hover:bg-emerald-400 transition disabled:opacity-50 whitespace-nowrap"
