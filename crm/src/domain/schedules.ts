@@ -247,7 +247,12 @@ export async function openScheduleRun(
   ).padStart(2, "0")}`;
   const [thread] = await db
     .insert(chatThreads)
-    .values({ title: `⏰ ${title} — ${stamp}` })
+    .values({
+      title: `⏰ ${title} — ${stamp}`,
+      // Marks the thread as a machine turn: the owner's chat list hides
+      // "schedule:" threads (see internalThreadFilter in domain/chat-origin).
+      externalKey: `schedule:${scheduleId}:${now.getTime()}`,
+    })
     .returning();
   if (!thread) throw new Error("Failed to create schedule run thread");
   const [run] = await db
