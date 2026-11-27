@@ -38,6 +38,12 @@ Escritores, devs, diseñadores, analistas, estudiantes; en especial usuarios ADH
 2. Estudiante LATAM con rachas y recordatorios desde el reloj.
 3. Profesional que planifica el día en Time Blocks sincronizados con su calendario.
 
+## Links oficiales
+
+- Sitio oficial: **https://pepinillo.app** — CTA por defecto para campañas y respuestas públicas.
+- Estudio: **https://creapolis.dev** (Creapolis.Dev).
+- Si hay que verificar precios/links vigentes (paywall, tiendas), se puede visitar https://pepinillo.app con `web_fetch`; si el sitio discrepa de este doc, manda el sitio y reporta la diferencia al owner.
+
 ## Ángulos de marketing
 
 - "Pomodoro no es para todos": presentar los 4 modos como personaje de la marca.

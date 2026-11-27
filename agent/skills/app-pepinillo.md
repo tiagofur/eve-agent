@@ -75,3 +75,9 @@ No team/collaboration features. No note-taking or document editing (complements 
 1. Answer product questions ONLY with facts from this document. If a detail is not here — release dates, store links, availability beyond the tables above — say you don't have that information. NEVER invent prices, dates, features, or platform availability.
 2. Quote prices as published tiers (global vs LATAM), citing the one-time vs subscription nature exactly: Pepinillo+ is a one-time purchase, Everywhere/AI+ is a subscription.
 3. Match the user's language (Spanish, Portuguese, English) when relaying this content.
+
+## Official links & sources
+
+- Official site: **https://pepinillo.app** — default CTA for public answers and campaigns.
+- Studio: **https://creapolis.dev** (Creapolis.Dev).
+- If a user asks for anything not in this document (store links, current prices, availability), you may visit https://pepinillo.app with `web_fetch` to check live info before answering. If the site disagrees with this document on prices or availability, trust the site, quote it, and report the discrepancy to the owner.
