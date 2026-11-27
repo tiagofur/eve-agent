@@ -297,21 +297,21 @@ export const ContentView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-800 pb-5">
-        <div>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-6 flex-wrap border-b border-zinc-800 pb-5">
+        <div className="flex-1 min-w-[280px]">
           <h2 className="text-lg font-bold text-white">Contenido</h2>
-          <p className="text-xs text-zinc-500 mt-1">
+          <p className="text-xs text-zinc-500 mt-1 max-w-xl">
             Packs diarios de las 3 marcas (carrusel / imagen / video): llegan a Telegram con botón
             «Aprobar y publicar» en Instagram; aquí revisas el detalle, apruebas y descargas el ZIP.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <div className="flex rounded-lg border border-zinc-800 overflow-hidden">
             {BRAND_FILTERS.map((f) => (
               <button
                 key={f.key}
                 onClick={() => setBrandFilter(f.key)}
-                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                className={`px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition ${
                   brandFilter === f.key ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
@@ -324,7 +324,7 @@ export const ContentView: React.FC = () => {
               <button
                 key={f.key}
                 onClick={() => setFilter(f.key)}
-                className={`px-3 py-1.5 text-xs font-semibold transition ${
+                className={`px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition ${
                   filter === f.key ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-zinc-300"
                 }`}
               >
@@ -334,10 +334,10 @@ export const ContentView: React.FC = () => {
           </div>
           <button
             onClick={() => setShowVisualConfig(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 text-xs font-semibold"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 text-xs font-semibold whitespace-nowrap"
             title="Configuración visual por marca (portadas IA)"
           >
-            <ImageIcon className="w-4 h-4" /> Configuración visual
+            <ImageIcon className="w-4 h-4 shrink-0" /> <span className="whitespace-nowrap">Configuración visual</span>
           </button>
           <button
             onClick={loadPacks}
