@@ -3,7 +3,7 @@
  * Calls the CRM API server running on CRM_API_URL using scoped keys.
  */
 
-const getCrmUrl = () => process.env.CRM_API_URL ?? "http://localhost:8787";
+export const getCrmUrl = () => process.env.CRM_API_URL ?? "http://localhost:8787";
 
 /**
  * Scoped CRM keys are required configuration; never hardcoded.
@@ -18,7 +18,7 @@ const requireKey = (name: "CRM_FRONT_KEY" | "CRM_OPS_KEY"): string => {
 };
 
 const getFrontKey = () => requireKey("CRM_FRONT_KEY");
-const getOpsKey = () => requireKey("CRM_OPS_KEY");
+export const getOpsKey = () => requireKey("CRM_OPS_KEY");
 
 export interface RegisterLeadParams {
   clientName: string;
