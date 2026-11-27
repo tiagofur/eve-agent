@@ -19,6 +19,7 @@ import {
   type EnabledEveProxyConfig,
 } from "../../domain/eve-client";
 import { WEB_THREAD_KEY_PREFIX } from "../../domain/chat-origin";
+import { surfaceVisitorMessage } from "../../domain/web-contacts";
 
 // Simple in-memory rate limiter for public chat turns per IP (e.g. 20 requests per 10 minutes)
 const ipRateMap = new Map<string, { count: number; resetAt: number }>();
@@ -280,7 +281,10 @@ publicChatRouter.post(
         content: message,
       });
 
-      if ((await countUserTurnsInThread(threadId)) >= MAX_TURNS_PER_THREAD) {
+      const userTurns = await countUserTurnsInThread(threadId);
+      await surfaceVisitorMessage(threadId, userTurns);
+
+      if (userTurns >= MAX_TURNS_PER_THREAD) {
         await db.insert(chatMessages).values({
           threadId,
           role: "assistant",

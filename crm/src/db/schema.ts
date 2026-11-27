@@ -841,6 +841,9 @@ export const chatThreads = pgTable("chat_threads", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
   eveSessionId: text("eve_session_id"),
+  // Owner review of a web chat (the "Contactos web" inbox): NULL while the
+  // owner has not seen the visitor's latest words. Only "public:" threads use it.
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
 });
 
 export const chatMessages = pgTable(
