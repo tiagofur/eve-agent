@@ -1013,6 +1013,14 @@ export async function crmUploadContentPack(input: CrmContentPackUpload): Promise
 /* Scheduled tasks (agent cronjobs)                                    */
 /* ------------------------------------------------------------------ */
 
+/** Token spend of a schedule's runs over the trailing week (delegated subagents included). */
+export interface ScheduleUsageSummary {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+}
+
 export interface ScheduleRunSnapshot {
   id: string;
   status: string;
@@ -1021,6 +1029,10 @@ export interface ScheduleRunSnapshot {
   finishedAt: string | null;
   resultSummary: string | null;
   error: string | null;
+  /** NULL when the run never settled an EVE turn. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens: number | null;
 }
 
 export interface ScheduleItem {
@@ -1035,6 +1047,7 @@ export interface ScheduleItem {
   createdAt: string;
   updatedAt: string;
   lastRun: ScheduleRunSnapshot | null;
+  usage7d: ScheduleUsageSummary;
 }
 
 export async function crmListSchedules(): Promise<{

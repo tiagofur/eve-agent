@@ -9,6 +9,7 @@ import {
   readEveStreamToTerminal,
   sendEveMessage,
   type EnabledEveProxyConfig,
+  type EveUsage,
 } from "./eve-client";
 
 /**
@@ -21,6 +22,8 @@ export interface ProxiedTurnResult {
   reply: string;
   toolCalls: Array<{ toolName: string; args: unknown }>;
   threadId: string;
+  /** What the turn spent (delegated agents included); NULL when eve reported none. */
+  usage: EveUsage | null;
 }
 
 export async function runProxiedTurn(args: {
@@ -142,5 +145,5 @@ export async function runProxiedTurn(args: {
     .update(chatThreads)
     .set({ updatedAt: new Date() })
     .where(eq(chatThreads.id, threadId));
-  return { reply: parsed.text, toolCalls: [], threadId };
+  return { reply: parsed.text, toolCalls: [], threadId, usage: parsed.usage };
 }

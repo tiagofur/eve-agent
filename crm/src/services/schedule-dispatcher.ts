@@ -77,7 +77,11 @@ async function driveScheduleRun(
       eve,
       signal: abort.signal,
     });
-    await closeScheduleRun(opened.runId, { status: "succeeded", resultSummary: summarizeReply(out.reply) });
+    await closeScheduleRun(opened.runId, {
+      status: "succeeded",
+      resultSummary: summarizeReply(out.reply),
+      usage: out.usage,
+    });
     console.log(`[Schedules] run ${opened.runId} of "${schedule.title}" succeeded`);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown schedule run failure";

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNull, lte, sql } from "drizzle-orm";
 // Default import: v4 is CJS without an ESM exports map, so a named import
 // works under vitest/vite interop but fails in plain Node ESM (tsx runtime).
 import cronParser from "cron-parser";
@@ -6,6 +6,7 @@ import cronParser from "cron-parser";
 const parseExpression = cronParser.parseExpression;
 import { db } from "../db/client";
 import { chatThreads, schedules, scheduleRuns, type ScheduleRunTrigger } from "../db/schema";
+import type { EveUsage } from "./eve-client";
 
 /**
  * Domain layer for agent cronjobs (see the `schedules` / `schedule_runs`
@@ -132,17 +133,70 @@ export async function openScheduleRun(
 
 export async function closeScheduleRun(
   runId: string,
-  outcome: { status: "succeeded"; resultSummary: string } | { status: "failed"; error: string },
+  outcome:
+    | { status: "succeeded"; resultSummary: string; usage?: EveUsage | null }
+    | { status: "failed"; error: string },
   finishedAt: Date = new Date()
 ): Promise<void> {
+  const usage = outcome.status === "succeeded" ? outcome.usage : null;
   await db
     .update(scheduleRuns)
-    .set(
-      outcome.status === "succeeded"
-        ? { status: "succeeded", resultSummary: outcome.resultSummary, finishedAt }
-        : { status: "failed", error: outcome.error, finishedAt }
-    )
+    .set({
+      ...(outcome.status === "succeeded"
+        ? { status: "succeeded" as const, resultSummary: outcome.resultSummary }
+        : { status: "failed" as const, error: outcome.error }),
+      ...(usage
+        ? {
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            cacheReadTokens: usage.cacheReadTokens,
+          }
+        : {}),
+      finishedAt,
+    })
     .where(eq(scheduleRuns.id, runId));
+}
+
+/** Token spend of a schedule's settled runs over the trailing window. */
+export interface ScheduleUsageSummary {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+}
+
+/**
+ * Trailing-window spend per schedule, in one grouped query. The window covers
+ * `now - days` by start time, so a job paused days ago shows what it spent
+ * while it was still on.
+ */
+export async function usageBySchedule(
+  days: number,
+  now: Date = new Date()
+): Promise<Map<string, ScheduleUsageSummary>> {
+  const rows = await db
+    .select({
+      scheduleId: scheduleRuns.scheduleId,
+      runs: sql<number>`count(*)::int`,
+      inputTokens: sql<number>`coalesce(sum(${scheduleRuns.inputTokens}), 0)::bigint`,
+      outputTokens: sql<number>`coalesce(sum(${scheduleRuns.outputTokens}), 0)::bigint`,
+      cacheReadTokens: sql<number>`coalesce(sum(${scheduleRuns.cacheReadTokens}), 0)::bigint`,
+    })
+    .from(scheduleRuns)
+    .where(gte(scheduleRuns.startedAt, new Date(now.getTime() - days * 86_400_000)))
+    .groupBy(scheduleRuns.scheduleId);
+  // pg returns BIGINT sums as strings; the CRM's JSON surface wants numbers.
+  return new Map(
+    rows.map((row) => [
+      row.scheduleId,
+      {
+        runs: row.runs,
+        inputTokens: Number(row.inputTokens),
+        outputTokens: Number(row.outputTokens),
+        cacheReadTokens: Number(row.cacheReadTokens),
+      },
+    ])
+  );
 }
 
 /** One-line excerpt of the orchestrator reply for run lists. */

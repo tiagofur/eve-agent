@@ -155,6 +155,8 @@ describe("Schedules: tick del dispatcher", () => {
     const [settled] = await db.select().from(scheduleRuns).where(eq(scheduleRuns.id, run!.id));
     expect(settled?.error).toContain("EVE unreachable");
     expect(settled?.finishedAt).toBeDefined();
+    // A run whose turn never settled has no spend to record: NULL, not zero.
+    expect(settled?.inputTokens).toBeNull();
 
     const [sched] = await db.select().from(schedules).where(eq(schedules.id, row.id));
     expect(sched?.nextRunAt?.getTime()).toBeGreaterThan(Date.now());

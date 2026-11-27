@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
-import { like } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { pool, db } from "./db/client";
-import { apiKeys, schedules } from "./db/schema";
+import { apiKeys, scheduleRuns, schedules } from "./db/schema";
 import { hashApiKey } from "./auth/keys";
 import { app } from "./app";
 
@@ -119,6 +119,48 @@ describe("Schedules API", () => {
       body: JSON.stringify({ enabled: false }),
     });
     expect(noop.status).toBe(400);
+  });
+
+  it("lists each schedule with its trailing-week token spend", async () => {
+    const [row] = await db
+      .insert(schedules)
+      .values({
+        name: "TEST-usage-api",
+        title: "TEST usage",
+        cron: "0 7 * * *",
+        prompt: "x",
+        enabled: false,
+      })
+      .returning();
+    await db.insert(scheduleRuns).values({
+      scheduleId: row!.id,
+      status: "succeeded",
+      inputTokens: 300000,
+      outputTokens: 4000,
+      cacheReadTokens: 250000,
+      finishedAt: new Date(),
+    });
+    try {
+      const res = await app.request("/api/schedules", { headers: opsHeaders });
+      const body = (await res.json()) as {
+        schedules: Array<typeof schedules.$inferSelect & { usage7d: unknown }>;
+      };
+      expect(body.schedules.find((s) => s.id === row!.id)?.usage7d).toEqual({
+        runs: 1,
+        inputTokens: 300000,
+        outputTokens: 4000,
+        cacheReadTokens: 250000,
+      });
+      // A task that spent nothing in the window reports zeros, not a missing field.
+      expect(body.schedules.find((s) => s.id === createdId)?.usage7d).toEqual({
+        runs: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+      });
+    } finally {
+      await db.delete(schedules).where(eq(schedules.id, row!.id));
+    }
   });
 
   it("manual run returns 503 while the single brain is unreachable", async () => {
