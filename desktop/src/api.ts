@@ -999,6 +999,14 @@ export const crmApi = {
     }),
   getScheduleRuns: (id: string) =>
     request<{ runs: ScheduleRunItem[] }>(`/api/schedules/${id}/runs`),
+  /* ---- Configuración visual por marca (portadas del pipeline) ---- */
+  getVisualConfigs: () =>
+    request<{ configs: VisualConfigItem[] }>("/api/visual-configs"),
+  updateVisualConfig: (brand: string, data: Partial<Omit<VisualConfigItem, "brand" | "configured">>) =>
+    request<{ success: boolean; config: VisualConfigItem }>(`/api/visual-configs/${brand}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   /* ---- Reportes (analyst reports) ---- */
   getAnalystReports: (limit = 100) =>
     request<{ reports: AnalystReportItem[] }>(`/api/reports/analyst?limit=${limit}`),
@@ -1107,10 +1115,21 @@ export interface ScheduleItem {
   usage7d: ScheduleUsageSummary;
 }
 
+/** Perfil visual de una marca: gate del gasto en portadas IA del pipeline. */
+export interface VisualConfigItem {
+  brand: string;
+  mode: "editorial" | "hybrid" | "image_only";
+  artDirection: string;
+  coverTitleMaxWords: number;
+  showLogo: boolean;
+  imageModel: string;
+  /** false = sin fila en la BD (se muestran los defaults editorial). */
+  configured: boolean;
+}
+
 /** Reporte markdown del agente (brief de IA, plan editorial, operación…). */
 export interface AnalystReportItem {
-  id: string;
-  periodStart: string | null;
+  id: string;  periodStart: string | null;
   periodEnd: string | null;
   summary: string;
   metrics: Record<string, unknown>;
