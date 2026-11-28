@@ -147,4 +147,16 @@ describe("schedule_consultation wiring", () => {
     }
     expect(scheduleConsultation).toHaveBeenCalledTimes(6);
   });
+
+  it("public, WhatsApp and anonymous sessions never auto-invite; staff keep the invitation", async () => {
+    consultation.result = SCHEDULED;
+    await book(booking, visitor("invite-v"));
+    expect(scheduleConsultation).toHaveBeenLastCalledWith(expect.objectContaining({ invite: false }));
+    await book(booking, staff("invite-s"));
+    expect(scheduleConsultation).toHaveBeenLastCalledWith(expect.objectContaining({ invite: true }));
+    await book(booking, whatsapp("invite-w"));
+    expect(scheduleConsultation).toHaveBeenLastCalledWith(expect.objectContaining({ invite: false }));
+    await book(booking, ctx("invite-anon", null));
+    expect(scheduleConsultation).toHaveBeenLastCalledWith(expect.objectContaining({ invite: false }));
+  });
 });

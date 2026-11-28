@@ -67,13 +67,18 @@ WHATSAPP_THROTTLE_WINDOW_MINUTES=10
 
 # Public booking caps (agent-side; unset = 2 per conversation, 8 per day).
 # Each successful `schedule_consultation` from a visitor session takes a real
-# calendar slot and mails an invitation, so bookings have their own budget on
-# top of the turn limits. A capped booking is NOT created: the agent registers
-# the contact and says the team will confirm. Counters are in-memory in the
-# agent container and reset on restart; staff sessions are never capped. The
-# daily budget is shared by ALL visitors and resets at 00:00 UTC (18:00 in
-# Costa Rica): one abuser can use it up, and later prospects get the manual
-# follow-up for the rest of that UTC day.
+# calendar slot, so bookings have their own budget on top of the turn limits.
+# A capped booking is NOT created: the agent registers the contact and says
+# the team will confirm. Counters are in-memory in the agent container and
+# reset on restart; staff sessions are never capped. The daily budget is
+# shared by ALL visitors and resets at 00:00 UTC (18:00 in Costa Rica): one
+# abuser can use it up, and later prospects get the manual follow-up for the
+# rest of that UTC day.
+# Public bookings NEVER email an invitation: the event is created without an
+# attendee and the owner adds the guest from Google Calendar — that Google
+# invitation is the confirmation the prospect receives. Staff sessions (via
+# the CRM staff credential — Telegram and desktop both go through it) keep
+# the automatic invitation.
 PUBLIC_BOOKING_MAX_PER_SESSION=2
 PUBLIC_BOOKING_DAILY_CAP=8
 

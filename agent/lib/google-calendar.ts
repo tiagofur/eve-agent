@@ -295,6 +295,15 @@ export interface ConsultationInput {
   preferredDate?: string;
   preferredTimeSlot?: string;
   now?: Date;
+  /**
+   * Send the Google Calendar invitation email to the contact. REQUIRED and
+   * explicit on purpose (fail closed): only a staff-session caller passes
+   * true. With false the event is created WITHOUT an attendee, so no email
+   * ever leaves the owner's account from a request an anonymous visitor
+   * typed — the team adds the guest from Calendar (that invitation is the
+   * confirmation the prospect receives).
+   */
+  invite: boolean;
 }
 
 export interface ConsultationResult {
@@ -306,10 +315,55 @@ export interface ConsultationResult {
   meetLink?: string;
   when?: string;
   alternatives?: string[];
+  /** Set when the event exists but its invitation still needs the owner. */
+  pendingInvite?: string;
 }
 
 function randomRequestId(): string {
   return `creapolis-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Insert endpoint for a discovery event: Meet enabled, invitation email only when invited. */
+export function createEventUrl(calendarId: string, invite: boolean): string {
+  return (
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}` +
+    `/events?conferenceDataVersion=1&sendUpdates=${invite ? "all" : "none"}`
+  );
+}
+
+export interface EventBody {
+  summary: string;
+  description: string;
+  start: { dateTime: string; timeZone: string };
+  end: { dateTime: string; timeZone: string };
+  attendees?: Array<{ email: string }>;
+  conferenceData: {
+    createRequest: { requestId: string; conferenceSolutionKey: { type: string } };
+  };
+}
+
+/** Pure event payload: an attendee is attached only when one is passed in. */
+export function buildEventBody(input: ConsultationInput, slot: ResolvedSlot, attendee?: string): EventBody {
+  const description = [
+    `Consulta de descubrimiento Creapolis.Dev (30 min) con ${input.clientName}.`,
+    input.contact ? `Contacto: ${input.contact}.` : null,
+    input.discussionTopics.length > 0 ? `Temas: ${input.discussionTopics.join("; ")}.` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    summary: `Descubrimiento Creapolis.Dev — ${input.clientName}`,
+    description,
+    start: { dateTime: slot.startRfc3339, timeZone: COSTA_RICA_TZ },
+    end: { dateTime: slot.endRfc3339, timeZone: COSTA_RICA_TZ },
+    ...(attendee ? { attendees: [{ email: attendee }] } : {}),
+    conferenceData: {
+      createRequest: {
+        requestId: randomRequestId(),
+        conferenceSolutionKey: { type: "hangoutsMeet" },
+      },
+    },
+  };
 }
 
 export interface CalendarEventItem {
@@ -453,44 +507,28 @@ export async function scheduleConsultation(
     };
   }
 
-  const attendee =
+  // Email validation and calendar attendees are separate concerns: the
+  // validated email also drives the pending-invite messaging when the event
+  // is created without one.
+  const contactEmail =
     input.contact && isEmailLike(input.contact) ? input.contact.trim() : undefined;
-  const description = [
-    `Consulta de descubrimiento Creapolis.Dev (30 min) con ${input.clientName}.`,
-    input.contact ? `Contacto: ${input.contact}.` : null,
-    input.discussionTopics.length > 0 ? `Temas: ${input.discussionTopics.join("; ")}.` : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  // Fail closed: only an explicit true attaches the attendee to the event.
+  const invite = input.invite === true;
+  const attendee = invite ? contactEmail : undefined;
 
-  const createUrl =
-    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.calendarId)}` +
-    `/events?conferenceDataVersion=1&sendUpdates=all`;
   let created: {
     id?: unknown;
     htmlLink?: unknown;
     hangoutLink?: unknown;
   };
   try {
-    const response = await fetch(createUrl, {
+    const response = await fetch(createEventUrl(env.calendarId, invite), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${accessToken}`,
       },
-      body: JSON.stringify({
-        summary: `Descubrimiento Creapolis.Dev — ${input.clientName}`,
-        description,
-        start: { dateTime: slot.startRfc3339, timeZone: COSTA_RICA_TZ },
-        end: { dateTime: slot.endRfc3339, timeZone: COSTA_RICA_TZ },
-        ...(attendee ? { attendees: [{ email: attendee }] } : {}),
-        conferenceData: {
-          createRequest: {
-            requestId: randomRequestId(),
-            conferenceSolutionKey: { type: "hangoutsMeet" },
-          },
-        },
-      }),
+      body: JSON.stringify(buildEventBody(input, slot, attendee)),
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     created = (await response.json().catch(() => null)) as typeof created;
@@ -509,15 +547,21 @@ export async function scheduleConsultation(
     typeof created.hangoutLink === "string" && created.hangoutLink
       ? created.hangoutLink
       : "Link Meet en el evento de calendario.";
+  const detail = contactEmail
+    ? invite
+      ? ` Invitación enviada a ${contactEmail}.`
+      : ` Invitación NO enviada automáticamente: el equipo agregará a ${contactEmail} desde Calendar y Google le enviará la confirmación.`
+    : input.contact
+      ? " El contacto no es un email: avísale manualmente."
+      : " Sin email: avisa al contacto manualmente.";
   return {
     ok: true,
     status: "scheduled",
-    message:
-      `Consulta agendada para ${slot.humanEs} con link Meet.` +
-      (attendee ? ` Invitación enviada a ${attendee}.` : " Sin email: avisa al contacto manualmente."),
+    message: `Consulta agendada para ${slot.humanEs} con link Meet.${detail}`,
     eventId: created.id,
     eventLink: typeof created.htmlLink === "string" ? created.htmlLink : undefined,
     meetLink: meet,
     when: slot.humanEs,
+    ...(contactEmail && !invite ? { pendingInvite: contactEmail } : {}),
   };
 }
