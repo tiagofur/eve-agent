@@ -56,6 +56,9 @@ PUBLIC_CHAT_DAILY_TURN_BUDGET=400
 # The first message of a web chat pages the owner's Telegram. Pages are capped
 # at 5 per 10 minutes so a flooding visitor cannot spam; every contact lands
 # in Mission Control → Contactos web regardless of the cap.
+# The per-IP limit keys on X-Real-IP (or the last X-Forwarded-For entry): nginx
+# APPENDS to a visitor-supplied X-Forwarded-For, so its first entry is visitor
+# -controlled and must never be trusted as the client address.
 
 # WhatsApp inbound throttle per sender (messages per window, window minutes)
 WHATSAPP_THROTTLE_MAX=20
