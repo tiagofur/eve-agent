@@ -172,10 +172,12 @@ Respond ONLY with valid JSON following this schema:
       let imageUrl: string | undefined = undefined;
       const visualPrompt = parsed.videoPrompt || parsed.imagePrompt;
       const geminiKey = process.env.GEMINI_API_KEY;
-      const imageModel = requireModelId(resolveModelId("image", null));
       const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
       const baseUrl = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
+      // Each branch resolves its model where it runs: with no key for any
+      // media provider nothing is generated and the post goes out without
+      // an image, as it always did.
       if (isVideo && geminiKey && visualPrompt) {
         const videoModel = requireModelId(resolveModelId("video", null));
         try {
@@ -216,6 +218,7 @@ Respond ONLY with valid JSON following this schema:
           console.error("Failed to generate video with Omni Flash:", vidErr);
         }
       } else if (geminiKey && visualPrompt) {
+        const imageModel = requireModelId(resolveModelId("image", null));
         try {
           const imgRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${geminiKey}`,
@@ -245,6 +248,7 @@ Respond ONLY with valid JSON following this schema:
           console.error("Failed to generate image with Nano Banana:", imgErr);
         }
       } else if (metaKey && visualPrompt) {
+        const imageModel = requireModelId(resolveModelId("image", null));
         try {
           const imgRes = await fetch(`${baseUrl}/images/generations`, {
             method: "POST",

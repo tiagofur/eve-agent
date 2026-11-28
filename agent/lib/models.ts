@@ -26,7 +26,7 @@ const META_BASE_URL = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
  */
 export function getAgentModel() {
   const route = activeModelRoute();
-  // No saved routing at boot: the root agent picks it up per turn instead.
+  // Nothing is saved yet, so this is the env override or the code default.
   const modelId = resolveModelId("orchestrator", null);
   if (!modelId) throw new Error(`No text model available for provider "${route.provider}"`);
 
