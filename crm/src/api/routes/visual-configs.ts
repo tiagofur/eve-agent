@@ -34,7 +34,7 @@ visualConfigsRouter.get("/", requireScope(["ops"]), async (c) => {
       artDirection: row?.artDirection ?? "",
       coverTitleMaxWords: row?.coverTitleMaxWords ?? 8,
       showLogo: row?.showLogo ?? true,
-      imageModel: row?.imageModel ?? "gemini-3-pro-image",
+      imageModel: row?.imageModel ?? "gemini-nano-banana-2.1",
       generationMode: row?.generationMode ?? "standard",
       configured: row !== undefined,
     };
@@ -47,7 +47,7 @@ const putSchema = z.object({
   artDirection: z.string().max(2000).default(""),
   coverTitleMaxWords: z.number().int().min(2).max(15).default(8),
   showLogo: z.boolean().default(true),
-  imageModel: z.string().max(80).default("gemini-3-pro-image"),
+  imageModel: z.string().max(80).default("gemini-nano-banana-2.1"),
   // batch = Gemini Batch API at half price (~2-5 min per cover instead of ~15s).
   generationMode: z.enum(GENERATION_MODES).default("standard"),
 });

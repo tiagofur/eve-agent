@@ -1,0 +1,1 @@
+ALTER TABLE "brand_visual_configs" ALTER COLUMN "image_model" SET DEFAULT 'gemini-nano-banana-2.1';

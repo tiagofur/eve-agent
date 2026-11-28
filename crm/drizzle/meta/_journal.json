@@ -267,6 +267,13 @@
       "when": 1795843678690,
       "tag": "0037_social_posts_drift",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795844443423,
+      "tag": "0038_thin_silver_samurai",
+      "breakpoints": true
     }
   ]
 }
