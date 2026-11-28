@@ -61,6 +61,15 @@ PUBLIC_CHAT_DAILY_TURN_BUDGET=400
 WHATSAPP_THROTTLE_MAX=20
 WHATSAPP_THROTTLE_WINDOW_MINUTES=10
 
+# Public booking caps (agent-side; unset = 2 per conversation, 8 per day).
+# Each successful `schedule_consultation` from a visitor session takes a real
+# calendar slot and mails an invitation, so bookings have their own budget on
+# top of the turn limits. A capped booking is NOT created: the agent registers
+# the contact and says the team will confirm. Counters are in-memory in the
+# agent container and reset on restart; staff sessions are never capped.
+PUBLIC_BOOKING_MAX_PER_SESSION=2
+PUBLIC_BOOKING_DAILY_CAP=8
+
 # Google Calendar (real `schedule_consultation`: freebusy + Meet events)
 GOOGLE_CLIENT_ID="<google-oauth-client-id>"
 GOOGLE_CLIENT_SECRET="<google-oauth-client-secret>"
