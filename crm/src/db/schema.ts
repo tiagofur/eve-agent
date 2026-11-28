@@ -785,7 +785,7 @@ export const brandVisualConfigs = pgTable(
     coverTitleMaxWords: integer("cover_title_max_words").notNull().default(8),
     showLogo: boolean("show_logo").notNull().default(true),
     // Image model id, so a newer/cheaper model is one edit away (no deploy).
-    imageModel: text("image_model").notNull().default("gemini-nano-banana-2.1"),
+    imageModel: text("image_model").notNull().default("gemini-3-pro-image"),
     // standard = synchronous (seconds); batch = Gemini Batch API at half the
     // price, at the cost of a few minutes of latency per cover.
     generationMode: text("generation_mode").notNull().default("standard"),

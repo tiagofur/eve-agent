@@ -26,7 +26,7 @@ const EDITORIAL_DEFAULT: Omit<BrandVisualConfig, "brand"> = {
   artDirection: "",
   coverTitleMaxWords: 8,
   showLogo: true,
-  imageModel: "gemini-nano-banana-2.1",
+  imageModel: "gemini-3-pro-image",
   generationMode: "standard",
 };
 
