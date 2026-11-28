@@ -24,7 +24,7 @@ const modelId = z
   .trim()
   .min(1)
   .max(MODEL_ID_MAX_LENGTH)
-  .regex(MODEL_ID_PATTERN, "Model id cannot contain whitespace");
+  .regex(MODEL_ID_PATTERN, "Model id contains whitespace or characters that are not allowed");
 
 const price = z.number().min(0).nullable().default(null);
 

@@ -128,12 +128,15 @@ describe("orchestratorSelection", () => {
     });
   });
 
-  it("ignores a saved model its provider has no key for", () => {
+  it("ignores a saved model its provider has no key for — and its reasoning with it", () => {
     const otherProvider: ModelSettings = {
       catalog: settings.catalog,
       routing: { ...settings.routing!, text: { ...settings.routing!.text, orchestrator: "muse-spark-1.3-contributor" } },
     };
-    expect(orchestratorSelection(otherProvider, GOOGLE_KEY).model).toMatchObject({ modelId: "gemini-flash-latest" });
+    const selection = orchestratorSelection(otherProvider, GOOGLE_KEY);
+    expect(selection.model).toMatchObject({ modelId: "gemini-flash-latest" });
+    // The owner's effort choice only travels with their model choice.
+    expect(selection.reasoning).toBe("high");
   });
 
   it("hands eve a gateway id on the escape hatch", () => {

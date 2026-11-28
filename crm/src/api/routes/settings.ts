@@ -17,6 +17,7 @@ import {
   listSettings,
   modelSettingsFrom,
   readSetting,
+  saveModels,
   saveSetting,
 } from "../../domain/settings";
 
@@ -37,10 +38,10 @@ async function readBody(c: { req: { json: () => Promise<unknown> } }): Promise<u
 }
 
 // Every document with its provenance (saved vs code default), plus what each
-// model use resolves to right now. docker-compose passes the agent container
-// the same model variables as the CRM (GEMINI_API_KEY, GEMINI_MODEL_ID,
-// META_*, DEFAULT_MODEL), so `effective` is also what the orchestrator picks
-// on its next turn.
+// model use resolves to right now. docker-compose passes both the agent and
+// the CRM containers the same set of model variables (GEMINI_*, META_*,
+// DEFAULT_MODEL, NANO_BANANA_MODEL_ID, OMNI_FLASH_MODEL_ID), so `effective`
+// describes the orchestrator's next turn as well as this process.
 settingsRouter.get("/", requireScope(["ops"]), async (c) => {
   const settings = await listSettings();
   const modelSettings = modelSettingsFrom(settings);
@@ -68,6 +69,26 @@ settingsRouter.get("/:key", requireScope(["ops"]), async (c) => {
     return c.json({ error: `Unknown setting: ${key}` }, 404);
   }
   return c.json({ setting: await readSetting(key) });
+});
+
+// Catalog and routing as one pair: validated together (the routing against
+// the incoming catalog, so rewiring and pruning fit in one save) and written
+// in a single transaction — both revisions move or neither does.
+settingsRouter.put("/models", requireScope(["owner"]), async (c) => {
+  const body = await readBody(c);
+  if (body === undefined || typeof body !== "object" || body === null) {
+    return c.json({ error: "Request body must be a JSON object" }, 400);
+  }
+  const { catalog, routing } = body as { catalog?: unknown; routing?: unknown };
+  try {
+    const result = await saveModels({ catalog, routing }, c.get("actor"));
+    return c.json({ success: true, catalog: result.catalog, routing: result.routing });
+  } catch (err) {
+    if (err instanceof SettingsValidationError) {
+      return c.json({ error: err.message }, 400);
+    }
+    throw err;
+  }
 });
 
 // Replaces the whole document; every save leaves an audit event.

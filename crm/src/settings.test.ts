@@ -258,7 +258,7 @@ describe("Settings API", () => {
 
   /** Replaces fetch, records every call and answers like Google. */
   const stubGoogle = (respond: (url: string) => Response) => {
-    const calls: Array<{ url: string; method: string | undefined; apiKey: string | null }> = [];
+    const calls: Array<{ url: string; method: string | undefined; apiKey: string | null; body?: unknown }> = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -267,6 +267,7 @@ describe("Settings API", () => {
           url: target,
           method: init?.method,
           apiKey: new Headers(init?.headers).get("x-goog-api-key"),
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
         });
         return respond(target);
       })
@@ -306,13 +307,18 @@ describe("Settings API", () => {
 
     expect(result).toMatchObject({ ok: true, sample: "OK" });
     expect(typeof result.latencyMs).toBe("number");
-    expect(calls).toEqual([
-      {
-        url: `${GOOGLE_MODELS}/gemini-4-hydrogen:generateContent`,
-        method: "POST",
-        apiKey: "test-key",
-      },
-    ]);
+    expect(calls).toHaveLength(1);
+    // The probe is a real generation, but a tiny one: the budget is pinned so
+    // "a few tokens" stays a few tokens.
+    expect(calls[0]).toMatchObject({
+      url: `${GOOGLE_MODELS}/gemini-4-hydrogen:generateContent`,
+      method: "POST",
+      apiKey: "test-key",
+    });
+    expect(calls[0]!.body).toEqual({
+      contents: [{ parts: [{ text: "Responde únicamente: OK" }] }],
+      generationConfig: { maxOutputTokens: 16, temperature: 0 },
+    });
   });
 
   it("models/test only looks up image and video models, never generates", async () => {
@@ -324,7 +330,10 @@ describe("Settings API", () => {
     ).json()) as { result: { ok: boolean } };
 
     expect(result.ok).toBe(true);
-    expect(calls).toEqual([{ url: `${GOOGLE_MODELS}/gemini-3-pro-image`, method: undefined, apiKey: "test-key" }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ url: `${GOOGLE_MODELS}/gemini-3-pro-image`, apiKey: "test-key" });
+    // Lookup only: no generation request on an image probe.
+    expect(calls[0]!.body).toBeUndefined();
   });
 
   it("models/test explains an unknown model, a denied key and a missing key", async () => {
@@ -357,5 +366,70 @@ describe("Settings API", () => {
 
     expect(result.ok).toBeNull();
     expect(calls).toHaveLength(0);
+  });
+
+  describe("PUT /api/settings/models (combined catalog+routing)", () => {
+    interface ModelsBody {
+      success: boolean;
+      catalog: SettingBody;
+      routing: SettingBody;
+    }
+    const pair = (routingTextOrchestrator: string | null, catalogExtra: string[] = []) => ({
+      routing: { text: { orchestrator: routingTextOrchestrator }, image: {}, video: {} },
+      catalog: {
+        models: [
+          ...catalogExtra.map((id) => ({ id, modality: "text", provider: "google", label: id })),
+          { id: "gemini-flash-latest", modality: "text", provider: "google", label: "Flash" },
+          { id: "gemini-nano-banana-2.1", modality: "image", provider: "google", label: "NB" },
+          { id: "gemini-3-pro-image", modality: "image", provider: "google", label: "Pro" },
+        ],
+      },
+    });
+    const revisions = async () => {
+      const res = await app.request("/api/settings", { headers: opsHeaders });
+      const { settings } = (await res.json()) as { settings: SettingBody[] };
+      return settings.map((setting) => setting.revision);
+    };
+
+    it("is owner-only and saves the pair in one go", async () => {
+      const before = await revisions();
+      const anonymous = await app.request("/api/settings/models", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pair(null)),
+      });
+      expect(anonymous.status).toBe(401);
+      expect((await app.request("/api/settings/models", { method: "PUT", headers: opsHeaders, body: JSON.stringify(pair(null)) })).status).toBe(403);
+
+      const res = await save("models", pair("gemini-flash-latest", ["gemini-9-test"]));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as ModelsBody;
+      expect(body.routing.value.text.orchestrator).toBe("gemini-flash-latest");
+      expect(body.catalog.value.models.map((model) => model.id)).toContain("gemini-9-test");
+      // Both documents moved together.
+      const after = await revisions();
+      expect(after[0]).toBe(before[0]! + 1);
+      expect(after[1]).toBe(before[1]! + 1);
+    });
+
+    it("validates the pair against the INCOMING catalog and saves neither on failure", async () => {
+      // Rewire and prune together: the routing points at a model only the
+      // incoming catalog has — the saved one would fail this save.
+      const ok = await save("models", pair("gemini-9-fresh", ["gemini-9-fresh"]));
+      expect(ok.status).toBe(200);
+      const between = await revisions();
+
+      const failing = await save("models", pair("gemini-9-missing", []));
+      expect(failing.status).toBe(400);
+      expect(((await failing.json()) as { error: string }).error).toContain("not in the catalog");
+      // Atomic: the failed save moved no revision.
+      expect(await revisions()).toEqual(between);
+    });
+
+    it("rejects a control character in a model id", async () => {
+      const res = await save("models", pair(null, ["bad\u0000id"]));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain("whitespace");
+    });
   });
 });

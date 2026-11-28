@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_MODEL_CATALOG,
+  MODEL_ID_PATTERN,
   activeEnvOverrides,
   activeModelRoute,
   contextWindowFor,
@@ -123,5 +124,16 @@ describe("resolveModel provenance", () => {
     expect(contextWindowFor([{ ...flash, contextWindow: 200_000 }], flash.id)).toBe(200_000);
     expect(contextWindowFor(DEFAULT_MODEL_CATALOG, flash.id)).toBe(DEFAULT_CONTEXT_WINDOW_TOKENS);
     expect(contextWindowFor(null, "anything")).toBe(DEFAULT_CONTEXT_WINDOW_TOKENS);
+  });
+});
+
+describe("MODEL_ID_PATTERN", () => {
+  it("accepts provider ids and gateway-style paths, rejects control chars", () => {
+    for (const id of ["gemini-4-hydrogen", "muse-spark-1.3-contributor", "openai/gpt-6-luna-fast"]) {
+      expect(MODEL_ID_PATTERN.test(id)).toBe(true);
+    }
+    for (const id of ["ge\u0000mini", "gemini 4", "id\nnew", ""]) {
+      expect(MODEL_ID_PATTERN.test(id)).toBe(false);
+    }
   });
 });
