@@ -150,7 +150,7 @@ Tools are thin wrappers over the CRM REST API (see `agent/lib/crm.ts`); two run 
 | `generate_marketing_post` | ops | Copy + Muse Image campaign via `POST /api/marketing/generate` |
 | `get_crm_metrics` | ops | Funnel counts & conversions via `GET /api/reports/funnel` |
 | `generate_service_estimate` | local | Timeline/deliverable estimate matrix (no CRM call) |
-| `schedule_consultation` | local | Real Google Calendar event with Meet link, invites the contact email; public sessions are capped by `lib/booking-limits.ts` (2 per conversation, 8 per day) |
+| `schedule_consultation` | local | Real Google Calendar event with Meet link; automatic email invitation only for staff sessions — public sessions create it without attendee and the team adds the guest; public sessions are capped by `lib/booking-limits.ts` (2 per conversation, 8 per day) |
 
 Channels (`agent/channels/`):
 - `eve.ts` — default eve channel (Vercel OIDC for deployments + local dev auth).
