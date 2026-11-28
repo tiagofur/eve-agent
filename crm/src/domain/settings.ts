@@ -11,7 +11,7 @@ import {
   type ModelRouting,
   type ModelSettings,
 } from "../../../agent/lib/model-config";
-import { logEvent } from "./events";
+import { logEvent, type DbTx } from "./events";
 import { modelCatalogSchema, modelRoutingSchema } from "./model-schemas";
 
 /**
@@ -120,6 +120,24 @@ function assertRoutedModelsExist(routing: ModelRouting, catalog: ModelCatalog): 
   }
 }
 
+async function listBrandCoverModels(): Promise<Array<{ brand: string; imageModel: string }>> {
+  // Cover art is stored per brand, outside the catalog document.
+  return db
+    .select({ brand: brandVisualConfigs.brand, imageModel: brandVisualConfigs.imageModel })
+    .from(brandVisualConfigs);
+}
+
+function assertCatalogKeepsCoverModels(brands: Array<{ brand: string; imageModel: string }>, catalog: ModelCatalog): void {
+  for (const { brand, imageModel } of brands) {
+    const kept = catalog.models.some((model) => model.id === imageModel && model.modality === "image");
+    if (!kept) {
+      throw new SettingsValidationError(
+        `Model "${imageModel}" is the cover model of brand "${brand}"; switch that brand first or keep the model in the catalog`
+      );
+    }
+  }
+}
+
 /**
  * A saved document must leave the system runnable: every routed model exists
  * with the right modality, and the catalog keeps whatever is in use (the
@@ -134,21 +152,7 @@ async function assertUsable(key: SettingsKey, value: unknown): Promise<void> {
 
   const routing = await readSetting("models.routing");
   assertRoutedModelsExist(routing.value, value as ModelCatalog);
-
-  // Cover art is stored per brand, outside the catalog document.
-  const brands = await db
-    .select({ brand: brandVisualConfigs.brand, imageModel: brandVisualConfigs.imageModel })
-    .from(brandVisualConfigs);
-  for (const { brand, imageModel } of brands) {
-    const kept = (value as ModelCatalog).models.some(
-      (model) => model.id === imageModel && model.modality === "image"
-    );
-    if (!kept) {
-      throw new SettingsValidationError(
-        `Model "${imageModel}" is the cover model of brand "${brand}"; switch that brand first or keep the model in the catalog`
-      );
-    }
-  }
+  assertCatalogKeepsCoverModels(await listBrandCoverModels(), value as ModelCatalog);
 }
 
 export function formatIssues(error: z.ZodError): string {
@@ -157,22 +161,17 @@ export function formatIssues(error: z.ZodError): string {
     .join("; ");
 }
 
-/** Validates, upserts (revision + 1) and leaves an audit event with before/after. */
-export async function saveSetting<K extends SettingsKey>(
+/** Upsert (revision + 1) and audit event, on one connection so callers can wrap them in a transaction. */
+async function upsertSettingTx<K extends SettingsKey>(
+  tx: DbTx,
   key: K,
-  input: unknown,
+  value: Record<string, unknown>,
   actor: string
 ): Promise<SettingRecord<K>> {
-  const parsed = REGISTRY[key].schema.safeParse(input);
-  if (!parsed.success) {
-    throw new SettingsValidationError(`Invalid value for "${key}": ${formatIssues(parsed.error)}`);
-  }
-  await assertUsable(key, parsed.data);
-
-  const [before] = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
-  const [row] = await db
+  const [before] = await tx.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
+  const [row] = await tx
     .insert(appSettings)
-    .values({ key, value: parsed.data as Record<string, unknown>, updatedBy: actor })
+    .values({ key, value, updatedBy: actor })
     .onConflictDoUpdate({
       target: appSettings.key,
       set: {
@@ -191,11 +190,53 @@ export async function saveSetting<K extends SettingsKey>(
     action: "updated",
     actor,
     before: before?.value ?? null,
-    after: parsed.data as Record<string, unknown>,
+    after: value,
     reason: `Configuración "${key}" guardada desde Mission Control`,
+    tx,
   });
 
   return toRecord(key, row);
+}
+
+/** Validates, upserts (revision + 1) and audits — all in one transaction. */
+export async function saveSetting<K extends SettingsKey>(
+  key: K,
+  input: unknown,
+  actor: string
+): Promise<SettingRecord<K>> {
+  const parsed = REGISTRY[key].schema.safeParse(input);
+  if (!parsed.success) {
+    throw new SettingsValidationError(`Invalid value for "${key}": ${formatIssues(parsed.error)}`);
+  }
+  await assertUsable(key, parsed.data);
+  return db.transaction((tx) => upsertSettingTx(tx, key, parsed.data as Record<string, unknown>, actor));
+}
+
+/**
+ * Catalog and routing in one transaction, validated as a pair: the routing is
+ * checked against the incoming catalog (not the saved one), so the owner can
+ * rewire and prune in a single save. Both revisions move together or neither
+ * does.
+ */
+export async function saveModels(
+  input: { catalog: unknown; routing: unknown },
+  actor: string
+): Promise<{ catalog: SettingRecord<"models.catalog">; routing: SettingRecord<"models.routing"> }> {
+  const catalogParsed = modelCatalogSchema.safeParse(input.catalog);
+  const routingParsed = modelRoutingSchema.safeParse(input.routing);
+  if (!catalogParsed.success) {
+    throw new SettingsValidationError(`Invalid value for "models.catalog": ${formatIssues(catalogParsed.error)}`);
+  }
+  if (!routingParsed.success) {
+    throw new SettingsValidationError(`Invalid value for "models.routing": ${formatIssues(routingParsed.error)}`);
+  }
+  assertRoutedModelsExist(routingParsed.data, catalogParsed.data);
+  assertCatalogKeepsCoverModels(await listBrandCoverModels(), catalogParsed.data);
+
+  return db.transaction(async (tx) => ({
+    catalog: await upsertSettingTx(tx, "models.catalog", catalogParsed.data as Record<string, unknown>, actor),
+    routing: await upsertSettingTx(tx, "models.routing", routingParsed.data as Record<string, unknown>, actor),
+  }));
 }
 
 export interface SettingHistoryEntry {

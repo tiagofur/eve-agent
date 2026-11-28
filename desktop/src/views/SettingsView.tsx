@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, CircleAlert, Clock, Plug, Plus, Save, Trash2 } from "lucide-react";
 import {
   crmApi,
@@ -89,6 +89,9 @@ export const SettingsView: React.FC<Props> = ({ onOpenConnection }) => {
   const [historyKey, setHistoryKey] = useState<"models.catalog" | "models.routing" | null>(null);
   const [history, setHistory] = useState<SettingHistoryEntry[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  /** The routing as the server has it — the baseline for "this selection changed". */
+  const savedRoutingRef = useRef<ModelRouting>(emptyRouting);
+  const [confirm, setConfirm] = useState<{ failures: Array<{ id: string; reason: string }> } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -96,12 +99,13 @@ export const SettingsView: React.FC<Props> = ({ onOpenConnection }) => {
       const catalogSetting = payload.settings.find((setting) => setting.key === "models.catalog");
       const routingSetting = payload.settings.find((setting) => setting.key === "models.routing");
       const catalogValue = (catalogSetting?.value as { models?: CatalogModel[] } | undefined)?.models ?? [];
+      const routingValue = routingSetting?.saved
+        ? ((routingSetting.value as ModelRouting) ?? emptyRouting)
+        : emptyRouting;
       setCatalog(catalogValue.map((model) => ({ ...model })));
-      setRouting(
-        routingSetting?.saved
-          ? ((routingSetting.value as ModelRouting) ?? emptyRouting)
-          : emptyRouting
-      );
+      setRouting(routingValue);
+      savedRoutingRef.current = routingValue;
+      setConfirm(null);
       setSavedRevisions({ catalog: catalogSetting?.revision ?? 0, routing: routingSetting?.revision ?? 0 });
       setRuntime(payload.runtime);
     } catch (err) {
@@ -142,12 +146,30 @@ export const SettingsView: React.FC<Props> = ({ onOpenConnection }) => {
     return routing.video.model;
   };
 
-  const save = async () => {
+  /** Text uses whose model changed since the last load — the ones worth probing. */
+  const changedTextSelections = useCallback(() => {
+    const changed = (use: "orchestrator" | "marketingCopy") => {
+      const id = routing.text[use];
+      const savedId = savedRoutingRef.current?.text[use] ?? null;
+      return id && id !== savedId ? id : null;
+    };
+    return (["orchestrator", "marketingCopy"] as const)
+      .map((use) => {
+        const id = changed(use);
+        if (!id) return null;
+        const model = catalog.find((entry) => entry.id === id);
+        // Only google models have an automatic probe.
+        return model && model.provider === "google" ? { use, id, modality: model.modality as ModelModality } : null;
+      })
+      .filter((entry): entry is { use: "orchestrator" | "marketingCopy"; id: string; modality: ModelModality } => !!entry);
+  }, [routing, catalog]);
+
+  const commitSave = async () => {
     setSaving(true);
     setBanner(null);
+    setConfirm(null);
     try {
-      await crmApi.putSetting("models.catalog", { models: catalog });
-      await crmApi.putSetting("models.routing", routing);
+      await crmApi.putModels({ catalog: { models: catalog }, routing });
       setBanner({ ok: true, text: "Guardado: aplica en el próximo turno del orquestador." });
       await load();
     } catch (err) {
@@ -155,6 +177,36 @@ export const SettingsView: React.FC<Props> = ({ onOpenConnection }) => {
     } finally {
       setSaving(false);
     }
+  };
+
+  /**
+   * Before saving, probes every text model the owner just selected (a few
+   * real tokens each): eve fails the turn on an invalid model, so an
+   * unproven orchestrator id deserves a warning, not silence.
+   */
+  const save = async () => {
+    setBanner(null);
+    const selections = changedTextSelections();
+    if (selections.length === 0) {
+      await commitSave();
+      return;
+    }
+    setSaving(true);
+    const failures: Array<{ id: string; reason: string }> = [];
+    for (const { id, modality } of selections) {
+      try {
+        const { result } = await crmApi.testModel({ provider: "google", modelId: id, modality });
+        if (result.ok === false) failures.push({ id, reason: result.reason });
+      } catch (err) {
+        failures.push({ id, reason: (err as Error).message });
+      }
+    }
+    setSaving(false);
+    if (failures.length > 0) {
+      setConfirm({ failures });
+      return;
+    }
+    await commitSave();
   };
 
   const test = async (use: string, provider: ModelProvider, modelId: string, modality: ModelModality) => {
@@ -328,6 +380,36 @@ export const SettingsView: React.FC<Props> = ({ onOpenConnection }) => {
             {saving ? "Guardando…" : routingDirty ? "Guardar cambios" : "Guardar"}
           </button>
         </div>
+        {confirm && (
+          <div className="mt-3 rounded-lg border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+            <p className="font-semibold">Google no reconoce lo que vas a guardar:</p>
+            <ul className="mt-1 space-y-0.5 text-xs">
+              {confirm.failures.map((failure) => (
+                <li key={failure.id}>
+                  <span className="font-mono">{failure.id}</span> — {failure.reason}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs">Cada turno del orquestador fallaría hasta que lo cambies.</p>
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={() => {
+                  void commitSave();
+                }}
+                disabled={saving}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 text-black hover:bg-amber-400 disabled:opacity-50"
+              >
+                Guardar igual
+              </button>
+              <button
+                onClick={() => setConfirm(null)}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-amber-700 text-amber-200 hover:bg-amber-900/40"
+              >
+                No guardar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Catálogo */}

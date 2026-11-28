@@ -15,7 +15,7 @@ export const modelTestRequestSchema = z.object({
     .trim()
     .min(1)
     .max(MODEL_ID_MAX_LENGTH)
-    .regex(MODEL_ID_PATTERN, "Model id cannot contain whitespace"),
+    .regex(MODEL_ID_PATTERN, "Model id contains whitespace or characters that are not allowed"),
   modality: z.enum(MODEL_MODALITIES),
 });
 export type ModelTestRequest = z.infer<typeof modelTestRequestSchema>;

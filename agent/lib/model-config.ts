@@ -42,7 +42,8 @@ export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_048_576;
 
 /** Shared by every consumer's validation of catalog and routing ids. */
 export const MODEL_ID_MAX_LENGTH = 120;
-export const MODEL_ID_PATTERN = /^\S+$/;
+/** Provider ids land in URL paths: word chars plus ./:- only, no whitespace or control chars. */
+export const MODEL_ID_PATTERN = /^[\w./:-]+$/;
 export const MODEL_LABEL_MAX_LENGTH = 80;
 
 export interface CatalogModel {

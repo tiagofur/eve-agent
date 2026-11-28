@@ -102,7 +102,9 @@ export function orchestratorSelection(
   const resolved = requireModel("orchestrator", settings, env);
   return {
     model: buildModelClient(activeModelRoute(env), resolved.modelId, env),
-    reasoning: settings?.routing?.text.reasoning ?? DEFAULT_REASONING,
+    // The owner's effort choice only travels with their model choice: when the
+    // saved model is ignored (provider mismatch), the default applies too.
+    reasoning: resolved.source === "saved" ? settings?.routing?.text.reasoning ?? DEFAULT_REASONING : DEFAULT_REASONING,
     modelContextWindowTokens: contextWindowFor(settings?.catalog, resolved.modelId),
   };
 }

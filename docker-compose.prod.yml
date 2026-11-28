@@ -39,7 +39,8 @@ services:
       - CRM_API_URL=http://creapolis-crm:8787
       - CRM_FRONT_KEY=${CRM_FRONT_KEY}
       - CRM_OPS_KEY=${CRM_OPS_KEY}
-      - CRM_OWNER_KEY=${CRM_OWNER_KEY}
+      # No CRM_OWNER_KEY here: the agent must not hold a key that could change
+      # the models it runs on (settings writes are owner-only on purpose).
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
@@ -76,8 +77,16 @@ services:
       - EVE_PUBLIC_USER=${EVE_PUBLIC_USER}
       - EVE_PUBLIC_PASSWORD=${EVE_PUBLIC_PASSWORD}
       - PUBLIC_CHAT_DAILY_TURN_BUDGET=${PUBLIC_CHAT_DAILY_TURN_BUDGET:-400}
+      # Model variables: the SAME set the eve-agent receives, so the settings
+      # screen's `runtime.effective` describes the orchestrator's next turn.
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL_ID=${GEMINI_MODEL_ID:-}
+      - META_API_BASE_URL=${META_API_BASE_URL:-}
+      - META_API_KEY=${META_API_KEY:-}
+      - META_MODEL_ID=${META_MODEL_ID:-}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-}
+      - NANO_BANANA_MODEL_ID=${NANO_BANANA_MODEL_ID:-}
+      - OMNI_FLASH_MODEL_ID=${OMNI_FLASH_MODEL_ID:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
       - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME}

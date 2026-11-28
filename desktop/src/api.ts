@@ -1018,6 +1018,16 @@ export const crmApi = {
       method: "PUT",
       body: JSON.stringify(value),
     }),
+  /** Catálogo y ruteo como una sola pareja: se validan y guardan juntos. */
+  putModels: (body: { catalog: { models: CatalogModel[] }; routing: ModelRouting }) =>
+    request<{
+      success: boolean;
+      catalog: SettingRecord<{ models: CatalogModel[] }>;
+      routing: SettingRecord<ModelRouting>;
+    }>("/api/settings/models", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   getSettingHistory: (key: string) =>
     request<{ key: string; history: SettingHistoryEntry[] }>(`/api/settings/history/${key}`),
   testModel: (body: { provider: ModelProvider; modelId: string; modality: ModelModality }) =>
