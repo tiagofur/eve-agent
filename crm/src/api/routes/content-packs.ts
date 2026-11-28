@@ -7,6 +7,8 @@ import {
   PackPublishError,
   createContentPack,
   getPackCover,
+  getPackDetail,
+  getPackSlidePath,
   getPackZip,
   listContentPacks,
   markPackDownloaded,
@@ -164,6 +166,41 @@ contentPacksRouter.get("/:id/cover", requireScope(["ops"]), async (c) => {
     });
   } catch {
     return c.json({ error: "Cover not found" }, 404);
+  }
+});
+
+// 5b. Pack detail for the desktop preview modal (full row + slide count).
+contentPacksRouter.get("/:id", requireScope(["ops"]), async (c) => {
+  const id = c.req.param("id") ?? "";
+  try {
+    return c.json(await getPackDetail(id));
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Pack not found" }, 404);
+  }
+});
+
+// 5c. One slide PNG by sorted index — the desktop carousel preview loads
+// these like the cover, independent of the ZIP.
+contentPacksRouter.get("/:id/slides/:index", requireScope(["ops"]), async (c) => {
+  const id = c.req.param("id") ?? "";
+  const index = Number.parseInt(c.req.param("index") ?? "", 10);
+  if (!Number.isInteger(index) || index < 0) {
+    return c.json({ error: "Invalid slide index" }, 400);
+  }
+  try {
+    const slidePath = await getPackSlidePath(id, index);
+    if (!slidePath) {
+      return c.json({ error: "Slide not found" }, 404);
+    }
+    const data = await readFile(slidePath);
+    return new Response(new Uint8Array(data), {
+      headers: {
+        "Content-Type": "image/png",
+        "Cache-Control": "private, max-age=3600",
+      },
+    });
+  } catch {
+    return c.json({ error: "Slide not found" }, 404);
   }
 });
 

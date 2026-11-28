@@ -11,11 +11,15 @@ import {
   Copy,
   Check,
   FileArchive,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   crmApi,
   fetchContentPackCoverUrl,
+  fetchContentPackSlideUrl,
   fetchContentPackZip,
+  getContentPack,
   type ContentPackItem,
   type VisualConfigItem,
 } from "../api";
@@ -68,9 +72,10 @@ const PackCard: React.FC<{
   pack: ContentPackItem;
   coverUrl: string | null;
   actionLoading: boolean;
+  onOpen: () => void;
   onReview: (id: string, decision: "approved" | "rejected") => void;
   onDownload: (id: string) => void;
-}> = ({ pack, coverUrl, actionLoading, onReview, onDownload }) => {
+}> = ({ pack, coverUrl, actionLoading, onOpen, onReview, onDownload }) => {
   const [copied, setCopied] = useState(false);
 
   const copyCaption = () => {
@@ -80,7 +85,11 @@ const PackCard: React.FC<{
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden flex flex-col">
+    <div
+      onClick={onOpen}
+      title="Ver preview completo"
+      className="rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden flex flex-col cursor-pointer hover:border-zinc-600 transition-colors"
+    >
       {coverUrl ? (
         <img src={coverUrl} alt={pack.topic} className="w-full aspect-video object-cover" />
       ) : (
@@ -119,6 +128,7 @@ const PackCard: React.FC<{
               href={pack.externalPostUrl}
               target="_blank"
               rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="inline-block mt-1 text-xs text-cyan-300 hover:underline"
             >
               Ver publicación en Instagram ↗
@@ -129,6 +139,7 @@ const PackCard: React.FC<{
               href={pack.fbPostUrl}
               target="_blank"
               rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
               className="inline-block mt-1 ml-3 text-xs text-blue-300 hover:underline"
             >
               Ver publicación en Facebook ↗
@@ -152,7 +163,7 @@ const PackCard: React.FC<{
         )}
 
         {pack.captionsByPlatform && Object.keys(pack.captionsByPlatform).length > 0 && (
-          <details className="text-[11px] text-zinc-500">
+          <details onClick={(e) => e.stopPropagation()} className="text-[11px] text-zinc-500">
             <summary className="cursor-pointer hover:text-zinc-300">Captions por plataforma</summary>
             {Object.entries(pack.captionsByPlatform).map(([platform, caption]) => (
               <div key={platform} className="mt-1.5">
@@ -163,7 +174,7 @@ const PackCard: React.FC<{
           </details>
         )}
 
-        <div className="mt-auto pt-2 flex items-center gap-2 flex-wrap">
+        <div onClick={(e) => e.stopPropagation()} className="mt-auto pt-2 flex items-center gap-2 flex-wrap">
           {pack.status === "pending_approval" && (
             <>
               <button
@@ -205,6 +216,255 @@ const PackCard: React.FC<{
   );
 };
 
+/* ------------------------------------------------------------------ */
+/* Preview completo del pack (carrusel navegable + texto completo)     */
+/* ------------------------------------------------------------------ */
+
+const PackPreviewModal: React.FC<{
+  pack: ContentPackItem;
+  coverUrl: string | null;
+  actionLoading: boolean;
+  onClose: () => void;
+  onReview: (id: string, decision: "approved" | "rejected") => void;
+}> = ({ pack, coverUrl, actionLoading, onClose, onReview }) => {
+  const [slideCount, setSlideCount] = useState(0);
+  const [slideUrls, setSlideUrls] = useState<string[]>([]);
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
+
+  const copyCaption = () => {
+    navigator.clipboard.writeText(pack.caption);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // Load the slide count + each slide PNG (sorted index) as blob URLs.
+  // Revoked on close or when the effect re-runs — same lifecycle as loadPacks.
+  useEffect(() => {
+    let cancelled = false;
+    const created: string[] = [];
+    (async () => {
+      try {
+        const detail = await getContentPack(pack.id);
+        if (cancelled) return;
+        setSlideCount(detail.slideCount);
+        if (pack.kind === "carousel" && detail.slideCount > 0) {
+          for (let i = 0; i < Math.min(detail.slideCount, 10); i++) {
+            const url = await fetchContentPackSlideUrl(pack.id, i);
+            if (!url) break;
+            if (cancelled) {
+              URL.revokeObjectURL(url);
+              return;
+            }
+            created.push(url);
+          }
+          if (!cancelled) setSlideUrls(created);
+        }
+      } catch (err) {
+        console.error("Failed to load pack preview:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      created.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [pack.id, pack.kind]);
+
+  const isCarousel = pack.kind === "carousel" && slideUrls.length > 0;
+  const index = isCarousel ? Math.min(slideIndex, slideUrls.length - 1) : 0;
+  const galleryUrl = isCarousel ? slideUrls[index] ?? null : coverUrl;
+
+  const prevSlide = () => setSlideIndex((i) => (i <= 0 ? slideUrls.length - 1 : i - 1));
+  const nextSlide = () => setSlideIndex((i) => (i >= slideUrls.length - 1 ? 0 : i + 1));
+
+  return (
+    <Modal
+      onClose={onClose}
+      title={pack.topic}
+      description={
+        pack.hook
+          ? undefined
+          : "Preview de la publicación tal como llega a Instagram/Facebook."
+      }
+      width="max-w-2xl"
+      footer={
+        <div className="flex items-center gap-2 flex-wrap w-full">
+          {pack.status === "pending_approval" && (
+            <>
+              <button
+                onClick={() => onReview(pack.id, "approved")}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
+              >
+                {actionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                Aprobar
+              </button>
+              <button
+                onClick={() => onReview(pack.id, "rejected")}
+                disabled={actionLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-red-400 disabled:opacity-50"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Rechazar
+              </button>
+            </>
+          )}
+          <button
+            onClick={copyCaption}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 ml-auto"
+            title="Copiar caption completo"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? "Copiado" : "Copiar caption"}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${BRAND_STYLE[pack.brand]}`}>
+            {BRAND_LABEL[pack.brand]}
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-xs font-semibold rounded-md bg-zinc-800 text-zinc-300">
+            <KindIcon kind={pack.kind} />
+            {KIND_LABEL[pack.kind]}
+            {isCarousel && <span className="text-zinc-500">· {slideUrls.length} imgs</span>}
+          </span>
+          <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${STATUS_STYLE[pack.status]}`}>
+            {STATUS_LABEL[pack.status]}
+          </span>
+          {pack.scheduledFor && <span className="text-[11px] text-zinc-500">📅 {pack.scheduledFor}</span>}
+        </div>
+
+        {/* Galería: carrusel navegable para carousels; cover para imagen/video. */}
+        <div className="relative rounded-lg overflow-hidden bg-black flex items-center justify-center">
+          {galleryUrl ? (
+            <img
+              src={galleryUrl}
+              alt={`${pack.topic} — slide ${index + 1}`}
+              className="w-full max-h-[55vh] object-contain"
+            />
+          ) : (
+            <div className="w-full aspect-video flex items-center justify-center text-zinc-600">
+              <div className="text-center">
+                <FileArchive className="w-8 h-8 mx-auto mb-2" />
+                <p className="text-xs">
+                  {pack.kind === "carousel" && slideUrls.length === 0 && slideCount > 0
+                    ? "Cargando slides…"
+                    : pack.kind === "carousel"
+                      ? `Carrusel de ${slideCount} imágenes — descarga el ZIP para verlas`
+                      : "Sin portada — descarga el ZIP"}
+                </p>
+              </div>
+            </div>
+          )}
+          {isCarousel && (
+            <>
+              <button
+                onClick={prevSlide}
+                aria-label="Slide anterior"
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 hover:bg-black/80 text-white"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                onClick={nextSlide}
+                aria-label="Slide siguiente"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/60 hover:bg-black/80 text-white"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5">
+                {slideUrls.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setSlideIndex(i)}
+                    aria-label={`Ir al slide ${i + 1}`}
+                    className={`w-1.5 h-1.5 rounded-full transition ${i === index ? "bg-white" : "bg-white/40 hover:bg-white/70"}`}
+                  />
+                ))}
+              </div>
+              <span className="absolute top-2 right-2 px-2 py-0.5 text-[11px] font-semibold rounded-md bg-black/60 text-white">
+                {index + 1}/{slideUrls.length}
+              </span>
+            </>
+          )}
+        </div>
+
+        {pack.hook && (
+          <p className="text-sm text-cyan-400 leading-relaxed">
+            💡 {pack.hook}
+          </p>
+        )}
+
+        <div>
+          <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-1">Caption</h4>
+          <p className="text-sm text-zinc-200 leading-relaxed whitespace-pre-line">{pack.caption}</p>
+        </div>
+
+        {pack.hashtags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {pack.hashtags.map((h) => (
+              <span key={h} className="px-2 py-0.5 text-xs rounded-md bg-zinc-800 text-cyan-300">
+                #{h.replace(/^#/, "")}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {pack.platforms.length > 0 && (
+          <p className="text-[11px] text-zinc-500">
+            <span className="font-semibold text-zinc-400">Plataformas:</span>{" "}
+            {pack.platforms.join(", ")}
+          </p>
+        )}
+
+        {pack.captionsByPlatform && Object.keys(pack.captionsByPlatform).length > 0 && (
+          <details className="text-xs text-zinc-400">
+            <summary className="cursor-pointer hover:text-zinc-200">Captions por plataforma</summary>
+            {Object.entries(pack.captionsByPlatform).map(([platform, caption]) => (
+              <div key={platform} className="mt-2 border-l-2 border-zinc-700 pl-3">
+                <span className="font-semibold text-zinc-300 uppercase">{platform}</span>
+                <p className="whitespace-pre-line mt-0.5 text-zinc-400">{caption}</p>
+              </div>
+            ))}
+          </details>
+        )}
+
+        {pack.notes && (
+          <div>
+            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-1">Notas</h4>
+            <p className="text-xs text-zinc-400 leading-relaxed whitespace-pre-line">{pack.notes}</p>
+          </div>
+        )}
+
+        {pack.status === "rejected" && pack.rejectedReason && (
+          <p className="text-xs text-red-400 border-l-2 border-red-500/40 pl-2">{pack.rejectedReason}</p>
+        )}
+
+        {pack.status === "published" && (pack.externalPostUrl || pack.fbPostUrl) && (
+          <div className="flex items-center gap-3 text-xs">
+            {pack.externalPostUrl && (
+              <a href={pack.externalPostUrl} target="_blank" rel="noreferrer" className="text-cyan-300 hover:underline">
+                Ver en Instagram ↗
+              </a>
+            )}
+            {pack.fbPostUrl && (
+              <a href={pack.fbPostUrl} target="_blank" rel="noreferrer" className="text-blue-300 hover:underline">
+                Ver en Facebook ↗
+              </a>
+            )}
+          </div>
+        )}
+
+        <p className="text-[11px] text-zinc-600 border-t border-zinc-800 pt-2">
+          Creado el {new Date(pack.createdAt).toLocaleString()} · {pack.createdBy}
+        </p>
+      </div>
+    </Modal>
+  );
+};
+
 export const ContentView: React.FC = () => {
   const [packs, setPacks] = useState<ContentPackItem[]>([]);
   const [covers, setCovers] = useState<Record<string, string>>({});
@@ -213,6 +473,7 @@ export const ContentView: React.FC = () => {
   const [filter, setFilter] = useState<StatusFilter>("pending_approval");
   const [brandFilter, setBrandFilter] = useState<BrandFilter>("all");
   const [showVisualConfig, setShowVisualConfig] = useState(false);
+  const [previewPackId, setPreviewPackId] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null);
 
   const loadPacks = useCallback(async () => {
@@ -307,6 +568,7 @@ export const ContentView: React.FC = () => {
   ];
 
   const visiblePacks = brandFilter === "all" ? packs : packs.filter((p) => p.brand === brandFilter);
+  const previewPack = previewPackId ? packs.find((p) => p.id === previewPackId) ?? null : null;
 
   return (
     <div className="space-y-6">
@@ -371,6 +633,15 @@ export const ContentView: React.FC = () => {
           onError={(text) => setBanner({ ok: false, text })}
         />
       )}
+      {previewPack && (
+        <PackPreviewModal
+          pack={previewPack}
+          coverUrl={covers[previewPack.id] ?? null}
+          actionLoading={actionLoading === previewPack.id}
+          onClose={() => setPreviewPackId(null)}
+          onReview={handleReview}
+        />
+      )}
       {banner && (
         <div
           className={`rounded-lg px-3.5 py-2 text-xs flex items-start justify-between gap-3 border ${
@@ -403,6 +674,7 @@ export const ContentView: React.FC = () => {
               pack={pack}
               coverUrl={covers[pack.id] ?? null}
               actionLoading={actionLoading === pack.id}
+              onOpen={() => setPreviewPackId(pack.id)}
               onReview={handleReview}
               onDownload={handleDownload}
             />

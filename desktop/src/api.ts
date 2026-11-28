@@ -424,6 +424,25 @@ export async function fetchContentPackCoverUrl(id: string): Promise<string | nul
   return URL.createObjectURL(await res.blob());
 }
 
+/** Pack row + slide count — the preview modal needs the count for the carousel. */
+export interface ContentPackDetail {
+  pack: ContentPackItem;
+  slideCount: number;
+}
+
+export async function getContentPack(id: string): Promise<ContentPackDetail> {
+  return request<ContentPackDetail>(`/api/content-packs/${id}`);
+}
+
+/** One carousel slide (sorted index) as an object URL; null when missing. */
+export async function fetchContentPackSlideUrl(id: string, index: number): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/api/content-packs/${id}/slides/${index}`, {
+    headers: { Authorization: `Bearer ${OWNER_KEY}` },
+  });
+  if (!res.ok) return null;
+  return URL.createObjectURL(await res.blob());
+}
+
 /** Resultado del envío automático tras aprobar (ver crm/src/domain/outbox.ts). */
 export type OutboxDelivery =
   | { status: "sent"; providerId: string | null }

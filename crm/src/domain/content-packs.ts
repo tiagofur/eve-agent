@@ -165,10 +165,21 @@ export async function createContentPack(input: CreateContentPackInput) {
   });
 
   // Nightly signal for the owner: a pack is waiting for 1-click
-  // approve(+publish) on Telegram (cover preview + buttons).
-  notifyContentPackCreated(pack.id, pack.kind, pack.brand, pack.topic).catch((err) =>
-    console.error("Failed to notify content pack on Telegram:", err)
-  );
+  // approve(+publish) on Telegram (carousel album + full copy + buttons).
+  notifyContentPackCreated({
+    id: pack.id,
+    kind: pack.kind,
+    brand: pack.brand,
+    topic: pack.topic,
+    hook: pack.hook,
+    caption: pack.caption,
+    captionsByPlatform: pack.captionsByPlatform ?? null,
+    hashtags: pack.hashtags,
+    platforms: pack.platforms,
+    notes: pack.notes,
+    scheduledFor: pack.scheduledFor,
+    slideCount: extractedSlides.length,
+  }).catch((err) => console.error("Failed to notify content pack on Telegram:", err));
 
   return { success: true, pack: toSummary(pack), slides: extractedSlides };
 }
@@ -213,6 +224,13 @@ export async function getPackSlidePath(packId: string, index: number): Promise<s
   const files = await listPackSlideFiles(packId);
   const name = files[index];
   return name ? path.join(contentDirAbsolute(), packId, "slides", name) : null;
+}
+
+/** Pack row + on-disk slide count — the desktop preview modal fetches this. */
+export async function getPackDetail(packId: string) {
+  const pack = await getPackOrThrow(packId);
+  const slides = await listPackSlideFiles(packId);
+  return { pack: toSummary(pack), slideCount: slides.length };
 }
 
 export async function listContentPacks(status?: ContentPackStatus) {
