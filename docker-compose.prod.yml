@@ -46,6 +46,8 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
       - GOOGLE_CALENDAR_ID=${GOOGLE_CALENDAR_ID}
+      - PUBLIC_BOOKING_MAX_PER_SESSION=${PUBLIC_BOOKING_MAX_PER_SESSION:-2}
+      - PUBLIC_BOOKING_DAILY_CAP=${PUBLIC_BOOKING_DAILY_CAP:-8}
     volumes:
       - eve_workflow_data:/app/.eve/.workflow-data
       - /root/.config/eve-agent:/root/.config/eve-agent:rw

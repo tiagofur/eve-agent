@@ -19,6 +19,7 @@ import {
   type EnabledEveProxyConfig,
 } from "../../domain/eve-client";
 import { WEB_THREAD_KEY_PREFIX } from "../../domain/chat-origin";
+import { clientIp } from "../../domain/client-ip";
 import { surfaceVisitorMessage } from "../../domain/web-contacts";
 
 // Simple in-memory rate limiter for public chat turns per IP (e.g. 20 requests per 10 minutes)
@@ -191,8 +192,7 @@ publicChatRouter.post(
   "/threads",
   zValidator("json", z.object({ title: z.string().max(100).optional() })),
   async (c) => {
-    const rawIp = c.req.header("x-forwarded-for");
-    const ip = rawIp ? rawIp.split(",")[0]?.trim() || "127.0.0.1" : "127.0.0.1";
+    const ip = clientIp((name) => c.req.header(name));
     if (!checkRateLimit(ip)) {
       return c.json({ error: "Límite de mensajes alcanzado. Intenta de nuevo más tarde." }, 429);
     }
@@ -222,8 +222,7 @@ publicChatRouter.post(
     })
   ),
   async (c) => {
-    const rawIp = c.req.header("x-forwarded-for");
-    const ip = rawIp ? rawIp.split(",")[0]?.trim() || "127.0.0.1" : "127.0.0.1";
+    const ip = clientIp((name) => c.req.header(name));
     if (!checkRateLimit(ip)) {
       return c.json({ error: "Demasiadas peticiones. Por favor espera unos minutos." }, 429);
     }
