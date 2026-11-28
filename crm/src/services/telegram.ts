@@ -150,6 +150,48 @@ export async function sendTelegramVideo(
 }
 
 
+/**
+ * Telegram album (sendMediaGroup, up to 10 photos) sent as attached files —
+ * the carousel packs preview every slide here. Note the API takes no
+ * reply_markup on albums, so approval buttons travel on a follow-up message.
+ */
+export async function sendTelegramMediaGroup(
+  items: Array<{ base64: string; mime?: string }>
+): Promise<{ ok: boolean; skipped?: boolean; result?: any; error?: string }> {
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[Telegram] media group send skipped (NODE_ENV !== production)");
+    return { ok: false, skipped: true };
+  }
+  const { token, adminChatId } = getCredentials();
+  if (!token || !adminChatId) return { ok: false, error: "Telegram credentials not configured" };
+
+  const batch = items.slice(0, 10);
+  if (batch.length === 0) return { ok: false, error: "no media items" };
+
+  const formData = new FormData();
+  formData.append("chat_id", adminChatId);
+  formData.append(
+    "media",
+    JSON.stringify(batch.map((item, i) => ({ type: "photo", media: `attach://slide_${i}` })))
+  );
+  batch.forEach((item, i) => {
+    const blob = new Blob([Buffer.from(item.base64, "base64")], { type: item.mime ?? "image/png" });
+    formData.append(`slide_${i}`, blob, `slide_${i}.png`);
+  });
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMediaGroup`, {
+      method: "POST",
+      body: formData,
+    });
+    return (await res.json()) as any;
+  } catch (err: any) {
+    console.error("[Telegram] Failed to send telegram media group:", err);
+    return { ok: false, error: err.message };
+  }
+}
+
+
 export async function editTelegramMessage(
   messageId: number,
   chatId: number | string,
@@ -406,7 +448,12 @@ ${post.imagePrompt ? `<b>Prompt Visual (Nano Banana):</b>\n<code>${escapeHtml(po
     const isVideo = post.imageUrl.startsWith("data:video/") || post.imageUrl.includes("video/mp4");
     const rawB64 = post.imageUrl.includes(",") ? post.imageUrl.split(",")[1] : post.imageUrl;
     if (rawB64) {
-      const mediaCaption = `🎨 <b>NUEVA PUBLICACIÓN SOCIAL (${platformUpper})</b>\n\n<b>Tema:</b> ${escapeHtml(post.topic)}\n\n¿Deseas autorizar la publicación en ${platformUpper}?`;
+      // Photo captions cap at 1024 chars: compact copy preview instead of
+      // dropping the content entirely (photo messages used to show only the
+      // topic). The full text version remains available when no media.
+      const captionPreview = post.caption.slice(0, 700) + (post.caption.length > 700 ? "..." : "");
+      const hashtagsPreview = hashtagsFormatted ? `\n\n${hashtagsFormatted.slice(0, 120)}` : "";
+      const mediaCaption = `🎨 <b>NUEVA PUBLICACIÓN SOCIAL (${platformUpper})</b>\n\n<b>Tema:</b> ${escapeHtml(post.topic)}\n\n<b>Copy:</b>\n${escapeHtml(captionPreview)}${hashtagsPreview}\n\n¿Deseas autorizar la publicación en ${platformUpper}?`;
       if (isVideo) {
         return await sendTelegramVideo(rawB64, mediaCaption, keyboard);
       }
@@ -419,53 +466,139 @@ ${post.imagePrompt ? `<b>Prompt Visual (Nano Banana):</b>\n<code>${escapeHtml(po
   return await sendTelegramMessage(text, keyboard, "HTML");
 }
 
+/** What the pack notification needs. Kept structural to avoid an import cycle with the domain. */
+export interface ContentPackNotification {
+  id: string;
+  kind: string;
+  brand: string;
+  topic: string;
+  hook: string | null;
+  caption: string;
+  captionsByPlatform: Record<string, string> | null;
+  hashtags: string[];
+  platforms: string[];
+  notes: string | null;
+  scheduledFor: string | null;
+  slideCount: number;
+}
+
 /**
  * Nightly content-pipeline signal: a pack is waiting for the owner's decision.
- * One click on "Aprobar y publicar" reviews it AND publishes it to the
- * brand's Instagram; "Aprobar solo" leaves it approved in the CRM (manual
- * upload later, e.g. video packs or cross-posting).
+ * The owner reviews the whole creative here: carousel packs arrive as an
+ * album with every slide (image/video packs use the cover render), followed
+ * by a message with the complete copy (hook, captions, hashtags). One click
+ * on "Aprobar y publicar" reviews it AND publishes it to the brand's
+ * Instagram; "Aprobar solo" leaves it approved in the CRM (manual upload
+ * later, e.g. video packs or cross-posting).
  */
-export async function notifyContentPackCreated(
-  packId: string,
-  kind: string,
-  brand: string,
-  topic: string
-) {
-  const kindLabel = kind === "video" ? "VIDEO" : kind === "carousel" ? "CARRUSEL" : "IMAGEN";
+export async function notifyContentPackCreated(pack: ContentPackNotification) {
+  const kindLabel = pack.kind === "video" ? "VIDEO" : pack.kind === "carousel" ? "CARRUSEL" : "IMAGEN";
   const brandLabel =
-    brand === "pepinillo" ? "Pepinillo" : brand === "solennix" ? "Solennix" : "Creapolis.Dev";
-  const publishable = kind !== "video";
+    pack.brand === "pepinillo" ? "Pepinillo" : pack.brand === "solennix" ? "Solennix" : "Creapolis.Dev";
+  const publishable = pack.kind !== "video";
 
   const keyboard = publishable
     ? [
         [
-          { text: "✅ Aprobar y publicar (IG+FB)", callback_data: `approve_publish_pack:${packId}` },
-          { text: "👁 Aprobar solo", callback_data: `approve_pack:${packId}` },
+          { text: "✅ Aprobar y publicar (IG+FB)", callback_data: `approve_publish_pack:${pack.id}` },
+          { text: "👁 Aprobar solo", callback_data: `approve_pack:${pack.id}` },
         ],
-        [{ text: "❌ Rechazar", callback_data: `reject_pack:${packId}` }],
+        [{ text: "❌ Rechazar", callback_data: `reject_pack:${pack.id}` }],
       ]
-    : [[{ text: "👁 Aprobar solo", callback_data: `approve_pack:${packId}` }, { text: "❌ Rechazar", callback_data: `reject_pack:${packId}` }]];
+    : [[{ text: "👁 Aprobar solo", callback_data: `approve_pack:${pack.id}` }, { text: "❌ Rechazar", callback_data: `reject_pack:${pack.id}` }]];
 
-  const text = `📦 <b>NUEVO PACK (${kindLabel}) — ${escapeHtml(brandLabel)}</b>
-<i>Pipeline de contenido</i>
+  // Full content message: chunked over the 4096 cap, buttons on the last
+  // chunk (the callback handlers append the outcome to this same message).
+  const contentText = buildPackContentText(pack, kindLabel, brandLabel, publishable);
+  const sendContent = async () => {
+    const chunks = chunkTelegramText(contentText);
+    let last: any;
+    for (let i = 0; i < chunks.length; i++) {
+      last = await sendTelegramMessage(chunks[i]!, i === chunks.length - 1 ? keyboard : undefined, "HTML");
+    }
+    return last;
+  };
 
-<b>Tema:</b> ${escapeHtml(topic)}
-${publishable ? "Aprueba y publícalo en Instagram con un clic, o revisa los detalles en Desktop → Contenido." : "Los packs de video se descargan y suben manualmente (Desktop → Contenido)."}`;
-
-  // Cover preview when available (the designer renders slide 1 as cover).
+  // Media preview: the whole carousel as an album; fallback to the cover
+  // render (the designer's slide 1). Photo captions cap at 1024 chars, so
+  // the media only carries a short header — the copy lives in the text
+  // message that follows.
   try {
-    const { getPackCover } = await import("../domain/content-packs");
+    const { getPackCover, getPackSlidePath } = await import("../domain/content-packs");
     const { readFile } = await import("node:fs/promises");
-    const cover = await getPackCover(packId);
+
+    if (pack.kind === "carousel" && pack.slideCount > 0) {
+      const items: Array<{ base64: string; mime: string }> = [];
+      for (let i = 0; i < Math.min(pack.slideCount, 10); i++) {
+        const slidePath = await getPackSlidePath(pack.id, i);
+        if (!slidePath) break;
+        items.push({ base64: (await readFile(slidePath)).toString("base64"), mime: "image/png" });
+      }
+      if (items.length > 0) {
+        const album = await sendTelegramMediaGroup(items);
+        if (album.ok) {
+          return await sendContent();
+        }
+        console.error("[Telegram] Album send failed, falling back to cover:", album.error);
+      }
+    }
+
+    const cover = await getPackCover(pack.id);
     if (cover) {
       const data = await readFile(cover.absolutePath);
-      return await sendTelegramPhoto(data.toString("base64"), text, keyboard, "image/png");
+      await sendTelegramPhoto(
+        data.toString("base64"),
+        `📦 <b>NUEVO PACK (${kindLabel}) — ${escapeHtml(brandLabel)}</b>\n<b>Tema:</b> ${escapeHtml(pack.topic)}`,
+        undefined,
+        "image/png"
+      );
+      return await sendContent();
     }
   } catch (err) {
-    console.error("[Telegram] Cover preview failed, falling back to text:", err);
+    console.error("[Telegram] Pack media preview failed, falling back to text:", err);
   }
 
-  return await sendTelegramMessage(text, keyboard, "HTML");
+  return await sendContent();
+}
+
+/** The complete pack copy for Telegram (owner reviews without opening desktop). */
+function buildPackContentText(
+  pack: ContentPackNotification,
+  kindLabel: string,
+  brandLabel: string,
+  publishable: boolean
+): string {
+  const sections: string[] = [
+    `📦 <b>NUEVO PACK (${kindLabel}) — ${escapeHtml(brandLabel)}</b>\n<i>Pipeline de contenido</i>\n\n<b>Tema:</b> ${escapeHtml(pack.topic)}`,
+  ];
+  if (pack.hook) {
+    sections.push(`💡 <b>Hook:</b> ${escapeHtml(pack.hook)}`);
+  }
+  if (pack.captionsByPlatform && Object.keys(pack.captionsByPlatform).length > 0) {
+    for (const [platform, caption] of Object.entries(pack.captionsByPlatform)) {
+      sections.push(`📝 <b>Caption ${escapeHtml(platform.toUpperCase())}:</b>\n${escapeHtml(caption)}`);
+    }
+  } else {
+    sections.push(`📝 <b>Caption:</b>\n${escapeHtml(pack.caption)}`);
+  }
+  if (pack.hashtags.length > 0) {
+    sections.push(`🏷️ ${pack.hashtags.map((h) => `#${escapeHtml(h.replace(/^#/, ""))}`).join(" ")}`);
+  }
+  if (pack.platforms.length > 0) {
+    sections.push(`📱 <b>Plataformas:</b> ${pack.platforms.map((p) => escapeHtml(p)).join(", ")}`);
+  }
+  if (pack.scheduledFor) {
+    sections.push(`📅 <b>Programado:</b> ${escapeHtml(pack.scheduledFor)}`);
+  }
+  if (pack.notes) {
+    sections.push(`🗒️ <b>Notas:</b> ${escapeHtml(pack.notes)}`);
+  }
+  sections.push(
+    publishable
+      ? "Aprueba y publícalo en Instagram con un clic, o revisa los detalles en Desktop → Contenido."
+      : "Los packs de video se descargan y suben manualmente (Desktop → Contenido)."
+  );
+  return sections.join("\n\n");
 }
 
 let isPolling = false;
