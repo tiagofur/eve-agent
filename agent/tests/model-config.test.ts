@@ -2,21 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_MODEL_CATALOG,
   activeModelRoute,
-  modelCatalogSchema,
-  modelRoutingSchema,
   resolveModelId,
+  type ModelRouting,
   type ModelSettings,
 } from "../lib/model-config";
 
-const catalog = modelCatalogSchema.parse({ models: DEFAULT_MODEL_CATALOG }).models;
+const NO_ROUTING: ModelRouting = {
+  text: { orchestrator: null, marketingCopy: null, reasoning: "high" },
+  image: { post: null },
+  video: { model: null },
+};
+
+/** Saved settings over the default catalog; unset fields stay unassigned. */
+const withRouting = (patch: {
+  text?: Partial<ModelRouting["text"]>;
+  image?: Partial<ModelRouting["image"]>;
+  video?: Partial<ModelRouting["video"]>;
+}): ModelSettings => ({
+  catalog: DEFAULT_MODEL_CATALOG,
+  routing: {
+    text: { ...NO_ROUTING.text, ...patch.text },
+    image: { ...NO_ROUTING.image, ...patch.image },
+    video: { ...NO_ROUTING.video, ...patch.video },
+  },
+});
 
 const GEMINI = { GEMINI_API_KEY: "gemini-key" };
 const META = { META_API_KEY: "meta-key" };
-
-const withRouting = (routing: Record<string, unknown>): ModelSettings => ({
-  catalog,
-  routing: modelRoutingSchema.parse(routing),
-});
 
 describe("model-config resolution", () => {
   it("runs on the code defaults when nothing is saved", () => {
@@ -41,7 +53,7 @@ describe("model-config resolution", () => {
     expect(resolveModelId("marketingCopy", null, { ...META, META_MODEL_ID: "muse-next" })).toBe("muse-next");
   });
 
-  it("a saved routing wins over the env override and fills the rest with defaults", () => {
+  it("a saved routing wins over the env override and leaves the rest on defaults", () => {
     const settings = withRouting({
       text: { orchestrator: "gemini-4-hydrogen" },
       image: { post: "gemini-3-pro-image" },
@@ -63,6 +75,9 @@ describe("model-config resolution", () => {
     // An image model saved as the orchestrator.
     const settings = withRouting({ text: { orchestrator: "gemini-nano-banana-2.1" } });
     expect(resolveModelId("orchestrator", settings, GEMINI)).toBe("gemini-flash-latest");
+    // A model the catalog no longer lists.
+    const gone = withRouting({ text: { orchestrator: "gemini-removed" } });
+    expect(resolveModelId("orchestrator", gone, GEMINI)).toBe("gemini-flash-latest");
   });
 
   it("resolves the gateway escape hatch", () => {
@@ -75,28 +90,5 @@ describe("model-config resolution", () => {
 
   it("treats a keyless process as the Muse subscription", () => {
     expect(activeModelRoute({})).toEqual({ provider: "meta", keyed: false });
-  });
-});
-
-describe("model catalog schema", () => {
-  const model = (id: string) => ({
-    id,
-    modality: "text",
-    provider: "google",
-    label: id,
-  });
-
-  it("rejects duplicate ids", () => {
-    const parsed = modelCatalogSchema.safeParse({ models: [model("gemini-a"), model("gemini-a")] });
-    expect(parsed.success).toBe(false);
-  });
-
-  it("rejects empty or spaced ids", () => {
-    expect(modelCatalogSchema.safeParse({ models: [model("")] }).success).toBe(false);
-    expect(modelCatalogSchema.safeParse({ models: [model("gemini 4")] }).success).toBe(false);
-  });
-
-  it("rejects an unknown reasoning level", () => {
-    expect(modelRoutingSchema.safeParse({ text: { reasoning: "ultra" } }).success).toBe(false);
   });
 });

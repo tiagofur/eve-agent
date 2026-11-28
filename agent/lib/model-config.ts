@@ -1,8 +1,9 @@
 /**
  * Single source of truth for which model serves each use: the orchestrator,
  * the Marketing Studio copy, post images and video. Pure data and resolution
- * only — no provider client is built here — so the CRM imports this module
- * too and neither side keeps its own copy of the defaults.
+ * only — no dependencies, no provider client — so both package trees can
+ * import it (the CRM image ships `agent/` without the agent's node_modules;
+ * validation lives with each consumer, typed against the types below).
  *
  * Precedence for every use:
  *   1. The owner's saved routing (crm `app_settings`, edited from
@@ -13,7 +14,6 @@
  * A missing or unreachable setting therefore behaves exactly as before the
  * settings screen existed.
  */
-import { z } from "zod";
 
 export const MODEL_MODALITIES = ["text", "image", "video"] as const;
 export type ModelModality = (typeof MODEL_MODALITIES)[number];
@@ -34,64 +34,46 @@ export const REASONING_LEVELS = [
 ] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
-const modelIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(120)
-  .regex(/^\S+$/, "Model id cannot contain whitespace");
+/** Shared by every consumer's validation of catalog and routing ids. */
+export const MODEL_ID_MAX_LENGTH = 120;
+export const MODEL_ID_PATTERN = /^\S+$/;
+export const MODEL_LABEL_MAX_LENGTH = 80;
 
-export const catalogModelSchema = z.object({
+export interface CatalogModel {
   /** The provider's own model id (e.g. gemini-4-hydrogen); unique in the catalog. */
-  id: modelIdSchema,
-  modality: z.enum(MODEL_MODALITIES),
-  provider: z.enum(MODEL_PROVIDERS),
-  label: z.string().trim().min(1).max(80),
+  id: string;
+  modality: ModelModality;
+  provider: ModelProvider;
+  label: string;
   /** Tokens; null = not recorded (eve then compacts at the pinned default window). */
-  contextWindow: z.number().int().positive().nullable().default(null),
+  contextWindow: number | null;
   /** USD per million tokens, in and out. */
-  priceInPerM: z.number().min(0).nullable().default(null),
-  priceOutPerM: z.number().min(0).nullable().default(null),
+  priceInPerM: number | null;
+  priceOutPerM: number | null;
   /** USD per generated image or video clip. */
-  pricePerUnit: z.number().min(0).nullable().default(null),
-});
-export type CatalogModel = z.infer<typeof catalogModelSchema>;
+  pricePerUnit: number | null;
+}
 
-const hasUniqueIds = (models: CatalogModel[]) => new Set(models.map((model) => model.id)).size === models.length;
+export interface ModelCatalog {
+  models: CatalogModel[];
+}
 
-export const modelCatalogSchema = z.object({
-  models: z
-    .array(catalogModelSchema)
-    .min(1)
-    .refine(hasUniqueIds, { message: "Model ids must be unique in the catalog" }),
-});
-export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
-
-// prefault (not default): a missing block is parsed as {} so the leaf defaults
-// below still apply and a partial document always reads back complete.
-export const modelRoutingSchema = z.object({
-  text: z
-    .object({
-      /** Root agent (the brain behind chats, Telegram and crons). */
-      orchestrator: modelIdSchema.nullable().default(null),
-      /** Post captions the CRM writes with generateText. */
-      marketingCopy: modelIdSchema.nullable().default(null),
-      reasoning: z.enum(REASONING_LEVELS).default("high"),
-    })
-    .prefault({}),
-  image: z
-    .object({
-      /** Marketing Studio post image. Cover art stays per brand in brand_visual_configs. */
-      post: modelIdSchema.nullable().default(null),
-    })
-    .prefault({}),
-  video: z
-    .object({
-      model: modelIdSchema.nullable().default(null),
-    })
-    .prefault({}),
-});
-export type ModelRouting = z.infer<typeof modelRoutingSchema>;
+export interface ModelRouting {
+  text: {
+    /** Root agent (the brain behind chats, Telegram and crons). */
+    orchestrator: string | null;
+    /** Post captions the CRM writes with generateText. */
+    marketingCopy: string | null;
+    reasoning: ReasoningLevel;
+  };
+  image: {
+    /** Marketing Studio post image. Cover art stays per brand in brand_visual_configs. */
+    post: string | null;
+  };
+  video: {
+    model: string | null;
+  };
+}
 
 export const MODEL_USES = ["orchestrator", "marketingCopy", "image", "video"] as const;
 export type ModelUse = (typeof MODEL_USES)[number];
@@ -111,7 +93,7 @@ const model = (
   modality: ModelModality,
   provider: ModelProvider,
   label: string,
-  facts: Partial<Pick<CatalogModel, "contextWindow" | "priceInPerM" | "priceOutPerM" | "pricePerUnit">> = {}
+  facts: Partial<CatalogModel> = {}
 ): CatalogModel => ({
   id,
   modality,
@@ -205,8 +187,8 @@ function defaultModelId(modality: ModelModality, route: ModelRoute, env: NodeJS.
 /**
  * The model id serving `use` right now, or null when the active provider has
  * none for that modality (no video without a Gemini key). A saved model only
- * applies when its provider is the one this process has credentials for:
- * nothing may route work to a provider without a key.
+ * applies when its provider is the one this process has credentials for and
+ * it can serve the use: nothing may route work to a provider without a key.
  */
 export function resolveModelId(
   use: ModelUse,
