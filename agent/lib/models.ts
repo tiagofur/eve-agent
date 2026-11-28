@@ -1,18 +1,17 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createSubscriptionFetch } from "./meta-subscription";
+import { activeModelRoute, resolveModelId } from "./model-config";
 
 const META_BASE_URL = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
-const META_MODEL_ID = process.env.META_MODEL_ID || "muse-spark-1.3-contributor";
-
-// gemini-flash-latest tracks Google's current Flash alias; override with
-// GEMINI_MODEL_ID (e.g. gemini-3-flash, gemini-3.1-flash-lite) when needed.
-const GEMINI_MODEL_ID = process.env.GEMINI_MODEL_ID || "gemini-flash-latest";
 
 /**
  * Resolves the active model for Creapolis Eve Agents.
  *
- * Precedence (local-first, no surprise billing):
+ * The model id comes from the shared resolver (agent/lib/model-config.ts:
+ * saved routing → env override → code default, e.g. GEMINI_MODEL_ID or
+ * gemini-flash-latest). Which provider serves it follows the keys set here:
+ *
  *   0. GEMINI_API_KEY → Gemini API (pay-as-you-go). Set on the VPS when the
  *      billing/credit is active; removing the key falls back to Muse with no
  *      code change. Same key will power TTS/Veo later.
@@ -26,10 +25,18 @@ const GEMINI_MODEL_ID = process.env.GEMINI_MODEL_ID || "gemini-flash-latest";
  *      set META_API_KEY instead.
  */
 export function getAgentModel() {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    const google = createGoogleGenerativeAI({ apiKey: geminiKey });
-    return google(GEMINI_MODEL_ID);
+  const route = activeModelRoute();
+  // No saved routing at boot: the root agent picks it up per turn instead.
+  const modelId = resolveModelId("orchestrator", null);
+  if (!modelId) throw new Error(`No text model available for provider "${route.provider}"`);
+
+  if (route.provider === "google") {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
+    return google(modelId);
+  }
+
+  if (route.provider === "gateway") {
+    return modelId;
   }
 
   const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
@@ -39,11 +46,7 @@ export function getAgentModel() {
       baseURL: META_BASE_URL,
       apiKey: metaKey,
     });
-    return meta(META_MODEL_ID);
-  }
-
-  if (process.env.META_USE_SUBSCRIPTION === "0") {
-    return process.env.DEFAULT_MODEL || "openai/gpt-6-luna-fast";
+    return meta(modelId);
   }
 
   const metaSubscription = createOpenAI({
@@ -52,7 +55,7 @@ export function getAgentModel() {
     apiKey: "subscription",
     fetch: createSubscriptionFetch(),
   });
-  return metaSubscription(META_MODEL_ID);
+  return metaSubscription(modelId);
 }
 
 export const agentModel = getAgentModel();
@@ -65,10 +68,9 @@ export const agentModel = getAgentModel();
  * Override the tier with ECONOMY_MODEL_ID (e.g. gemini-3-flash-lite).
  */
 export function getEconomyModel() {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    const google = createGoogleGenerativeAI({ apiKey: geminiKey });
-    return google(process.env.ECONOMY_MODEL_ID || GEMINI_MODEL_ID);
+  if (activeModelRoute().provider === "google") {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
+    return google(process.env.ECONOMY_MODEL_ID || (resolveModelId("orchestrator", null) as string));
   }
   return getAgentModel();
 }
