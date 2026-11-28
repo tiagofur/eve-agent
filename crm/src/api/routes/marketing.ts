@@ -5,7 +5,7 @@ import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createSubscriptionFetch } from "../../../../agent/lib/meta-subscription";
-import { activeModelRoute, resolveModelId } from "../../../../agent/lib/model-config";
+import { activeModelRoute, resolveModelId, type ModelSettings } from "../../../../agent/lib/model-config";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import {
   createSocialPost,
@@ -14,6 +14,7 @@ import {
   publishSocialPost,
 } from "../../domain/marketing";
 import { pickMarketingContext, readDoc } from "../../domain/products";
+import { readModelSettings } from "../../domain/settings";
 
 export const marketingRouter = new Hono<{ Variables: AuthContextVariables }>();
 
@@ -24,12 +25,12 @@ function requireModelId(id: string | null): string {
 
 /**
  * Text client for the CRM's own generateText calls. The model id comes from
- * the shared resolver (agent/lib/model-config.ts: saved routing → env
- * override → code default); the provider precedence is the CRM's historical
- * one.
+ * the shared resolver (Configuración → Modelos: saved routing → env override
+ * → code default); the provider precedence is the CRM's historical one, so
+ * nothing moves until the owner saves.
  */
-function getTextModel() {
-  const marketingCopy = () => requireModelId(resolveModelId("marketingCopy", null));
+function getTextModel(settings: ModelSettings) {
+  const marketingCopy = () => requireModelId(resolveModelId("marketingCopy", settings));
 
   // Gemini first when the key exists (same precedence as agent/lib/models.ts);
   // removing GEMINI_API_KEY falls back to Meta with no code change.
@@ -115,7 +116,8 @@ marketingRouter.post(
   async (c) => {
     const { platform, topic, tone, targetAudience, format, brand, productSlug } = c.req.valid("json");
     const actor = c.get("actor");
-    const model = getTextModel();
+    const modelSettings = await readModelSettings();
+    const model = getTextModel(modelSettings);
 
     try {
       const isVideo = format === "video";
@@ -179,7 +181,7 @@ Respond ONLY with valid JSON following this schema:
       // media provider nothing is generated and the post goes out without
       // an image, as it always did.
       if (isVideo && geminiKey && visualPrompt) {
-        const videoModel = requireModelId(resolveModelId("video", null));
+        const videoModel = requireModelId(resolveModelId("video", modelSettings));
         try {
           const vidRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/interactions?key=${geminiKey}`,
@@ -218,7 +220,7 @@ Respond ONLY with valid JSON following this schema:
           console.error("Failed to generate video with Omni Flash:", vidErr);
         }
       } else if (geminiKey && visualPrompt) {
-        const imageModel = requireModelId(resolveModelId("image", null));
+        const imageModel = requireModelId(resolveModelId("image", modelSettings));
         try {
           const imgRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${geminiKey}`,
@@ -248,7 +250,7 @@ Respond ONLY with valid JSON following this schema:
           console.error("Failed to generate image with Nano Banana:", imgErr);
         }
       } else if (metaKey && visualPrompt) {
-        const imageModel = requireModelId(resolveModelId("image", null));
+        const imageModel = requireModelId(resolveModelId("image", modelSettings));
         try {
           const imgRes = await fetch(`${baseUrl}/images/generations`, {
             method: "POST",

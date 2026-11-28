@@ -274,6 +274,13 @@
       "when": 1795844443423,
       "tag": "0038_thin_silver_samurai",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1795844810731,
+      "tag": "0039_app_settings",
+      "breakpoints": true
     }
   ]
 }
