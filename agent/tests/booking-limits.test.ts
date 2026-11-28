@@ -100,9 +100,28 @@ describe("booking-limits", () => {
     const second = limiter.reserve(visitor("a"), T0);
     expect(second.ok).toBe(true);
     if (second.ok) second.release();
-    // Releasing twice never drives a counter negative.
-    if (second.ok) second.release();
     expect(limiter.reserve(visitor("a"), T0).ok).toBe(true);
+  });
+
+  it("a permit released twice does not take a unit from another booking", () => {
+    process.env.PUBLIC_BOOKING_DAILY_CAP = "3";
+    const limiter = createBookingLimiter();
+    const a = limiter.reserve(visitor("a"), T0);
+    const b = limiter.reserve(visitor("b"), T0);
+    const c = limiter.reserve(visitor("c"), T0);
+    expect([a.ok, b.ok, c.ok]).toEqual([true, true, true]);
+    if (a.ok) a.release();
+    if (a.ok) a.release();
+    // Only a's unit came back: one more booking fits, then the day is full again.
+    expect(limiter.reserve(visitor("d"), T0).ok).toBe(true);
+    expect(limiter.reserve(visitor("e"), T0)).toEqual({ ok: false, limit: "daily", cap: 3 });
+  });
+
+  it("two calls in the same turn cannot both take the last unit", () => {
+    process.env.PUBLIC_BOOKING_DAILY_CAP = "1";
+    const limiter = createBookingLimiter();
+    const [first, second] = [limiter.reserve(visitor("a"), T0), limiter.reserve(visitor("b"), T0)];
+    expect([first.ok, second.ok].filter(Boolean)).toHaveLength(1);
   });
 
   it("a release after the day rolled over leaves no negative counter", () => {
@@ -130,6 +149,10 @@ describe("booking-limits", () => {
       sessionCap: 2,
       dailyCap: 8,
     });
+    expect(
+      readBookingLimits({ PUBLIC_BOOKING_MAX_PER_SESSION: "-1", PUBLIC_BOOKING_DAILY_CAP: "2.5" })
+    ).toEqual({ sessionCap: 2, dailyCap: 8 });
+    expect(readBookingLimits({ PUBLIC_BOOKING_DAILY_CAP: " 4 " })).toEqual({ sessionCap: 2, dailyCap: 4 });
   });
 
   it("tells the model the appointment was never created", () => {

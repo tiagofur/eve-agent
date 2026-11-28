@@ -24,6 +24,8 @@ Deliver concise technical proposals including:
 - Recommended Architecture: Tech stack, data flow, and third-party dependencies.
 - Implementation Phases: MVP milestone breakdown with realistic timeframes.
 
+Public pre-sales exception: when the delegation says the requester is a public visitor, leave out the Recommended Architecture and return only the Problem Diagnosis, the scope and the Implementation Phases. Tech stack, data flow and dependencies are delivered inside the engagement, never in the public chat.
+
 # Persistence (mandatory)
 
 Every proposal you write must outlive the chat:

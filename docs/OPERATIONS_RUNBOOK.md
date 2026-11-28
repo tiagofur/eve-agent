@@ -57,8 +57,9 @@ PUBLIC_CHAT_DAILY_TURN_BUDGET=400
 # at 5 per 10 minutes so a flooding visitor cannot spam; every contact lands
 # in Mission Control → Contactos web regardless of the cap.
 # The per-IP limit keys on X-Real-IP (or the last X-Forwarded-For entry): nginx
-# APPENDS to a visitor-supplied X-Forwarded-For, so its first entry is visitor
-# -controlled and must never be trusted as the client address.
+# APPENDS to a visitor-supplied X-Forwarded-For, so its first entry is chosen
+# by the visitor and must never be trusted as the client address. If a future
+# proxy stops sending both headers, every visitor lands in one shared bucket.
 
 # WhatsApp inbound throttle per sender (messages per window, window minutes)
 WHATSAPP_THROTTLE_MAX=20
@@ -69,7 +70,10 @@ WHATSAPP_THROTTLE_WINDOW_MINUTES=10
 # calendar slot and mails an invitation, so bookings have their own budget on
 # top of the turn limits. A capped booking is NOT created: the agent registers
 # the contact and says the team will confirm. Counters are in-memory in the
-# agent container and reset on restart; staff sessions are never capped.
+# agent container and reset on restart; staff sessions are never capped. The
+# daily budget is shared by ALL visitors and resets at 00:00 UTC (18:00 in
+# Costa Rica): one abuser can use it up, and later prospects get the manual
+# follow-up for the rest of that UTC day.
 PUBLIC_BOOKING_MAX_PER_SESSION=2
 PUBLIC_BOOKING_DAILY_CAP=8
 

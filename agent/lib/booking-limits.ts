@@ -84,9 +84,13 @@ export function createBookingLimiter() {
       }
       bump(byDay, day, 1);
       bump(bySession, sessionId, 1);
+      let released = false;
       return {
         ok: true,
         release: () => {
+          // Idempotent: a second call would take a unit from another booking.
+          if (released) return;
+          released = true;
           bump(byDay, day, -1);
           bump(bySession, sessionId, -1);
         },
