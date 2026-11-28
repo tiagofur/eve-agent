@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { eq, like } from "drizzle-orm";
 import { pool, db } from "./db/client";
 import { apiKeys, appSettings, brandVisualConfigs } from "./db/schema";
@@ -219,5 +219,143 @@ describe("Settings API", () => {
     expect(new Date(history[0]!.createdAt).getTime()).toBeGreaterThanOrEqual(
       new Date(history[history.length - 1]!.createdAt).getTime()
     );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("reports what each use resolves to and which env overrides apply", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    vi.stubEnv("GEMINI_MODEL_ID", "gemini-4-carbon");
+    // A developer's .env.local may set these; keep the assertion hermetic.
+    vi.stubEnv("NANO_BANANA_MODEL_ID", "");
+    vi.stubEnv("OMNI_FLASH_MODEL_ID", "");
+    // The routing saved above still points the orchestrator at gemini-9-test.
+    const res = await app.request("/api/settings", { headers: opsHeaders });
+    const { runtime } = (await res.json()) as {
+      runtime: {
+        provider: string;
+        envOverrides: string[];
+        effective: Record<string, { modelId: string; source: string } | null>;
+      };
+    };
+
+    expect(runtime.provider).toBe("google");
+    expect(runtime.envOverrides).toEqual(["GEMINI_MODEL_ID"]);
+    expect(runtime.effective.orchestrator).toMatchObject({ modelId: "gemini-9-test", source: "saved" });
+    expect(runtime.effective.marketingCopy).toMatchObject({ modelId: "gemini-4-carbon", source: "env" });
+    expect(runtime.effective.image).toMatchObject({ modelId: "gemini-nano-banana-2.1", source: "default" });
+    expect(runtime.effective.video).toMatchObject({ modelId: "gemini-omni-1.2-flash", source: "default" });
+  });
+
+  const probe = (body: unknown, headers: Record<string, string> = ownerHeaders) =>
+    app.request("/api/settings/models/test", { method: "POST", headers, body: JSON.stringify(body) });
+
+  const googleJson = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  /** Replaces fetch, records every call and answers like Google. */
+  const stubGoogle = (respond: (url: string) => Response) => {
+    const calls: Array<{ url: string; method: string | undefined; apiKey: string | null }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const target = String(url);
+        calls.push({
+          url: target,
+          method: init?.method,
+          apiKey: new Headers(init?.headers).get("x-goog-api-key"),
+        });
+        return respond(target);
+      })
+    );
+    return calls;
+  };
+
+  const GOOGLE_MODELS = "https://generativelanguage.googleapis.com/v1beta/models";
+
+  it("models/test is owner-only and validates the request", async () => {
+    const valid = { provider: "google", modelId: "gemini-4-hydrogen", modality: "text" };
+    const anonymous = await app.request("/api/settings/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(valid),
+    });
+    expect(anonymous.status).toBe(401);
+    expect((await probe(valid, opsHeaders)).status).toBe(403);
+
+    expect((await probe({ ...valid, modelId: "" })).status).toBe(400);
+    const spaced = await probe({ ...valid, modelId: "gemini 4" });
+    expect(((await spaced.json()) as { error: string }).error).toContain("whitespace");
+    expect((await probe({ ...valid, provider: "openai" })).status).toBe(400);
+  });
+
+  it("models/test asks a text model for a few tokens", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const calls = stubGoogle((url) =>
+      url.endsWith(":generateContent")
+        ? googleJson(200, { candidates: [{ content: { parts: [{ text: "OK" }] } }] })
+        : googleJson(404, {})
+    );
+
+    const { result } = (await (
+      await probe({ provider: "google", modelId: "gemini-4-hydrogen", modality: "text" })
+    ).json()) as { result: { ok: boolean; sample?: string; latencyMs?: number } };
+
+    expect(result).toMatchObject({ ok: true, sample: "OK" });
+    expect(typeof result.latencyMs).toBe("number");
+    expect(calls).toEqual([
+      {
+        url: `${GOOGLE_MODELS}/gemini-4-hydrogen:generateContent`,
+        method: "POST",
+        apiKey: "test-key",
+      },
+    ]);
+  });
+
+  it("models/test only looks up image and video models, never generates", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    const calls = stubGoogle(() => googleJson(200, { name: "models/gemini-3-pro-image" }));
+
+    const { result } = (await (
+      await probe({ provider: "google", modelId: "gemini-3-pro-image", modality: "image" })
+    ).json()) as { result: { ok: boolean } };
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([{ url: `${GOOGLE_MODELS}/gemini-3-pro-image`, method: undefined, apiKey: "test-key" }]);
+  });
+
+  it("models/test explains an unknown model, a denied key and a missing key", async () => {
+    const text = { provider: "google", modelId: "gemini-4-hydrogen", modality: "text" };
+    const reasonOf = async (body: unknown) =>
+      ((await (await probe(body)).json()) as { result: { ok: boolean; reason: string } }).result;
+
+    vi.stubEnv("GEMINI_API_KEY", "test-key");
+    stubGoogle(() => googleJson(404, { error: { message: "not found" } }));
+    const unknown = await reasonOf({ provider: "google", modelId: "gemini-99-omega", modality: "video" });
+    expect(unknown.ok).toBe(false);
+    expect(unknown.reason).toContain("no reconoce");
+
+    vi.stubGlobal("fetch", vi.fn(async () => googleJson(403, { error: { message: "denied" } })));
+    const denied = await reasonOf(text);
+    expect(denied.ok).toBe(false);
+    expect(denied.reason).toContain("no tiene acceso");
+
+    vi.stubEnv("GEMINI_API_KEY", "");
+    const keyless = await reasonOf(text);
+    expect(keyless.ok).toBe(false);
+    expect(keyless.reason).toContain("GEMINI_API_KEY");
+  });
+
+  it("models/test has no probe for other providers", async () => {
+    const calls = stubGoogle(() => googleJson(200, {}));
+    const { result } = (await (
+      await probe({ provider: "meta", modelId: "muse-spark-1.3-contributor", modality: "text" })
+    ).json()) as { result: { ok: boolean | null } };
+
+    expect(result.ok).toBeNull();
+    expect(calls).toHaveLength(0);
   });
 });

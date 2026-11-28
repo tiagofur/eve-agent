@@ -89,15 +89,19 @@ export async function readSetting<K extends SettingsKey>(key: K): Promise<Settin
   return toRecord(key, row);
 }
 
-/** The models as they should run right now: saved routing, else defaults. */
-export async function readModelSettings(): Promise<ModelSettings> {
-  const settings = await listSettings();
+/** The models a settings list resolves with: saved routing, else defaults. */
+export function modelSettingsFrom(settings: SettingRecord[]): ModelSettings {
   const catalog = settings.find((setting) => setting.key === "models.catalog");
   const routing = settings.find((setting) => setting.key === "models.routing");
   return {
     catalog: (catalog?.value as ModelCatalog | undefined)?.models ?? [],
     routing: routing?.saved ? (routing.value as ModelRouting) : null,
   };
+}
+
+/** The models as they should run right now. */
+export async function readModelSettings(): Promise<ModelSettings> {
+  return modelSettingsFrom(await listSettings());
 }
 
 function assertRoutedModelsExist(routing: ModelRouting, catalog: ModelCatalog): void {
@@ -147,7 +151,7 @@ async function assertUsable(key: SettingsKey, value: unknown): Promise<void> {
   }
 }
 
-function formatIssues(error: z.ZodError): string {
+export function formatIssues(error: z.ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
     .join("; ");

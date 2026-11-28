@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  DEFAULT_REASONING,
   MODEL_ID_MAX_LENGTH,
   MODEL_ID_PATTERN,
   MODEL_LABEL_MAX_LENGTH,
@@ -27,6 +28,9 @@ const modelId = z
 
 const price = z.number().min(0).nullable().default(null);
 
+/** Enough for every Google/Meta family; keeps an owner-only write small. */
+const MAX_CATALOG_MODELS = 200;
+
 export const catalogModelSchema = z.object({
   id: modelId,
   modality: z.enum(MODEL_MODALITIES),
@@ -45,6 +49,7 @@ export const modelCatalogSchema = z.object({
   models: z
     .array(catalogModelSchema)
     .min(1)
+    .max(MAX_CATALOG_MODELS)
     .refine(hasUniqueIds, { message: "Model ids must be unique in the catalog" }),
 }) satisfies z.ZodType<ModelCatalog>;
 
@@ -55,7 +60,7 @@ export const modelRoutingSchema = z.object({
     .object({
       orchestrator: modelId.nullable().default(null),
       marketingCopy: modelId.nullable().default(null),
-      reasoning: z.enum(REASONING_LEVELS).default("high"),
+      reasoning: z.enum(REASONING_LEVELS).default(DEFAULT_REASONING),
     })
     .prefault({}),
   image: z.object({ post: modelId.nullable().default(null) }).prefault({}),
