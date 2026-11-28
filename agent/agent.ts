@@ -1,19 +1,27 @@
-import { defineAgent } from "eve";
-import { agentModel } from "./lib/models";
+import { defineAgent, defineDynamic } from "eve";
+import { DEFAULT_REASONING } from "./lib/model-config";
+import { orchestratorSelection } from "./lib/models";
+import { getModelSettings } from "./lib/settings";
 
 export default defineAgent({
-  model: agentModel,
-  reasoning: "high",
+  // The owner picks the orchestrator's model and reasoning in Configuración
+  // (crm app_settings, read through the CRM). Resolved once per turn: a change
+  // applies on the next turn, and a turn never switches models mid-way — that
+  // would drop prompt-cache reuse. Declared subagents keep the model resolved
+  // at boot (agent/lib/models.ts) until models-per-agent lands. The selection
+  // carries the model's context window, so eve still compiles compaction
+  // without an AI Gateway metadata lookup.
+  model: defineDynamic(async (ctx) => {
+    const settings = await ctx.memo(["model-settings", ctx.turn?.id ?? null], getModelSettings);
+    return orchestratorSelection(settings);
+  }),
+  // Inherited when a selection omits it; orchestratorSelection always sets it.
+  reasoning: DEFAULT_REASONING,
   build: {
     // Native .node addon: must stay external or `eve build` tries to bundle
     // the binary and fails with UNLOADABLE_DEPENDENCY.
     externalDependencies: ["@resvg/resvg-js"],
   },
-  // Verified 2026-10-15 against Meta Model API docs / OpenRouter / Vercel
-  // AI Gateway: muse-spark-1.3-contributor has a 1,048,576-token window.
-  // Lets `eve build` compile compaction without an AI Gateway metadata
-  // lookup for this subscription-routed model ID.
-  modelContextWindowTokens: 1048576,
   // No authored tool or subagent runs shell commands (coding agents are
   // dispatched through the CRM), so the built-in bash/read_file/write_file
   // defaults stay off to keep the public-facing surface minimal.
