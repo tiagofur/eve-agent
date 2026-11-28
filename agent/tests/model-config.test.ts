@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_MODEL_CATALOG,
+  activeModelRoute,
+  resolveModelId,
+  type ModelRouting,
+  type ModelSettings,
+} from "../lib/model-config";
+
+const NO_ROUTING: ModelRouting = {
+  text: { orchestrator: null, marketingCopy: null, reasoning: "high" },
+  image: { post: null },
+  video: { model: null },
+};
+
+/** Saved settings over the default catalog; unset fields stay unassigned. */
+const withRouting = (patch: {
+  text?: Partial<ModelRouting["text"]>;
+  image?: Partial<ModelRouting["image"]>;
+  video?: Partial<ModelRouting["video"]>;
+}): ModelSettings => ({
+  catalog: DEFAULT_MODEL_CATALOG,
+  routing: {
+    text: { ...NO_ROUTING.text, ...patch.text },
+    image: { ...NO_ROUTING.image, ...patch.image },
+    video: { ...NO_ROUTING.video, ...patch.video },
+  },
+});
+
+const GEMINI = { GEMINI_API_KEY: "gemini-key" };
+const META = { META_API_KEY: "meta-key" };
+
+describe("model-config resolution", () => {
+  it("runs on the code defaults when nothing is saved", () => {
+    expect(resolveModelId("orchestrator", null, GEMINI)).toBe("gemini-flash-latest");
+    expect(resolveModelId("marketingCopy", null, GEMINI)).toBe("gemini-flash-latest");
+    expect(resolveModelId("image", null, GEMINI)).toBe("gemini-nano-banana-2.1");
+    expect(resolveModelId("video", null, GEMINI)).toBe("gemini-omni-1.2-flash");
+    expect(resolveModelId("orchestrator", null, META)).toBe("muse-spark-1.3-contributor");
+    expect(resolveModelId("image", null, META)).toBe("muse-image-1.0");
+    // No video without a Gemini key.
+    expect(resolveModelId("video", null, META)).toBeNull();
+  });
+
+  it("keeps the legacy env overrides when nothing is saved", () => {
+    expect(resolveModelId("orchestrator", null, { ...GEMINI, GEMINI_MODEL_ID: "gemini-4-hydrogen" })).toBe(
+      "gemini-4-hydrogen"
+    );
+    expect(resolveModelId("image", null, { ...GEMINI, NANO_BANANA_MODEL_ID: "gemini-3-pro-image" })).toBe(
+      "gemini-3-pro-image"
+    );
+    expect(resolveModelId("video", null, { ...GEMINI, OMNI_FLASH_MODEL_ID: "omni-next" })).toBe("omni-next");
+    expect(resolveModelId("marketingCopy", null, { ...META, META_MODEL_ID: "muse-next" })).toBe("muse-next");
+  });
+
+  it("a saved routing wins over the env override and leaves the rest on defaults", () => {
+    const settings = withRouting({
+      text: { orchestrator: "gemini-4-hydrogen" },
+      image: { post: "gemini-3-pro-image" },
+    });
+    expect(resolveModelId("orchestrator", settings, { ...GEMINI, GEMINI_MODEL_ID: "gemini-4-neon" })).toBe(
+      "gemini-4-hydrogen"
+    );
+    expect(resolveModelId("marketingCopy", settings, GEMINI)).toBe("gemini-flash-latest");
+    expect(resolveModelId("image", settings, GEMINI)).toBe("gemini-3-pro-image");
+    expect(resolveModelId("video", settings, GEMINI)).toBe("gemini-omni-1.2-flash");
+  });
+
+  it("never routes to a provider this process has no key for", () => {
+    const settings = withRouting({ text: { orchestrator: "gemini-4-hydrogen" } });
+    expect(resolveModelId("orchestrator", settings, META)).toBe("muse-spark-1.3-contributor");
+  });
+
+  it("ignores a saved model that cannot serve the use", () => {
+    // An image model saved as the orchestrator.
+    const settings = withRouting({ text: { orchestrator: "gemini-nano-banana-2.1" } });
+    expect(resolveModelId("orchestrator", settings, GEMINI)).toBe("gemini-flash-latest");
+    // A model the catalog no longer lists.
+    const gone = withRouting({ text: { orchestrator: "gemini-removed" } });
+    expect(resolveModelId("orchestrator", gone, GEMINI)).toBe("gemini-flash-latest");
+  });
+
+  it("resolves the gateway escape hatch", () => {
+    expect(activeModelRoute({ META_USE_SUBSCRIPTION: "0" })).toEqual({ provider: "gateway" });
+    expect(resolveModelId("orchestrator", null, { META_USE_SUBSCRIPTION: "0" })).toBe("openai/gpt-6-luna-fast");
+    expect(
+      resolveModelId("orchestrator", null, { META_USE_SUBSCRIPTION: "0", DEFAULT_MODEL: "openai/custom" })
+    ).toBe("openai/custom");
+  });
+
+  it("treats a keyless process as the Muse subscription", () => {
+    expect(activeModelRoute({})).toEqual({ provider: "meta", keyed: false });
+  });
+});

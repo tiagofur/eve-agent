@@ -5,6 +5,7 @@ import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createSubscriptionFetch } from "../../../../agent/lib/meta-subscription";
+import { activeModelRoute, resolveModelId, type ModelSettings } from "../../../../agent/lib/model-config";
 import { requireScope, type AuthContextVariables } from "../auth-middleware";
 import {
   createSocialPost,
@@ -13,15 +14,29 @@ import {
   publishSocialPost,
 } from "../../domain/marketing";
 import { pickMarketingContext, readDoc } from "../../domain/products";
+import { readModelSettings } from "../../domain/settings";
 
 export const marketingRouter = new Hono<{ Variables: AuthContextVariables }>();
 
-function getModel() {
+function requireModelId(id: string | null): string {
+  if (!id) throw new Error("No model is configured for this use");
+  return id;
+}
+
+/**
+ * Text client for the CRM's own generateText calls. The model id comes from
+ * the shared resolver (Configuración → Modelos: saved routing → env override
+ * → code default); the provider precedence is the CRM's historical one, so
+ * nothing moves until the owner saves.
+ */
+function getTextModel(settings: ModelSettings) {
+  const marketingCopy = () => requireModelId(resolveModelId("marketingCopy", settings));
+
   // Gemini first when the key exists (same precedence as agent/lib/models.ts);
   // removing GEMINI_API_KEY falls back to Meta with no code change.
-  if (process.env.GEMINI_API_KEY) {
-    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
-    return google(process.env.GEMINI_MODEL_ID || "gemini-flash-latest");
+  if (activeModelRoute().provider === "google") {
+    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
+    return google(marketingCopy());
   }
 
   const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
@@ -31,7 +46,7 @@ function getModel() {
       baseURL: process.env.META_API_BASE_URL || "https://api.meta.ai/v1",
       apiKey: metaKey,
     });
-    return meta(process.env.META_MODEL_ID || "muse-spark-1.3-contributor");
+    return meta(marketingCopy());
   }
 
   // Explicit OpenAI key always wins when set.
@@ -56,7 +71,7 @@ function getModel() {
     apiKey: "subscription",
     fetch: createSubscriptionFetch(),
   });
-  return metaSubscription(process.env.META_MODEL_ID || "muse-spark-1.3-contributor");
+  return metaSubscription(marketingCopy());
 }
 
 // Product grounding block injected into the generation prompt. The docs are
@@ -101,7 +116,8 @@ marketingRouter.post(
   async (c) => {
     const { platform, topic, tone, targetAudience, format, brand, productSlug } = c.req.valid("json");
     const actor = c.get("actor");
-    const model = getModel();
+    const modelSettings = await readModelSettings();
+    const model = getTextModel(modelSettings);
 
     try {
       const isVideo = format === "video";
@@ -158,12 +174,14 @@ Respond ONLY with valid JSON following this schema:
       let imageUrl: string | undefined = undefined;
       const visualPrompt = parsed.videoPrompt || parsed.imagePrompt;
       const geminiKey = process.env.GEMINI_API_KEY;
-      const nanoBananaModel = process.env.NANO_BANANA_MODEL_ID || "gemini-nano-banana-2.1";
-      const omniFlashModel = process.env.OMNI_FLASH_MODEL_ID || "gemini-omni-1.2-flash";
       const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
       const baseUrl = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
+      // Each branch resolves its model where it runs: with no key for any
+      // media provider nothing is generated and the post goes out without
+      // an image, as it always did.
       if (isVideo && geminiKey && visualPrompt) {
+        const videoModel = requireModelId(resolveModelId("video", modelSettings));
         try {
           const vidRes = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/interactions?key=${geminiKey}`,
@@ -171,7 +189,7 @@ Respond ONLY with valid JSON following this schema:
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                model: omniFlashModel,
+                model: videoModel,
                 input: [{ type: "text", text: visualPrompt }],
                 response_format: {
                   type: "video",
@@ -196,15 +214,16 @@ Respond ONLY with valid JSON following this schema:
             }
           } else {
             const errText = await vidRes.text();
-            console.error(`Failed to generate video with ${omniFlashModel} (${vidRes.status}):`, errText);
+            console.error(`Failed to generate video with ${videoModel} (${vidRes.status}):`, errText);
           }
         } catch (vidErr) {
           console.error("Failed to generate video with Omni Flash:", vidErr);
         }
       } else if (geminiKey && visualPrompt) {
+        const imageModel = requireModelId(resolveModelId("image", modelSettings));
         try {
           const imgRes = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/${nanoBananaModel}:generateContent?key=${geminiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/${imageModel}:generateContent?key=${geminiKey}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -231,6 +250,7 @@ Respond ONLY with valid JSON following this schema:
           console.error("Failed to generate image with Nano Banana:", imgErr);
         }
       } else if (metaKey && visualPrompt) {
+        const imageModel = requireModelId(resolveModelId("image", modelSettings));
         try {
           const imgRes = await fetch(`${baseUrl}/images/generations`, {
             method: "POST",
@@ -239,7 +259,7 @@ Respond ONLY with valid JSON following this schema:
               Authorization: `Bearer ${metaKey}`,
             },
             body: JSON.stringify({
-              model: "muse-image-1.0",
+              model: imageModel,
               prompt: visualPrompt,
               n: 1,
               size: "1024x1024",
@@ -251,7 +271,7 @@ Respond ONLY with valid JSON following this schema:
             imageUrl = `data:image/webp;base64,${b64}`;
           }
         } catch (imgErr) {
-          console.error("Failed to generate image with muse-image-1.0:", imgErr);
+          console.error(`Failed to generate image with ${imageModel}:`, imgErr);
         }
       }
 

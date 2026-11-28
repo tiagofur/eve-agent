@@ -94,15 +94,10 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
 
 ## 3. Core Subsystems
 
-### A. AI Engine: Meta Model API (Muse Suite)
-- **Base URL:** `https://api.meta.ai/v1`
-- **Text & Reasoning Model:** `muse-spark-1.3-contributor`
-  - Used by Eve Orchestrator and all declared subagents (13 as of 2026-11: analyst, biller, closer, designer, intel, legal, marketing, pm, prospector, reporter, solutions, strategist, support) — the single brain behind every channel (CRM `/api/chat` proxies to it; no inline LLM loop remains there).
-  - Configured via `@ai-sdk/openai` compatibility layer in `agent/lib/models.ts`.
-- **Image Generation Model:** `muse-image-1.0`
-  - Generates native 1024x1024 WebP renders via `POST https://api.meta.ai/v1/images/generations`.
-  - Dispatched directly as high-resolution Telegram photos and displayed in the macOS Desktop App.
-- **Fallback:** when `META_API_KEY` is absent, `agent/lib/models.ts` falls back to `DEFAULT_MODEL` (default `openai/gpt-6-luna-fast`) through the default gateway.
+### A. AI Engine: model resolution
+- **Single resolver:** `agent/lib/model-config.ts` (dependency-free, shared with the CRM) decides which model serves each use — orchestrator, Marketing Studio copy, post image, video. Precedence: the owner's saved routing (see runtime settings below) → env override (`GEMINI_MODEL_ID`, `NANO_BANANA_MODEL_ID`, `OMNI_FLASH_MODEL_ID`, `META_MODEL_ID`) → code default. A saved model only applies when its provider is the one the process holds credentials for.
+- **Provider by credentials:** `GEMINI_API_KEY` → Gemini API (defaults `gemini-flash-latest`, `gemini-nano-banana-2.1`, `gemini-omni-1.2-flash`); else `META_API_KEY` / `MODEL_API_KEY` → Meta Model API (`https://api.meta.ai/v1`, `muse-spark-1.3-contributor`, `muse-image-1.0`); else the Muse Code subscription, or the gateway id `DEFAULT_MODEL` when `META_USE_SUBSCRIPTION=0`. Clients are built in `agent/lib/models.ts` (agent) and `crm/src/api/routes/marketing.ts` (CRM).
+- Used by the Eve Orchestrator and all 13 declared subagents (analyst, biller, closer, designer, intel, legal, marketing, pm, prospector, reporter, solutions, strategist, support); `intel`, `analyst` and `biller` take the economy tier (`ECONOMY_MODEL_ID`, else the primary model).
 
 ### B. CRM Backend (`crm/`)
 - **Runtime:** Node.js 26 + TypeScript + `tsx watch`
@@ -117,6 +112,7 @@ The entire system adheres strictly to the **Human-in-the-Loop (HITL)** architect
   - CORS configured with `origin: "*"` to support WebKit/Tauri desktop origins.
 - **Scheduled tasks (`schedules` / `schedule_runs`):** agent cronjobs live in the database and are dispatched by a minute tick (`crm/src/services/schedule-dispatcher.ts`). Rows are `kind=agent` (EVE orchestrator turns) or `kind=local` (registered CRM handlers like `followup_digest`/`metrics_collector` — no LLM, run even without EVE, 12h grace). Each agent run records the tokens its turn spent — delegated subagents included — read from the stream's `usage.recorded` facts; `GET /api/schedules` adds each task's trailing-week total as `usage7d`. Tasks carry a `category` block (content/reports/sales/system/other) the desktop groups by; `PATCH /api/schedules/category/:category` pauses or resumes a whole block, re-arming next runs on resume.
 - **Web contacts inbox (`chat_threads.reviewed_at`):** threads keyed `public:<uuid>` are the visitors of the creapolis.dev chat widget; everything else (desktop chats, the Telegram orchestrator thread, schedule runs) is internal. `GET /api/chat/threads` reports each thread's `origin` and filters by it, and `POST /api/chat` refuses a web thread. `/api/web-contacts` is the owner's review inbox over the web chats: list (first message + size), unread count, mark reviewed, and the conversation. A visitor writing again on a reviewed thread returns it to "sin revisar"; the first message of a chat pages the owner's Telegram (`crm/src/services/web-contact-page.ts`, capped at 5 pages per 10 minutes).
+- **Runtime settings (`app_settings`):** configuration the owner edits from Mission Control → Configuración; today the model catalog and the model routing (orchestrator, Marketing Studio copy, post image, video). One row per JSON document. `crm/src/domain/settings.ts` declares each key's schema (`domain/model-schemas.ts`) and code default, typed against the shared `agent/lib/model-config.ts` — the single resolver both the agent and the CRM use. A missing row means the previous behavior, so a deploy changes nothing until the owner saves. Reads need the `ops` scope; writes are `owner`-only (the agent cannot change the models it runs on), must leave every routed model resolvable, and leave an audit event; `GET /api/settings/history/:key` lists them.
 
 ### C. macOS Desktop App (`desktop/`)
 - **Runtime:** Tauri v2 + Rust
