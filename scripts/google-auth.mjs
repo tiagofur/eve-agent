@@ -28,10 +28,16 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 
-const SCOPE = "https://www.googleapis.com/auth/calendar";
+const SCOPES = [
+  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
+];
+const SCOPE = SCOPES.join(" ");
+const DEFAULT_LOGIN_HINT = "creapolis.mx@gmail.com";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+const CALLBACK_TIMEOUT_MS = 15 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 1000;
 
 function credentialPath() {
@@ -91,6 +97,7 @@ const server = createServer();
 server.listen(0, "127.0.0.1", () => {
   const port = server.address().port;
   const redirectUri = `http://127.0.0.1:${port}/callback`;
+  const loginHint = process.env.GOOGLE_LOGIN_HINT?.trim() || DEFAULT_LOGIN_HINT;
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -98,10 +105,11 @@ server.listen(0, "127.0.0.1", () => {
     scope: SCOPE,
     access_type: "offline",
     prompt: "consent",
+    ...(loginHint ? { login_hint: loginHint } : {}),
   });
   console.log("Abre esta URL en tu navegador y aprueba el acceso:\n");
   console.log(`${AUTH_URL}?${params.toString()}\n`);
-  console.log("Esperando aprobación (5 minutos)...");
+  console.log(`Esperando aprobación (${CALLBACK_TIMEOUT_MS / 60000} minutos)...`);
 
   const timer = setTimeout(() => {
     console.error("Tiempo agotado esperando aprobación. Reintenta.");
@@ -117,7 +125,9 @@ server.listen(0, "127.0.0.1", () => {
     if (!code) {
       res.end("Acceso denegado o incompleto. Puedes cerrar esta ventana y reintentar.");
       clearTimeout(timer);
-      console.error(`Google respondió sin código (${error ?? "desconocido"}).`);
+      console.error(
+        `Google respondió sin código (${error ?? "desconocido"}). URL completa del callback: ${req.url}`
+      );
       server.close();
       process.exit(1);
       return;

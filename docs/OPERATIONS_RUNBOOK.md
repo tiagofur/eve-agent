@@ -228,9 +228,9 @@ panel, which tests and stores the API URL + owner key in localStorage as `CREAPO
 `CREAPOLIS_OWNER_KEY`; these win over the build-time values, and "Valores compilados" restores them.
 Prefer an `https://` target: the macOS webview may block plain-HTTP API calls from the installed app.
 
-### Google Calendar one-time consent (`schedule_consultation`)
-1. Google Cloud → project → enable **Google Calendar API**.
-2. OAuth consent screen → External → test mode → add yourself as test user.
+### Google Calendar & Gmail one-time consent (`creapolis.mx@gmail.com`)
+1. Google Cloud → project → enable **Google Calendar API** and **Gmail API**.
+2. OAuth consent screen → External → test mode → add `creapolis.mx@gmail.com` as test user.
 3. Credentials → Create Credentials → OAuth client ID → **Desktop app** → copy ID + secret into `.env.local` above.
 4. Run the loopback consent flow (opens browser approval, stores the refresh token at `~/.config/eve-agent/google-calendar.json`, never committed):
 ```bash
