@@ -59,7 +59,7 @@ describe("Visual configs API", () => {
         artDirection: "escenas 3D minimalistas, fondo oscuro, sin texto en la imagen",
         coverTitleMaxWords: 6,
         showLogo: true,
-        imageModel: "gemini-nano-banana-2.1",
+        imageModel: "gemini-3-pro-image",
         generationMode: "batch",
       }),
     });
