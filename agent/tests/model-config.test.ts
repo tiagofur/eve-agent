@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_MODEL_CATALOG,
+  activeEnvOverrides,
   activeModelRoute,
+  contextWindowFor,
+  resolveModel,
   resolveModelId,
   type ModelRouting,
   type ModelSettings,
@@ -90,5 +94,34 @@ describe("model-config resolution", () => {
 
   it("treats a keyless process as the Muse subscription", () => {
     expect(activeModelRoute({})).toEqual({ provider: "meta", keyed: false });
+  });
+});
+
+describe("resolveModel provenance", () => {
+  it("says where each model comes from", () => {
+    const settings = withRouting({ text: { orchestrator: "gemini-4-hydrogen" } });
+    expect(resolveModel("orchestrator", settings, GEMINI)).toEqual({
+      modelId: "gemini-4-hydrogen",
+      provider: "google",
+      source: "saved",
+    });
+    expect(resolveModel("orchestrator", null, { ...GEMINI, GEMINI_MODEL_ID: "gemini-4-neon" })).toMatchObject({
+      source: "env",
+    });
+    expect(resolveModel("orchestrator", null, GEMINI)).toMatchObject({ source: "default" });
+  });
+
+  it("lists the env overrides in force for the active provider", () => {
+    expect(activeEnvOverrides({ ...GEMINI, GEMINI_MODEL_ID: "gemini-4-neon" })).toEqual(["GEMINI_MODEL_ID"]);
+    // Only the active provider's overrides count: Meta's key here, not Gemini's.
+    expect(activeEnvOverrides({ META_API_KEY: "m", GEMINI_MODEL_ID: "x" })).toEqual([]);
+    expect(activeEnvOverrides(GEMINI)).toEqual([]);
+  });
+
+  it("uses the catalog's context window, else the pinned default", () => {
+    const flash = DEFAULT_MODEL_CATALOG[0]!;
+    expect(contextWindowFor([{ ...flash, contextWindow: 200_000 }], flash.id)).toBe(200_000);
+    expect(contextWindowFor(DEFAULT_MODEL_CATALOG, flash.id)).toBe(DEFAULT_CONTEXT_WINDOW_TOKENS);
+    expect(contextWindowFor(null, "anything")).toBe(DEFAULT_CONTEXT_WINDOW_TOKENS);
   });
 });

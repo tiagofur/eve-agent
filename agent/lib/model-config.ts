@@ -34,6 +34,12 @@ export const REASONING_LEVELS = [
 ] as const;
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
 
+/** Reasoning effort when the owner has not chosen one. */
+export const DEFAULT_REASONING: ReasoningLevel = "high";
+
+/** Context window eve compacts at when the catalog does not record one. */
+export const DEFAULT_CONTEXT_WINDOW_TOKENS = 1_048_576;
+
 /** Shared by every consumer's validation of catalog and routing ids. */
 export const MODEL_ID_MAX_LENGTH = 120;
 export const MODEL_ID_PATTERN = /^\S+$/;
@@ -178,27 +184,63 @@ export function savedModelId(use: ModelUse, routing: ModelRouting | null): strin
   }
 }
 
-function defaultModelId(modality: ModelModality, route: ModelRoute, env: NodeJS.ProcessEnv): string | null {
+export type ModelSource = "saved" | "env" | "default";
+
+export interface ResolvedModel {
+  modelId: string;
+  provider: ModelRoute["provider"];
+  /** saved = the owner's routing; env = legacy override; default = code default. */
+  source: ModelSource;
+}
+
+function defaultModel(modality: ModelModality, route: ModelRoute, env: NodeJS.ProcessEnv): ResolvedModel | null {
   const override = ENV_MODEL_OVERRIDE[route.provider][modality];
-  if (override && env[override]) return env[override];
-  return DEFAULT_MODEL_IDS[route.provider][modality] ?? null;
+  if (override && env[override]) {
+    return { modelId: env[override]!, provider: route.provider, source: "env" };
+  }
+  const modelId = DEFAULT_MODEL_IDS[route.provider][modality];
+  return modelId ? { modelId, provider: route.provider, source: "default" } : null;
 }
 
 /**
- * The model id serving `use` right now, or null when the active provider has
+ * The model serving `use` right now, or null when the active provider has
  * none for that modality (no video without a Gemini key). A saved model only
  * applies when its provider is the one this process has credentials for and
  * it can serve the use: nothing may route work to a provider without a key.
  */
+export function resolveModel(
+  use: ModelUse,
+  settings: ModelSettings | null,
+  env: NodeJS.ProcessEnv = process.env
+): ResolvedModel | null {
+  const route = activeModelRoute(env);
+  const modality = useModality(use);
+  const saved = savedModelId(use, settings?.routing ?? null);
+  const entry = saved ? settings?.catalog.find((model) => model.id === saved) : undefined;
+  if (entry && entry.modality === modality && entry.provider === route.provider) {
+    return { modelId: entry.id, provider: route.provider, source: "saved" };
+  }
+  return defaultModel(modality, route, env);
+}
+
+/** `resolveModel` as a bare id. */
 export function resolveModelId(
   use: ModelUse,
   settings: ModelSettings | null,
   env: NodeJS.ProcessEnv = process.env
 ): string | null {
+  return resolveModel(use, settings, env)?.modelId ?? null;
+}
+
+/** Names of the legacy env overrides in force for the active provider. */
+export function activeEnvOverrides(env: NodeJS.ProcessEnv = process.env): string[] {
   const route = activeModelRoute(env);
-  const modality = useModality(use);
-  const saved = savedModelId(use, settings?.routing ?? null);
-  const entry = saved ? settings?.catalog.find((model) => model.id === saved) : undefined;
-  if (entry && entry.modality === modality && entry.provider === route.provider) return entry.id;
-  return defaultModelId(modality, route, env);
+  return Object.values(ENV_MODEL_OVERRIDE[route.provider]).filter(
+    (name): name is string => !!name && !!env[name]
+  );
+}
+
+/** The model's context window as eve needs it for compaction. */
+export function contextWindowFor(catalog: CatalogModel[] | null | undefined, modelId: string): number {
+  return catalog?.find((model) => model.id === modelId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
 }

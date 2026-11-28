@@ -1,16 +1,21 @@
+import type { ModelSelection } from "eve/models";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createSubscriptionFetch } from "./meta-subscription";
-import { activeModelRoute, resolveModelId } from "./model-config";
+import {
+  DEFAULT_REASONING,
+  activeModelRoute,
+  contextWindowFor,
+  resolveModel,
+  type ModelRoute,
+  type ModelSettings,
+  type ModelUse,
+} from "./model-config";
 
 const META_BASE_URL = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
 
 /**
- * Resolves the active model for Creapolis Eve Agents.
- *
- * The model id comes from the shared resolver (agent/lib/model-config.ts:
- * saved routing → env override → code default, e.g. GEMINI_MODEL_ID or
- * gemini-flash-latest). Which provider serves it follows the keys set here:
+ * Which provider serves a model id follows the keys set in the environment:
  *
  *   0. GEMINI_API_KEY → Gemini API (pay-as-you-go). Set on the VPS when the
  *      billing/credit is active; removing the key falls back to Muse with no
@@ -24,38 +29,45 @@ const META_BASE_URL = process.env.META_API_BASE_URL || "https://api.meta.ai/v1";
  *      re-minted from the browser session on this machine; a deployment must
  *      set META_API_KEY instead.
  */
-export function getAgentModel() {
-  const route = activeModelRoute();
-  // Nothing is saved yet, so this is the env override or the code default.
-  const modelId = resolveModelId("orchestrator", null);
-  if (!modelId) throw new Error(`No text model available for provider "${route.provider}"`);
-
+function buildModelClient(route: ModelRoute, modelId: string, env: NodeJS.ProcessEnv = process.env) {
   if (route.provider === "google") {
-    const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
-    return google(modelId);
+    return createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY! })(modelId);
   }
 
   if (route.provider === "gateway") {
     return modelId;
   }
 
-  const metaKey = process.env.META_API_KEY || process.env.MODEL_API_KEY;
+  const metaKey = env.META_API_KEY || env.MODEL_API_KEY;
   if (metaKey) {
-    const meta = createOpenAI({
-      name: "meta",
-      baseURL: META_BASE_URL,
-      apiKey: metaKey,
-    });
-    return meta(modelId);
+    return createOpenAI({ name: "meta", baseURL: META_BASE_URL, apiKey: metaKey })(modelId);
   }
 
-  const metaSubscription = createOpenAI({
+  return createOpenAI({
     name: "meta-subscription",
     baseURL: META_BASE_URL,
     apiKey: "subscription",
     fetch: createSubscriptionFetch(),
-  });
-  return metaSubscription(modelId);
+  })(modelId);
+}
+
+/** Every provider has a text default, so a text use always resolves. */
+function requireModel(use: ModelUse, settings: ModelSettings | null, env: NodeJS.ProcessEnv) {
+  const resolved = resolveModel(use, settings, env);
+  if (!resolved) throw new Error(`No ${use} model available for provider "${activeModelRoute(env).provider}"`);
+  return resolved;
+}
+
+/**
+ * The model id comes from the shared resolver (agent/lib/model-config.ts:
+ * saved routing → env override → code default, e.g. GEMINI_MODEL_ID or
+ * gemini-flash-latest). Subagents resolve it once here, when the process
+ * starts, without the saved routing: only the orchestrator (below) reads the
+ * owner's settings per turn until models-per-agent lands.
+ */
+export function getAgentModel() {
+  const resolved = requireModel("orchestrator", null, process.env);
+  return buildModelClient(activeModelRoute(), resolved.modelId);
 }
 
 export const agentModel = getAgentModel();
@@ -70,9 +82,27 @@ export const agentModel = getAgentModel();
 export function getEconomyModel() {
   if (activeModelRoute().provider === "google") {
     const google = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY! });
-    return google(process.env.ECONOMY_MODEL_ID || (resolveModelId("orchestrator", null) as string));
+    return google(process.env.ECONOMY_MODEL_ID || requireModel("orchestrator", null, process.env).modelId);
   }
   return getAgentModel();
 }
 
 export const economyModel = getEconomyModel();
+
+/**
+ * The orchestrator's model for one model call: the owner's saved routing
+ * (Configuración → Modelos) with the reasoning effort and context window that
+ * go with it. With nothing saved — or when the CRM cannot be reached — it is
+ * the env/code model, exactly as before the settings screen.
+ */
+export function orchestratorSelection(
+  settings: ModelSettings | null,
+  env: NodeJS.ProcessEnv = process.env
+): ModelSelection {
+  const resolved = requireModel("orchestrator", settings, env);
+  return {
+    model: buildModelClient(activeModelRoute(env), resolved.modelId, env),
+    reasoning: settings?.routing?.text.reasoning ?? DEFAULT_REASONING,
+    modelContextWindowTokens: contextWindowFor(settings?.catalog, resolved.modelId),
+  };
+}
