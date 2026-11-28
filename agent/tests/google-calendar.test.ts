@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { buildEventBody, createEventUrl, type ConsultationInput, type ResolvedSlot } from "../lib/google-calendar";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import {
+  buildEventBody,
+  createEventUrl,
+  scheduleConsultation,
+  type ConsultationInput,
+  type ResolvedSlot,
+} from "../lib/google-calendar";
 
 const SLOT: ResolvedSlot = {
   startRfc3339: "2030-01-15T10:00:00-06:00",
@@ -11,6 +17,7 @@ const INPUT: ConsultationInput = {
   clientName: "Ana Ruiz",
   contact: "ana.ruiz@ejemplo.com",
   discussionTopics: ["Automatización de leads", "Agente de WhatsApp"],
+  invite: true,
 };
 
 describe("google-calendar event payloads", () => {
@@ -43,5 +50,88 @@ describe("google-calendar event payloads", () => {
     const body = buildEventBody({ ...INPUT, contact: "+5511999999999" }, SLOT);
     expect("attendees" in body).toBe(false);
     expect(body.description).toContain("Contacto: +5511999999999");
+  });
+});
+
+describe("scheduleConsultation invitation behavior", () => {
+  const ENV = { clientId: "cid", clientSecret: "sec", refreshToken: "rtok", calendarId: "qa@group.calendar.google.com" };
+  const NOW = new Date("2030-01-10T15:00:00Z");
+  let inserts: Array<{ url: string; body: any }> = [];
+
+  /** Stub Google: token refresh, an empty freeBusy calendar, and event inserts. */
+  function stubGoogle() {
+    inserts = [];
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.startsWith("https://oauth2.googleapis.com/token")) {
+        return new Response(JSON.stringify({ access_token: "atok" }), { status: 200 });
+      }
+      if (u.includes("/freeBusy")) {
+        return new Response(
+          JSON.stringify({ calendars: { [ENV.calendarId]: { busy: [] } } }),
+          { status: 200 }
+        );
+      }
+      if (u.includes("/events?")) {
+        inserts.push({ url: u, body: JSON.parse(String(init?.body)) });
+        return new Response(
+          JSON.stringify({ id: "evt-1", hangoutLink: "https://meet.google.com/qa-link", htmlLink: "https://calendar.google.com/qa-link" }),
+          { status: 200 }
+        );
+      }
+      throw new Error(`fetch inesperado: ${u}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const book = (over: Partial<Omit<ConsultationInput, "invite">> & { invite: boolean }) =>
+    scheduleConsultation(
+      {
+        clientName: INPUT.clientName,
+        contact: INPUT.contact,
+        discussionTopics: INPUT.discussionTopics,
+        preferredDate: "2030-06-15",
+        preferredTimeSlot: "10:00 AM",
+        now: NOW,
+        ...over,
+      },
+      ENV
+    );
+
+  it("a public booking (invite:false) creates the event without attendee and marks the pending invite", async () => {
+    stubGoogle();
+    const res = await book({ invite: false });
+    expect(res.status).toBe("scheduled");
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0].url).toContain("sendUpdates=none");
+    expect("attendees" in inserts[0].body).toBe(false);
+    expect(inserts[0].body.description).toContain("Contacto: ana.ruiz@ejemplo.com");
+    expect(res.pendingInvite).toBe("ana.ruiz@ejemplo.com");
+    expect(res.message).toContain("Invitación NO enviada automáticamente");
+    expect(res.meetLink).toBe("https://meet.google.com/qa-link");
+  });
+
+  it("a staff booking (invite:true) attaches the attendee and reports the invitation", async () => {
+    stubGoogle();
+    const res = await book({ invite: true });
+    expect(res.status).toBe("scheduled");
+    expect(inserts[0].url).toContain("sendUpdates=all");
+    expect(inserts[0].body.attendees).toEqual([{ email: "ana.ruiz@ejemplo.com" }]);
+    expect(res.pendingInvite).toBeUndefined();
+    expect(res.message).toContain("Invitación enviada a ana.ruiz@ejemplo.com");
+  });
+
+  it("without a usable email the event has no attendee and asks for manual follow-up", async () => {
+    stubGoogle();
+    const res = await book({ invite: false, contact: "+5511999999999" });
+    expect(res.status).toBe("scheduled");
+    expect("attendees" in inserts[0].body).toBe(false);
+    expect(res.pendingInvite).toBeUndefined();
+    expect(res.message).toContain("avísale manualmente");
   });
 });

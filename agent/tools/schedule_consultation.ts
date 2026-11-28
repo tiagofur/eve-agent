@@ -15,7 +15,7 @@ export default defineTool({
     "appointment was NOT created — do not retry or offer other slots; register the contact instead.",
   inputSchema: z.object({
     clientName: z.string().describe("Name of the prospective client"),
-    contact: z.string().describe("Email or WhatsApp number to send the invitation to"),
+    contact: z.string().describe("Email or WhatsApp number to confirm the appointment (staff sessions email a Calendar invitation; visitor sessions record it for the team's manual follow-up)"),
     preferredDate: z.string().describe("Preferred date or day of the week (e.g. 2026-10-20, Next Monday morning)"),
     preferredTimeSlot: z.string().describe("Preferred time slot (e.g. 10:00 AM CST, afternoon)"),
     discussionTopics: z.array(z.string()).describe("List of topics to cover in the call"),

@@ -296,13 +296,14 @@ export interface ConsultationInput {
   preferredTimeSlot?: string;
   now?: Date;
   /**
-   * Send the Google Calendar invitation email to the contact. Defaults to
-   * true. Public sessions pass false: the event is created WITHOUT an
-   * attendee, so no email ever leaves the owner's account from a request an
-   * anonymous visitor typed — the team adds the guest from Calendar (that
-   * invitation is the confirmation the prospect receives).
+   * Send the Google Calendar invitation email to the contact. REQUIRED and
+   * explicit on purpose (fail closed): only a staff-session caller passes
+   * true. With false the event is created WITHOUT an attendee, so no email
+   * ever leaves the owner's account from a request an anonymous visitor
+   * typed — the team adds the guest from Calendar (that invitation is the
+   * confirmation the prospect receives).
    */
-  invite?: boolean;
+  invite: boolean;
 }
 
 export interface ConsultationResult {
@@ -506,9 +507,14 @@ export async function scheduleConsultation(
     };
   }
 
-  const invite = input.invite !== false;
-  const attendee =
-    invite && input.contact && isEmailLike(input.contact) ? input.contact.trim() : undefined;
+  // Email validation and calendar attendees are separate concerns: the
+  // validated email also drives the pending-invite messaging when the event
+  // is created without one.
+  const contactEmail =
+    input.contact && isEmailLike(input.contact) ? input.contact.trim() : undefined;
+  // Fail closed: only an explicit true attaches the attendee to the event.
+  const invite = input.invite === true;
+  const attendee = invite ? contactEmail : undefined;
 
   let created: {
     id?: unknown;
@@ -541,10 +547,10 @@ export async function scheduleConsultation(
     typeof created.hangoutLink === "string" && created.hangoutLink
       ? created.hangoutLink
       : "Link Meet en el evento de calendario.";
-  const detail = attendee
+  const detail = contactEmail
     ? invite
-      ? ` Invitación enviada a ${attendee}.`
-      : ` Invitación NO enviada automáticamente: el equipo agregará a ${attendee} desde Calendar y Google le enviará la confirmación.`
+      ? ` Invitación enviada a ${contactEmail}.`
+      : ` Invitación NO enviada automáticamente: el equipo agregará a ${contactEmail} desde Calendar y Google le enviará la confirmación.`
     : input.contact
       ? " El contacto no es un email: avísale manualmente."
       : " Sin email: avisa al contacto manualmente.";
@@ -556,6 +562,6 @@ export async function scheduleConsultation(
     eventLink: typeof created.htmlLink === "string" ? created.htmlLink : undefined,
     meetLink: meet,
     when: slot.humanEs,
-    ...(attendee && !invite ? { pendingInvite: attendee } : {}),
+    ...(contactEmail && !invite ? { pendingInvite: contactEmail } : {}),
   };
 }

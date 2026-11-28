@@ -76,8 +76,9 @@ WHATSAPP_THROTTLE_WINDOW_MINUTES=10
 # rest of that UTC day.
 # Public bookings NEVER email an invitation: the event is created without an
 # attendee and the owner adds the guest from Google Calendar — that Google
-# invitation is the confirmation the prospect receives. Staff sessions
-# (Telegram/desktop) keep the automatic invitation.
+# invitation is the confirmation the prospect receives. Staff sessions (via
+# the CRM staff credential — Telegram and desktop both go through it) keep
+# the automatic invitation.
 PUBLIC_BOOKING_MAX_PER_SESSION=2
 PUBLIC_BOOKING_DAILY_CAP=8
 
