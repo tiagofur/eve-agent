@@ -31,10 +31,11 @@ import { MarketingView } from "./views/MarketingView";
 import { ContentView } from "./views/ContentView";
 import { SchedulesView } from "./views/SchedulesView";
 import { ReportsView } from "./views/ReportsView";
+import { SettingsView } from "./views/SettingsView";
 import { ConnectionSettings } from "./views/ConnectionSettings";
 import { API_BASE, crmApi } from "./api";
 
-type Tab = "dashboard" | "chat" | "contactos" | "programadas" | "reportes" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects";
+type Tab = "dashboard" | "chat" | "contactos" | "programadas" | "reportes" | "marketing" | "content" | "outbox" | "leads" | "clientes" | "ventas" | "tickets" | "projects" | "settings";
 
 const apiHost = (() => {
   try {
@@ -295,8 +296,8 @@ export const App: React.FC = () => {
         {/* Footer / System Status */}
         <div className="p-4 border-t border-zinc-800/80 bg-zinc-900/40">
           <button
-            onClick={() => setShowConnection(true)}
-            title={`${API_BASE} — clic para configurar la conexión`}
+            onClick={() => setActiveTab("settings")}
+            title={`${API_BASE} — clic para abrir Configuración (conexión y modelos)`}
             className="w-full flex items-center justify-between text-xs group"
           >
             <div className="flex items-center gap-2 min-w-0">
@@ -360,6 +361,7 @@ export const App: React.FC = () => {
           {activeTab === "ventas" && <SalesView />}
           {activeTab === "tickets" && <TicketsView />}
           {activeTab === "projects" && <ProjectsView onAskOrchestrator={askOrchestrator} />}
+          {activeTab === "settings" && <SettingsView onOpenConnection={() => setShowConnection(true)} />}
         </div>
       </main>
     </div>

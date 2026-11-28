@@ -1011,6 +1011,20 @@ export const crmApi = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  /* ---- Configuración (modelos y ajustes en tiempo de ejecución) ---- */
+  getSettings: () => request<SettingsPayload>("/api/settings"),
+  putSetting: <T>(key: string, value: T) =>
+    request<{ success: boolean; setting: SettingRecord<T> }>(`/api/settings/${key}`, {
+      method: "PUT",
+      body: JSON.stringify(value),
+    }),
+  getSettingHistory: (key: string) =>
+    request<{ key: string; history: SettingHistoryEntry[] }>(`/api/settings/history/${key}`),
+  testModel: (body: { provider: ModelProvider; modelId: string; modality: ModelModality }) =>
+    request<{ result: ModelTestResult }>("/api/settings/models/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   /* ---- Reportes (analyst reports) ---- */
   getAnalystReports: (limit = 100) =>
     request<{ reports: AnalystReportItem[] }>(`/api/reports/analyst?limit=${limit}`),
@@ -1162,6 +1176,71 @@ export interface VisualConfigItem {
   /** false = sin fila en la BD (se muestran los defaults editorial). */
   configured: boolean;
 }
+
+/* ---- Configuración (ajustes en tiempo de ejecución) ---- */
+
+export type ModelModality = "text" | "image" | "video";
+export type ModelProvider = "google" | "meta";
+
+export interface CatalogModel {
+  id: string;
+  modality: ModelModality;
+  provider: ModelProvider;
+  label: string;
+  contextWindow: number | null;
+  /** USD por millón de tokens, entrada y salida. */
+  priceInPerM: number | null;
+  priceOutPerM: number | null;
+  /** USD por imagen o clip generado. */
+  pricePerUnit: number | null;
+}
+
+export interface ModelRouting {
+  text: { orchestrator: string | null; marketingCopy: string | null; reasoning: string };
+  image: { post: string | null };
+  video: { model: string | null };
+}
+
+export interface SettingRecord<T> {
+  key: string;
+  value: T;
+  /** false = corre con el default de código (nada guardado todavía). */
+  saved: boolean;
+  revision: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+/** Lo que resuelve un uso ahora mismo, según el servidor. */
+export interface ResolvedModelInfo {
+  modelId: string;
+  provider: string;
+  source: "saved" | "env" | "default";
+}
+
+export interface SettingsPayload {
+  settings: Array<SettingRecord<unknown>>;
+  runtime: {
+    provider: string;
+    envOverrides: string[];
+    effective: Partial<Record<"orchestrator" | "marketingCopy" | "image" | "video", ResolvedModelInfo | null>>;
+  };
+}
+
+export interface SettingHistoryEntry {
+  action: string;
+  actor: string;
+  before: unknown;
+  after: unknown;
+  reason: string | null;
+  createdAt: string;
+}
+
+export type ModelTestResult =
+  | { ok: true; latencyMs: number; sample?: string }
+  | { ok: false; reason: string }
+  | { ok: null; reason: string };
+
 
 /** Reporte markdown del agente (brief de IA, plan editorial, operación…). */
 export interface AnalystReportItem {
