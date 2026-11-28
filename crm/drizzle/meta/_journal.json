@@ -215,42 +215,42 @@
     {
       "idx": 30,
       "version": "7",
-      "when": 1796000000000,
+      "when": 1795300000000,
       "tag": "0030_brand_visual_configs",
       "breakpoints": true
     },
     {
       "idx": 31,
       "version": "7",
-      "when": 1796085000000,
+      "when": 1795386400000,
       "tag": "0031_web_contact_review",
       "breakpoints": true
     },
     {
       "idx": 32,
       "version": "7",
-      "when": 1796086000000,
+      "when": 1795472800000,
       "tag": "0032_pack_fb_post",
       "breakpoints": true
     },
     {
       "idx": 33,
       "version": "7",
-      "when": 1796087000000,
+      "when": 1795559200000,
       "tag": "0033_video_campaign_slot",
       "breakpoints": true
     },
     {
       "idx": 34,
       "version": "7",
-      "when": 1796088000000,
+      "when": 1795645600000,
       "tag": "0034_cover_generation_mode",
       "breakpoints": true
     },
     {
       "idx": 35,
       "version": "7",
-      "when": 1796100000000,
+      "when": 1795732000000,
       "tag": "0035_social_video_publish",
       "breakpoints": true
     },
@@ -264,7 +264,7 @@
     {
       "idx": 37,
       "version": "7",
-      "when": 1795929702834,
+      "when": 1795843678690,
       "tag": "0037_social_posts_drift",
       "breakpoints": true
     }
