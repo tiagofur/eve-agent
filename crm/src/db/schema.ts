@@ -794,6 +794,29 @@ export const brandVisualConfigs = pgTable(
   },
   (t) => [uniqueIndex("brand_visual_configs_brand_uq").on(t.brand)]
 );
+
+/**
+ * Runtime configuration the owner edits from Mission Control → Configuración
+ * (today: the model catalog and the model routing). One row per document;
+ * `domain/settings.ts` owns each key's schema and code default, so a missing
+ * row means the previous behavior and a deploy changes nothing until the
+ * owner saves.
+ */
+export const appSettings = pgTable(
+  "app_settings",
+  {
+    id: id(),
+    key: text("key").notNull(),
+    value: jsonb("value").$type<Record<string, unknown>>().notNull(),
+    // Bumped on every save: consumers that resolve at boot compare it to
+    // know whether they still run a stale document.
+    revision: integer("revision").notNull().default(1),
+    updatedBy: text("updated_by").notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("app_settings_key_uq").on(t.key)]
+);
 export const estimates = pgTable("estimates", {
   id: id(),
   leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
